@@ -66,6 +66,11 @@ rules:
     risk: high
     action: prompt
 
+  - id: self_protection.damping_off_attempt
+    description: Agent tried to run "damping off" itself via its own Bash tool call (the Ona-incident failure mode) — a human running it directly at their own terminal never reaches this rule
+    risk: critical
+    action: deny
+
 # mcp.write_tool_unscoped_identity is implemented (core/policy/rules.go) but
 # deliberately NOT listed here: the individual tier has no identity system
 # to bind to (ActionEvent.Identity is always empty pre-Phase 5), so this

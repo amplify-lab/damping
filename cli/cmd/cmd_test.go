@@ -204,6 +204,43 @@ func TestOnOff_TogglesEnforcementState(t *testing.T) {
 	}
 }
 
+// TestOff_WritesSelfDisableAuditEvent is required by
+// features/self_protection.feature: "damping off" is the single most
+// security-sensitive action Damping has, so it must never be exempt from
+// the audit trail it enforces on everything else.
+func TestOff_WritesSelfDisableAuditEvent(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := run(t, "", "off"); err != nil {
+		t.Fatalf("off: %v", err)
+	}
+
+	logOut, _, err := run(t, "", "log", "--outcome", "allow")
+	if err != nil {
+		t.Fatalf("log: %v", err)
+	}
+	if strings.Contains(logOut, "No audit events") {
+		t.Fatal("expected an audit event for the self_disable action")
+	}
+
+	jsonOut, _, err := run(t, "", "log", "--json")
+	if err != nil {
+		t.Fatalf("log --json: %v", err)
+	}
+	var e struct {
+		ActionType string `json:"action_type"`
+		Actor      string `json:"actor"`
+	}
+	if err := json.Unmarshal([]byte(strings.SplitN(jsonOut, "\n", 2)[0]), &e); err != nil {
+		t.Fatalf("parsing --json output: %v", err)
+	}
+	if e.ActionType != "self_disable" {
+		t.Fatalf("expected action_type self_disable, got %q", e.ActionType)
+	}
+}
+
 func TestHook_AllowsSafeCommand(t *testing.T) {
 	setupTestEnv(t)
 	if _, _, err := run(t, "", "init"); err != nil {
@@ -229,6 +266,35 @@ func TestHook_DeniesKnownSandboxBypass(t *testing.T) {
 	}
 	if stderr == "" {
 		t.Fatal("expected a reason to be printed to stderr for a hard deny")
+	}
+}
+
+// TestHook_DeniesAgentAttemptToDisableDamping is the end-to-end version of
+// features/self_protection.feature's "agent cannot invoke the disable path"
+// scenario — through the real hook, not just the policy engine directly.
+func TestHook_DeniesAgentAttemptToDisableDamping(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	stdin := `{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"damping off"}}`
+	_, stderr, err := run(t, stdin, "hook", "pretooluse")
+	var exitErr *ExitCodeError
+	if !isExitCodeError(err, &exitErr) || exitErr.Code != 2 {
+		t.Fatalf("expected the agent's attempt to run 'damping off' to be hard-denied (Code:2), got %v", err)
+	}
+	if stderr == "" {
+		t.Fatal("expected a reason to be printed to stderr for a hard deny")
+	}
+
+	// The marker file must not have been created — the disable attempt was
+	// blocked before it ever reached a real `damping off` invocation.
+	statusOut, _, err := run(t, "", "status")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(statusOut, "Damping: ON") {
+		t.Fatalf("expected Damping to still be ON after the denied disable attempt, got: %s", statusOut)
 	}
 }
 

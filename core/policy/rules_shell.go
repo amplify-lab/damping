@@ -93,14 +93,40 @@ func matchChmod777Recursive(f Facts, _ Config) bool {
 	}
 	has777, hasRecursive := false, false
 	for _, a := range f.Args {
-		switch a {
-		case "777":
+		if isWorldWritableOctalMode(a) {
 			has777 = true
-		case "-R", "--recursive":
+		}
+		switch {
+		case a == "--recursive":
 			hasRecursive = true
+		case isShortFlagCluster(a):
+			// chmod's short recursive flag is uppercase-only (-R); unlike
+			// rm, lowercase -r is not a valid chmod flag at all, so only R
+			// counts here — see hasRecursiveForce for the rm/rf case, which
+			// does accept either case.
+			for _, ch := range a[1:] {
+				if ch == 'R' {
+					hasRecursive = true
+				}
+			}
 		}
 	}
 	return has777 && hasRecursive
+}
+
+// isWorldWritableOctalMode matches any all-octal-digit mode string ending in
+// 777 (777, 0777, 1777 with the sticky bit, 2777, ...) — a leading digit or
+// leading zeros don't change that the low three bits grant world write.
+func isWorldWritableOctalMode(a string) bool {
+	if a == "" {
+		return false
+	}
+	for _, c := range a {
+		if c < '0' || c > '7' {
+			return false
+		}
+	}
+	return strings.HasSuffix(a, "777")
 }
 
 var fetchCommands = map[string]bool{"curl": true, "wget": true}
@@ -163,19 +189,41 @@ func matchProcSandboxBypass(f Facts, _ Config) bool {
 
 // --- shared shell-fact helpers ---
 
+// hasRecursiveForce recognizes GNU rm's recursive+force flags in any of
+// their real forms: the long flags, the plain short flags, and any combined
+// short-flag cluster in either order and either case for the recursive
+// letter — "-rf", "-fr", "-Rf", "-fR" are all real, common spellings of
+// "recursive and force" and must all be caught. This was a real bypass: an
+// earlier version only matched the literal strings "-rf"/"-fr", so
+// "rm -Rf /" (a very common way to type this) slipped through
+// destructive.rm_rf_protected entirely — see core/policy/rules_shell_test.go.
 func hasRecursiveForce(args []string) bool {
 	hasR, hasF := false, false
 	for _, a := range args {
-		switch a {
-		case "-rf", "-fr":
-			hasR, hasF = true, true
-		case "-r", "-R", "--recursive":
+		switch {
+		case a == "--recursive":
 			hasR = true
-		case "-f", "--force":
+		case a == "--force":
 			hasF = true
+		case isShortFlagCluster(a):
+			for _, ch := range a[1:] {
+				switch ch {
+				case 'r', 'R':
+					hasR = true
+				case 'f':
+					hasF = true
+				}
+			}
 		}
 	}
 	return hasR && hasF
+}
+
+// isShortFlagCluster reports whether a is a POSIX short-option cluster like
+// "-rf" or "-Rfv" — a single dash followed by one or more option letters,
+// as opposed to a long option ("--force") or a bare "-" or "--".
+func isShortFlagCluster(a string) bool {
+	return len(a) > 1 && a[0] == '-' && a[1] != '-'
 }
 
 func isFilesystemOrHomeRoot(target string) bool {

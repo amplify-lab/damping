@@ -72,6 +72,17 @@ Feature: Intercept destructive shell commands
   # Known bypass techniques — see docs/threat-model.md §3. Each row here is a
   # permanent regression test: once a bypass is discovered, it is added here
   # and must never silently start passing through again.
+  Scenario Outline: Detect every real spelling of recursive+force delete
+    When the agent attempts to execute "<command>"
+    Then Damping should intercept the command
+    And the matched rule should be "destructive.rm_rf_protected"
+
+    Examples:
+      | command      |
+      | rm -Rf ~/    |
+      | rm -fR ~/    |
+      | rm -fr ~/    |
+
   Scenario: Detect a base64-encoded payload piped into a shell
     When the agent attempts to execute "echo cm0gLXJmIC8= | base64 -d | sh"
     Then Damping should intercept the command

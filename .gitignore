@@ -12,3 +12,6 @@
 
 # Local damping state if ever created inside the repo during manual testing
 /.damping/
+
+# Claude Code session-local state (not project content)
+/.claude/

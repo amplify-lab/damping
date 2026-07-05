@@ -58,11 +58,11 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 	// Malformed stdin from the agent itself: fail open (Damping cannot force
 	// a fail-closed outcome once the surrounding agent's own hook contract
 	// takes over on anything but exit code 2 — see docs/threat-model.md §6)
-	// but still leave a loud, logged trace of the degradation.
+	// but still leave a loud, logged trace of the degradation — logDegraded
+	// falls back to stderr if the audit sink itself isn't available or the
+	// write fails, so this is never a fully silent failure either way.
 	if decodeErr != nil {
-		if hasAuditSink {
-			_ = writer.Append(degradedEvent("unknown", "unknown", "malformed hook input: "+decodeErr.Error()))
-		}
+		logDegraded(cmd, writer, hasAuditSink, "unknown", "unknown", "malformed hook input: "+decodeErr.Error())
 		return nil
 	}
 
@@ -76,25 +76,19 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 
 	policyPath, err := resolvePolicyPath()
 	if err != nil {
-		if hasAuditSink {
-			_ = writer.Append(degradedEvent(in.SessionID, "claude-code", "resolving policy path: "+err.Error()))
-		}
+		logDegraded(cmd, writer, hasAuditSink, in.SessionID, "claude-code", "resolving policy path: "+err.Error())
 		return nil
 	}
 	cfg, err := policy.LoadConfig(policyPath)
 	if err != nil {
-		if hasAuditSink {
-			_ = writer.Append(degradedEvent(in.SessionID, "claude-code", "loading policy: "+err.Error()))
-		}
+		logDegraded(cmd, writer, hasAuditSink, in.SessionID, "claude-code", "loading policy: "+err.Error())
 		return nil
 	}
 	engine := policy.New(cfg)
 
 	d, err := hookadapter.EvaluateCommand(in.ToolInput.Command, engine)
 	if err != nil {
-		if hasAuditSink {
-			_ = writer.Append(degradedEvent(in.SessionID, "claude-code", "analyzing command: "+err.Error()))
-		}
+		logDegraded(cmd, writer, hasAuditSink, in.SessionID, "claude-code", "analyzing command: "+err.Error())
 		return nil
 	}
 
@@ -113,8 +107,8 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 			closeTTY()
 
 			if resolution.Persist {
-				if err := policy.AppendAlwaysPattern(policyPath, resolution.Verdict, in.ToolInput.Command); err != nil && hasAuditSink {
-					_ = writer.Append(degradedEvent(in.SessionID, "claude-code", "persisting always-"+string(resolution.Verdict)+" pattern: "+err.Error()))
+				if err := policy.AppendAlwaysPattern(policyPath, resolution.Verdict, in.ToolInput.Command); err != nil {
+					logDegraded(cmd, writer, hasAuditSink, in.SessionID, "claude-code", "persisting always-"+string(resolution.Verdict)+" pattern: "+err.Error())
 				}
 			}
 		}
@@ -122,7 +116,9 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 
 	if hasAuditSink {
 		ev := hookadapter.BuildActionEvent(event.NewID(), in.SessionID, "claude-code", in.ToolInput.Command, d)
-		_ = writer.Append(ev)
+		if err := writer.Append(ev); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "damping: failed to write audit record: %v\n", err)
+		}
 	}
 
 	if d.Outcome() == decision.Deny {
@@ -151,6 +147,22 @@ func newAuditWriter() (*audit.Writer, bool) {
 		return nil, false
 	}
 	return audit.NewWriter(p), true
+}
+
+// logDegraded records an internal failure as loudly as possible: as a
+// degraded audit event if a sink is available and the write succeeds,
+// falling back to stderr otherwise. Found via code review: the previous
+// version silently dropped the failure entirely whenever hasAuditSink was
+// false or Append itself errored — exactly the "protection failed and
+// nobody knows" failure mode docs/threat-model.md §6 says must never
+// happen.
+func logDegraded(cmd *cobra.Command, writer *audit.Writer, hasAuditSink bool, sessionID, actor, reason string) {
+	if hasAuditSink {
+		if err := writer.Append(degradedEvent(sessionID, actor, reason)); err == nil {
+			return
+		}
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "damping: %s\n", reason)
 }
 
 func degradedEvent(sessionID, actor, reason string) event.ActionEvent {

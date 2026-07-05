@@ -1,10 +1,11 @@
 // Package policy's rule registry. The matcher functions themselves live in
-// rules_shell.go (CLI/shell-command rules) and rules_mcp.go (MCP tool-call
-// rules) — split by transport concern since each family grows
-// independently (Phase 3 adds more MCP rules, Phase 6 adds memory-poisoning
-// rules, without every contributor touching one giant file). This file
-// holds only the shared registry and the cross-cutting Facts placeholders
-// cli/shell relies on.
+// rules_shell.go (CLI/shell-command rules), rules_mcp.go (MCP tool-call
+// rules), and rules_selfprotection.go (rules protecting Damping itself,
+// e.g. an agent trying to disable it) — split by concern since each family
+// grows independently (Phase 3 adds more MCP rules, Phase 6 adds memory-
+// poisoning rules, without every contributor touching one giant file). This
+// file holds only the shared registry and the cross-cutting Facts
+// placeholders cli/shell relies on.
 package policy
 
 // matcher is the V1 hardcoded detection logic for one rule id. See
@@ -29,6 +30,7 @@ var matchers = map[string]matcher{
 	"destructive.write_protected_path":         matchWriteProtectedPath,
 	"mcp.write_tool_unscoped_identity":         matchMCPWriteToolUnscopedIdentity,
 	"mcp.destructive_tool_call":                matchMCPDestructiveToolCall,
+	"self_protection.damping_off_attempt":      matchDampingSelfDisableAttempt,
 }
 
 // RedirectWritePlaceholder is what cli/shell sets Facts.Command to when it

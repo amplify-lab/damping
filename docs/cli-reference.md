@@ -59,7 +59,7 @@ Read-only, idempotent, safe to run anytime — the diagnostic pattern research c
 $ damping doctor
 Damping doctor — environment check
 
-  ✓ Policy file valid (~/.damping/policy.yaml, 10 rules)
+  ✓ Policy file valid (~/.damping/policy.yaml, 11 rules)
   ✓ Claude Code hook registered
   ✗ Cursor hook missing — was it removed outside `damping off`?
       → run `damping init --agent cursor --force` to reinstall
@@ -77,7 +77,7 @@ The "hook missing since last check" case is the direct, user-visible surface of 
 ```
 $ damping status
 Damping: ON
-Policy:  ~/.damping/policy.yaml (10 rules)
+Policy:  ~/.damping/policy.yaml (11 rules)
 Agents:  claude-code (active), cursor (active)
 Sync:    disabled (individual tier)
 ```
@@ -128,6 +128,7 @@ destructive.sql_drop_truncate         high      prompt
 destructive.chmod_777_recursive       medium    prompt
 destructive.curl_pipe_sh_unallowlisted medium   prompt
 mcp.destructive_tool_call              high      prompt
+self_protection.damping_off_attempt    critical  deny
 
 $ damping policy test "rm -rf ~/Documents"
 → Would PROMPT (rule: destructive.rm_rf_protected, risk: critical)
@@ -272,6 +273,10 @@ rules:
     description: MCP tool the server itself declared destructive (ToolAnnotations.DestructiveHint)
     risk: high
     action: prompt
+  - id: self_protection.damping_off_attempt
+    description: Agent tried to run "damping off" itself via its own Bash tool call (the Ona-incident failure mode)
+    risk: critical
+    action: deny
 
 # mcp.write_tool_unscoped_identity is implemented (core/policy/rules.go) but
 # deliberately NOT listed here — see the note in the shipped
