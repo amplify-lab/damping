@@ -59,7 +59,17 @@ Feature: Single-source-of-truth audit log
     And the "Watching for new events" notice should be written to stderr, not stdout
     # Found via manually testing the actual pipe, not just unit tests: the
     # notice originally went to stdout, which broke a
-    # "damping log --follow --json | jq -c ." pipeline.
+    # "damping log --follow --json | jq -c ." pipeline. Wiring this exact
+    # scenario through godog (which happened to start from an empty audit
+    # log) caught a second, adjacent instance of the same bug class: the
+    # "No audit events matched those filters." notice also went
+    # unconditionally to stdout — see the sibling scenario below.
+
+  Scenario: An empty result in JSON mode also keeps stdout pure NDJSON
+    Given no audit events exist yet
+    When the user runs "damping log --json"
+    Then stdout should be empty
+    And the "No audit events matched those filters." notice should be written to stderr, not stdout
 
   Scenario: The local audit log never leaves the machine by default
     Given Damping has not been opted into team sync

@@ -142,12 +142,23 @@ func readFilteredEvents(f audit.Filter) ([]event.ActionEvent, error) {
 }
 
 func printEvents(cmd *cobra.Command, events []event.ActionEvent, asJSON bool) error {
-	w := cmd.OutOrStdout()
 	if len(events) == 0 {
+		// In --json mode this goes to stderr, not stdout, for the same
+		// reason --follow's "Watching for new events" notice does: a zero
+		// non-JSON stdout line still counts as corrupting an otherwise-pure
+		// NDJSON stream for a `damping log --json | jq` pipeline. Found via
+		// the same BDD scenario that verified --follow --json's stdout
+		// purity — it happened to start from an empty audit log and caught
+		// this adjacent case too.
+		w := cmd.OutOrStdout()
+		if asJSON {
+			w = cmd.ErrOrStderr()
+		}
 		fmt.Fprintln(w, "No audit events matched those filters.")
 		return nil
 	}
 
+	w := cmd.OutOrStdout()
 	if !asJSON {
 		fmt.Fprintf(w, "%-20s %-7s %-14s %-30s %-8s %s\n", "TIME", "CHANNEL", "ACTOR", "TARGET", "RISK", "DECISION")
 	}
