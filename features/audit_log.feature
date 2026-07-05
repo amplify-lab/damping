@@ -42,6 +42,25 @@ Feature: Single-source-of-truth audit log
     Then the output should read "No audit events matched those filters."
     And the output should not be a blank screen
 
+  Scenario: Following the log shows new events without restarting the command
+    Given the audit log already contains one event from before "damping log --follow" started
+    When the user runs "damping log --follow"
+    Then the pre-existing event should be printed immediately
+    And a message noting that Damping is watching for new events should appear
+    When a new action is intercepted while "damping log --follow" is still running
+    Then the new event should be printed without needing to restart the command
+    # core/audit.Follow polls rather than using a filesystem-event API, so
+    # this works portably across every platform Damping ships on, and
+    # recovers correctly if the file is rotated away mid-session (Rotate).
+
+  Scenario: Following the log in JSON mode keeps stdout pure NDJSON
+    Given the user runs "damping log --follow --json"
+    Then every non-empty line written to stdout should parse as JSON
+    And the "Watching for new events" notice should be written to stderr, not stdout
+    # Found via manually testing the actual pipe, not just unit tests: the
+    # notice originally went to stdout, which broke a
+    # "damping log --follow --json | jq -c ." pipeline.
+
   Scenario: The local audit log never leaves the machine by default
     Given Damping has not been opted into team sync
     When any action is intercepted

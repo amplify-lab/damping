@@ -1,6 +1,8 @@
 package audit
 
 import (
+	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -168,6 +170,187 @@ func TestRotate_RotatesWhenOverSize(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("expected the rotated-away path to read as empty, got %d events", len(got))
+	}
+}
+
+// TestFollow_EmitsOnlyEventsAppendedAfterStartOffset proves the "already
+// shown" boundary damping log --follow relies on: an event written before
+// Follow starts, at an offset before startOffset, must never be re-emitted,
+// while one appended after Follow is already running must be.
+func TestFollow_EmitsOnlyEventsAppendedAfterStartOffset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	w := NewWriter(path)
+
+	before := sampleEvent(event.ChannelCLI, event.RiskLow, decision.Allow)
+	before.EventID = "evt_before"
+	if err := w.Append(before); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	startOffset := info.Size()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	got := make(chan event.ActionEvent, 4)
+	done := make(chan error, 1)
+	go func() {
+		done <- Follow(ctx, path, startOffset, Filter{}, 5*time.Millisecond, func(e event.ActionEvent) error {
+			got <- e
+			return nil
+		})
+	}()
+
+	after := sampleEvent(event.ChannelCLI, event.RiskLow, decision.Allow)
+	after.EventID = "evt_after"
+	if err := w.Append(after); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	select {
+	case e := <-got:
+		if e.EventID != "evt_after" {
+			t.Fatalf("expected only the post-startOffset event, got %q", e.EventID)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for Follow to emit the appended event")
+	}
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Follow returned an error: %v", err)
+	}
+	select {
+	case e := <-got:
+		t.Fatalf("expected exactly one emitted event, got an unexpected extra: %+v", e)
+	default:
+	}
+}
+
+// TestFollow_RespectsFilter proves Follow applies f the same way ReadAll
+// does, not just "everything new".
+func TestFollow_RespectsFilter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	w := NewWriter(path)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	got := make(chan event.ActionEvent, 4)
+	done := make(chan error, 1)
+	go func() {
+		done <- Follow(ctx, path, 0, Filter{Channel: event.ChannelMCP}, 5*time.Millisecond, func(e event.ActionEvent) error {
+			got <- e
+			return nil
+		})
+	}()
+
+	cliEvent := sampleEvent(event.ChannelCLI, event.RiskLow, decision.Allow)
+	cliEvent.EventID = "evt_cli"
+	mcpEvent := sampleEvent(event.ChannelMCP, event.RiskLow, decision.Allow)
+	mcpEvent.EventID = "evt_mcp"
+	if err := w.Append(cliEvent); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if err := w.Append(mcpEvent); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	select {
+	case e := <-got:
+		if e.EventID != "evt_mcp" {
+			t.Fatalf("expected only the mcp-channel event to pass the filter, got %q", e.EventID)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for Follow to emit the matching event")
+	}
+
+	cancel()
+	<-done
+}
+
+// TestFollow_HandlesRotation proves Follow recovers after the file it's
+// tailing is renamed away (Rotate) and a fresh, smaller file appears at the
+// same path — the exact sequence a real long-running "damping log --follow"
+// can observe if Rotate fires while it's running.
+func TestFollow_HandlesRotation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	w := NewWriter(path)
+
+	first := sampleEvent(event.ChannelCLI, event.RiskLow, decision.Allow)
+	first.EventID = "evt_first"
+	if err := w.Append(first); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	got := make(chan event.ActionEvent, 4)
+	done := make(chan error, 1)
+	go func() {
+		done <- Follow(ctx, path, 0, Filter{}, 5*time.Millisecond, func(e event.ActionEvent) error {
+			got <- e
+			return nil
+		})
+	}()
+
+	// Drain the pre-existing event before simulating rotation.
+	select {
+	case e := <-got:
+		if e.EventID != "evt_first" {
+			t.Fatalf("expected evt_first, got %q", e.EventID)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for the pre-rotation event")
+	}
+
+	if _, err := Rotate(path, 1 /* bytes, force rotation */, time.Now()); err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+
+	afterRotation := sampleEvent(event.ChannelCLI, event.RiskLow, decision.Allow)
+	afterRotation.EventID = "evt_after_rotation"
+	if err := w.Append(afterRotation); err != nil {
+		t.Fatalf("append after rotation: %v", err)
+	}
+
+	select {
+	case e := <-got:
+		if e.EventID != "evt_after_rotation" {
+			t.Fatalf("expected evt_after_rotation, got %q", e.EventID)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for Follow to recover after rotation")
+	}
+
+	cancel()
+	<-done
+}
+
+func TestFollow_StopsOnContextCancel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Follow(ctx, path, 0, Filter{}, 5*time.Millisecond, func(event.ActionEvent) error {
+			return nil
+		})
+	}()
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("expected Follow to return nil on cancellation, got %v", err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for Follow to stop after context cancellation")
 	}
 }
 
