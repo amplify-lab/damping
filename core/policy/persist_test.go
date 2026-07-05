@@ -163,3 +163,30 @@ func TestAppendAlwaysPattern_RejectsPromptVerdict(t *testing.T) {
 		t.Fatal("expected an error persisting a Prompt verdict, which is never itself a final answer")
 	}
 }
+
+// TestAppendAlwaysPattern_RejectsPatternEndingInAsterisk is a regression
+// test for a real silent-scope-broadening bug: an approved command like
+// "rm -rf ./dist/*" (a realistic shell glob, not a hand-authored wildcard
+// pattern) used to be persisted verbatim. On the very next reload,
+// matchGlobPattern (patterns.go) treats any always_allow/always_deny entry
+// ending in "*" as a prefix wildcard — so the human's one-time "always
+// allow this exact command" choice would silently turn into "always allow
+// anything starting with rm -rf ./dist/" the moment a fresh process reloaded
+// the policy file, never re-confirmed.
+func TestAppendAlwaysPattern_RejectsPatternEndingInAsterisk(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policy.yaml")
+	if err := os.WriteFile(path, []byte(fixtureWithComments), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendAlwaysPattern(path, decision.Allow, "rm -rf ./dist/*"); err == nil {
+		t.Fatal("expected an error persisting a pattern ending in \"*\", which would be reinterpreted as a wildcard on reload")
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "dist/*") {
+		t.Fatal("expected the rejected pattern to never be written to the policy file at all")
+	}
+}

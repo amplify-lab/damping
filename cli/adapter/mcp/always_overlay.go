@@ -17,7 +17,10 @@ import (
 // re-prompted for the exact same call for the rest of *this* run — not
 // what "always" means to someone answering the prompt right now. Patterns
 // are matched by exact value only (never a wildcard), matching how
-// AppendAlwaysPattern itself persists — see its doc comment.
+// AppendAlwaysPattern itself persists — see its doc comment for why it
+// actively refuses to persist (and this overlay is therefore never asked to
+// record) a raw command ending in a literal "*", which the on-disk matcher
+// would otherwise reinterpret as a wildcard on the next reload.
 //
 // Caveat inherited from that same exact-match design (not introduced here):
 // the matched value is facts.Raw, the tool name plus its raw JSON argument
