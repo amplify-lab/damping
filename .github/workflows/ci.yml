@@ -67,7 +67,7 @@ jobs:
       # build (no GitHub token or tap repo access needed) on every PR —
       # catches a regression here at review time, not the day someone
       # actually pushes a release tag.
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: "~> v2"
