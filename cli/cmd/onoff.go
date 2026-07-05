@@ -50,6 +50,8 @@ func newOffCmd() *cobra.Command {
 			// security-sensitive action in the whole tool, so it gets no
 			// exemption from the audit trail. A human typing `damping off`
 			// directly has no agent session, hence the "local" session id.
+			loggedAt := time.Now()
+			var loggedSelfDisable bool
 			if writer, hasAuditSink := newAuditWriter(); hasAuditSink {
 				raw := "damping off"
 				if forDuration != "" {
@@ -59,15 +61,32 @@ func newOffCmd() *cobra.Command {
 					decision.Decision{Verdict: decision.Allow, Reason: "explicit human action at the terminal — the only sanctioned disable path"})
 				if err := writer.Append(ev); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "damping: failed to write audit record for this self_disable: %v\n", err)
+				} else {
+					loggedSelfDisable = true
 				}
 			}
 
 			w := cmd.OutOrStdout()
 			if until.IsZero() {
 				fmt.Fprintln(w, "⚠  Damping enforcement is now OFF. Your agent's commands will NOT be checked.")
+				// A review found docs/cli-reference.md documented this
+				// confirmation line but the code never actually printed
+				// it — the audit event was written silently. Surfacing it
+				// here is a real, worthwhile transparency improvement for
+				// this project's single most security-sensitive action,
+				// not just a doc correction: a human disabling protection
+				// should see, in the moment, that it was logged and how to
+				// find the record again (`damping log`).
+				if loggedSelfDisable {
+					fmt.Fprintf(w, "    This was a manual, explicit action — logged as self_disable at %s.\n", loggedAt.Format(time.RFC3339))
+				}
 				fmt.Fprintln(w, "    Run `damping on` to re-enable.")
 			} else {
-				fmt.Fprintf(w, "⚠  Damping enforcement paused until %s, then auto re-enables.\n", until.Format(time.Kitchen))
+				// Echoing the requested duration back (not just the
+				// resulting clock time) is the same kind of transparency
+				// improvement — confirms what was actually asked for,
+				// found missing the same way as the line above.
+				fmt.Fprintf(w, "⚠  Damping enforcement paused for %s (until %s), then auto re-enables.\n", forDuration, until.Format(time.Kitchen))
 			}
 			return nil
 		},

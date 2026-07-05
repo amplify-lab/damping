@@ -73,7 +73,20 @@ func newInitCmd() *cobra.Command {
 				}
 			}
 
-			fmt.Fprintln(w, "\n✓ Setup complete — run `damping doctor` any time to re-verify this setup.")
+			// A review found docs/cli-reference.md documented this exact
+			// demo call-to-action — matching docs/architecture.md §3's
+			// stated onboarding goal, "install -> first interception demo
+			// in under 3 minutes" — but the code never actually printed
+			// it. A real improvement worth having, not just a doc fix: the
+			// single most convincing thing a new user can do right after
+			// `damping init` is watch it actually catch something. Skipped
+			// in --dry-run, since nothing was actually installed to try.
+			if dryRun {
+				fmt.Fprintln(w, "\n✓ Setup complete (dry run) — run `damping doctor` any time to re-verify this setup.")
+			} else {
+				fmt.Fprintln(w, "\n✓ Setup complete — try it: ask your agent to run `rm -rf /tmp/test`")
+				fmt.Fprintln(w, "\nRun `damping doctor` any time to re-verify this setup.")
+			}
 			return nil
 		},
 	}
