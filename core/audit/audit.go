@@ -15,7 +15,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -102,38 +101,31 @@ func (f Filter) Matches(e event.ActionEvent) bool {
 // ReadAll reads every ActionEvent from path and returns those matching f. A
 // missing file is treated as an empty log, not an error — a brand new
 // install with no interceptions yet is a normal state, not a failure.
+//
+// Implemented via followFrom (starting at offset 0) rather than its own
+// scan, so a torn trailing write (Writer.Append killed mid-write, e.g. the
+// process was interrupted while writing the very last record) is tolerated
+// exactly the same way here as it is mid-tail in Follow — see followFrom's
+// doc comment for why that specific case is not corruption. Found via
+// adversarial review: the previous bufio.Scanner-based version had no way
+// to distinguish "a genuinely malformed complete line" from "an in-flight
+// write that hadn't finished yet," so any unclean kill during the last
+// Append permanently broke every future `damping log` call on that file —
+// worse than merely showing a stale record, since every read of the whole
+// file failed, not just the incomplete tail.
 func ReadAll(path string, f Filter) ([]event.ActionEvent, error) {
-	file, err := os.Open(path)
-	if os.IsNotExist(err) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("audit: stat %s: %w", path, err)
 	}
-	if err != nil {
-		return nil, fmt.Errorf("audit: opening %s: %w", path, err)
-	}
-	defer file.Close()
 
 	var out []event.ActionEvent
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	lineNo := 0
-	for scanner.Scan() {
-		lineNo++
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		var e event.ActionEvent
-		if err := json.Unmarshal([]byte(line), &e); err != nil {
-			return out, fmt.Errorf("audit: %s:%d: malformed record: %w", path, lineNo, err)
-		}
-		if f.Matches(e) {
-			out = append(out, e)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return out, fmt.Errorf("audit: reading %s: %w", path, err)
-	}
-	return out, nil
+	_, err := followFrom(path, 0, f, func(e event.ActionEvent) error {
+		out = append(out, e)
+		return nil
+	})
+	return out, err
 }
 
 // Follow tails path starting at startOffset (typically the file's size at
@@ -205,11 +197,29 @@ func Follow(ctx context.Context, path string, startOffset int64, f Filter, pollI
 }
 
 // followFrom reads only complete (newline-terminated) records appended
-// after offset, returning the offset just past the last complete record it
-// consumed. A trailing partial line — Append never leaves one on disk once
-// its single Write call returns, but a poll could in principle land mid-
-// write — is left unread, so the next poll picks it up once it's complete
-// rather than risking a truncated JSON parse.
+// after offset, calling fn for each one matching f and returning the offset
+// just past the last complete record it consumed (never past a trailing
+// partial line). Writer.Append writes one full JSON line plus '\n' in a
+// single Write call, so a partial write can only ever be missing bytes
+// from the *end* of that line, including the newline itself — it can never
+// produce a scrambled line with a premature newline in the middle. A
+// trailing line with no newline is therefore always an in-flight write
+// that simply hasn't finished yet, never corruption, so it's left unread
+// for the next poll rather than risking a spurious "malformed record"
+// error on a write that's still happening. A line that *does* have its
+// terminating newline but still fails to parse is genuine corruption
+// (or a bug in whatever wrote it) and is still reported as an error — that
+// distinction is exactly what a plain bufio.Scanner-based line reader can't
+// make, since ScanLines returns a final unterminated fragment as an
+// ordinary complete token indistinguishable from a real one.
+//
+// This assumes an os.OpenFile(O_APPEND) write of one JSONL record is
+// effectively atomic from a concurrent reader's perspective, which holds in
+// practice on a local Linux/macOS filesystem (single-inode write ordering)
+// but is not a portable guarantee — notably, O_APPEND is documented as
+// non-atomic over NFS. A ~/.damping directory on an NFS mount is out of
+// scope for V1; this is a known, narrow limitation, not something this
+// function tries to defend against.
 func followFrom(path string, offset int64, f Filter, fn func(event.ActionEvent) error) (int64, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -222,15 +232,17 @@ func followFrom(path string, offset int64, f Filter, fn func(event.ActionEvent) 
 	}
 
 	pos := offset
+	lineNo := 0
 	reader := bufio.NewReaderSize(file, 64*1024)
 	for {
 		line, readErr := reader.ReadBytes('\n')
 		if len(line) > 0 && line[len(line)-1] == '\n' {
+			lineNo++
 			pos += int64(len(line))
 			if trimmed := bytes.TrimSpace(line); len(trimmed) > 0 {
 				var e event.ActionEvent
 				if err := json.Unmarshal(trimmed, &e); err != nil {
-					return pos, fmt.Errorf("audit: %s: malformed record while following: %w", path, err)
+					return pos, fmt.Errorf("audit: %s: malformed record at line %d past offset %d: %w", path, lineNo, offset, err)
 				}
 				if f.Matches(e) {
 					if err := fn(e); err != nil {
