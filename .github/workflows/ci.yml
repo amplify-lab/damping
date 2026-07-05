@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  core:
+    name: core module
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - run: gofmt -l . | tee /tmp/gofmt.out && test ! -s /tmp/gofmt.out
+      - run: go vet ./...
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: core
+      - run: go test ./... -race -cover
+
+  cli:
+    name: cli module (incl. BDD scenarios)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - run: gofmt -l . | tee /tmp/gofmt.out && test ! -s /tmp/gofmt.out
+      - run: go vet ./...
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: cli
+      # cli/bdd runs features/dangerous_command.feature through godog — see
+      # docs/00-統一開發計畫（定案版）.md: a scenario only counts as done
+      # once it passes, so this is not optional coverage.
+      - run: go test ./... -race -cover
+
+  security:
+    name: gosec + SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - name: gosec (core)
+        uses: securego/gosec@master
+        with:
+          args: "-fmt sarif -out core-gosec.sarif ./core/..."
+      - name: gosec (cli)
+        uses: securego/gosec@master
+        with:
+          args: "-fmt sarif -out cli-gosec.sarif ./cli/..."
+      - name: SBOM (core)
+        run: |
+          go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
+          (cd core && cyclonedx-gomod mod -json -output ../core-sbom.json)
+      - name: SBOM (cli)
+        run: |
+          (cd cli && cyclonedx-gomod mod -json -output ../cli-sbom.json)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            core-sbom.json
+            cli-sbom.json

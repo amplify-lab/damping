@@ -1,0 +1,166 @@
+# Damping — Architecture Reference
+
+> Source of truth for repo layout, module naming, and the `ActionEvent` schema. Strategic rationale lives in `docs/00-統一開發計畫（定案版）.md` (Chinese); this document is the English, code-facing companion so external contributors don't need to read the Chinese planning docs to build against the core.
+
+## 1. Repository layout
+
+```
+/damping (repo root — this directory)
+├── go.work
+├── core/                    # Go module: transport-agnostic policy engine + event schema
+│   ├── event/               # ActionEvent, Channel, ActionType, RiskLevel
+│   ├── decision/            # Verdict, Decision
+│   ├── policy/              # Rule loading + evaluation (Go-native V1, OPA/Rego from Phase 3)
+│   └── audit/                # Append-only JSONL sink + reader/filter
+├── cli/                     # Go module: `damping` binary (product line A)
+│   ├── cmd/                 # Cobra command tree (init, doctor, log, on/off, hook, version)
+│   ├── shell/                # mvdan/sh AST parsing + semantic bypass-pattern detection
+│   ├── adapter/hook/         # shared evaluate/build-event logic used by `policy test` and the real hook
+│   ├── adapter/agent/        # Claude Code / Cursor hook-file install & detection
+│   ├── paths/                 # ~/.damping/* path resolution ($DAMPING_HOME override for tests)
+│   ├── policies/              # canonical default.yaml + go:embed wrapper (see note below)
+│   └── ui/                   # TTY confirmation prompt (talks to /dev/tty, not stdin/stdout — see §6)
+├── gateway/                 # NOT YET SCAFFOLDED — Phase 3 Go module: MCPWarden Gateway (Track B)
+├── cf/                      # NOT YET SCAFFOLDED — Phase 4 TypeScript: Cloudflare Workers (Track A)
+├── dashboard/               # NOT YET SCAFFOLDED — Phase 4 React+TS: audit/policy dashboard
+├── features/                # Gherkin .feature files (godog), shared across the whole project
+├── docs/                    # Planning + reference docs (this file, threat model, CLI reference, UX spec)
+└── .github/workflows/       # CI: lint, unit test, BDD, gosec, SBOM
+```
+
+**Note on `policies/`**: the canonical `default.yaml` lives at `cli/policies/default.yaml`, not a repo-root `policies/` directory as earlier planning drafts assumed. `go:embed` requires an embedded file to live inside the embedding package's own module tree (no `..` in embed patterns), and the shipped binary must embed its default policy rather than read a repo-relative path that won't exist after `go install`/`brew install`. `core/policy`'s own tests load this exact same file by relative path, so the shipped default and the tested default can never drift apart. Phase 3's Rego policy templates can still live in a root-level `policies/` directory when that work starts — OPA loads Rego at runtime, not via `go:embed`, so it isn't bound by the same constraint.
+
+`gateway/`, `cf/`, and `dashboard/` are intentionally **not scaffolded yet** — they belong to Phase 3+ per `docs/00-統一開發計畫（定案版）.md` §5. Creating empty module skeletons for phases that are months away would be premature structure with no code to anchor it; scaffold them when their phase starts, following the same module-naming convention below.
+
+## 2. Module naming (placeholder, pending Tim's GitHub org confirmation)
+
+Research turned up a live but dormant `github.com/damping` account (see the master plan §二) — GitHub org/user names share one namespace, so that handle likely cannot be claimed outright. **Recommendation: org = `amplify-lab`, repo = `damping`.**
+
+```
+module github.com/amplify-lab/damping/core
+module github.com/amplify-lab/damping/cli
+```
+
+If Tim confirms a different org, this is a single `find . -name go.mod -o -name '*.go' | xargs sed -i 's#github.com/amplify-lab/damping#github.com/<final-org>/damping#g'` away from being renamed — nothing else in the architecture depends on the exact string.
+
+## 3. `core/event` — the ActionEvent schema (one-time design, load-bearing)
+
+This is the single normalized shape every adapter (CLI hook, MCP wrapper, future HTTP proxy) converts its intercepted action into before it ever touches `core/policy` or `core/audit`. **No adapter writes audit records directly — `core/audit` is the only writer.** Getting this schema right now avoids a rewrite when enterprise compliance reports (Phase 5) need fields that were never captured.
+
+```go
+// core/event/action_event.go
+package event
+
+import "time"
+
+type Channel string
+
+const (
+	ChannelCLI  Channel = "cli"
+	ChannelMCP  Channel = "mcp"
+	ChannelHTTP Channel = "http" // reserved, Phase 3+
+)
+
+type ActionType string
+
+const (
+	ActionShellExec   ActionType = "shell_exec"
+	ActionToolCall    ActionType = "tool_call"
+	ActionHTTPRequest ActionType = "http_request" // reserved, Phase 3+
+	ActionMemoryWrite ActionType = "memory_write" // reserved, Phase 6 (Memory Guard)
+)
+
+type RiskLevel string
+
+const (
+	RiskLow      RiskLevel = "low"
+	RiskMedium   RiskLevel = "medium"
+	RiskHigh     RiskLevel = "high"
+	RiskCritical RiskLevel = "critical"
+)
+
+// ActionEvent is the transport-agnostic record every adapter normalizes into.
+// Field set is sized for Phase 5 compliance reports from day one — do not add
+// fields later without a migration plan for existing ~/.damping/audit.jsonl files.
+type ActionEvent struct {
+	EventID    string            `json:"event_id"`
+	Timestamp  time.Time         `json:"timestamp"`
+	SessionID  string            `json:"session_id"`
+	Actor      string            `json:"actor"`              // which agent/process (e.g. "claude-code", "cursor")
+	Identity   string            `json:"identity,omitempty"` // empty in individual tier; populated once AD/LDAP is wired in Phase 5
+	Channel    Channel           `json:"channel"`
+	ActionType ActionType        `json:"action_type"`
+	Target     string            `json:"target"` // path / tool name / URL
+	Raw        string            `json:"raw"`    // original command / call payload, for forensics
+	ParsedArgs map[string]any    `json:"parsed_args,omitempty"`
+	RiskLevel  RiskLevel         `json:"risk_level"`
+	Decision   decision.Decision `json:"decision"` // embeds Verdict + PolicyID + Reason + Degraded — see below
+}
+```
+
+```go
+// core/decision/decision.go
+package decision
+
+type Verdict string
+
+const (
+	Allow  Verdict = "allow"
+	Deny   Verdict = "deny"
+	Prompt Verdict = "prompt"
+)
+
+// Decision is what core/policy.Evaluate returns. A Prompt verdict is later
+// resolved to Allow/Deny by a human at the TTY (cli/ui) — ResolvedVerdict
+// captures that outcome so the audit trail ends up with ONE coherent record
+// instead of two disjoint ones (Outcome() returns ResolvedVerdict if set,
+// else Verdict).
+type Decision struct {
+	Verdict         Verdict `json:"verdict"`
+	ResolvedVerdict Verdict `json:"resolved_verdict,omitempty"`
+	PolicyID        string  `json:"policy_id,omitempty"`
+	Reason          string  `json:"reason,omitempty"`
+	// Degraded marks a decision made under an internal Damping failure (parser
+	// crash, corrupt policy file, hook timeout) rather than a real policy match.
+	// See docs/00-統一開發計畫（定案版）.md §六 on fail-open vs fail-closed —
+	// external hook contracts (Claude Code, Cursor) fail open on non-2 exit
+	// codes, so Damping's own responsibility is to make degraded mode loud,
+	// not to pretend it can force a fail-closed outcome it doesn't control.
+	Degraded bool `json:"degraded,omitempty"`
+}
+```
+
+`core/event` imports `core/decision` rather than redefining its own copy — `ActionEvent.Decision` is a `decision.Decision` value, so the policy engine's output and the persisted audit record are the exact same type, with no separate `DecisionRecord`/conversion step to keep in sync. `core/policy`'s `Evaluate()` returns a `decision.Decision`; `cli/adapter/hook.BuildActionEvent` embeds it into an `ActionEvent` only once — after any TTY resolution of a `Prompt` verdict has already happened — which is what makes "one coherent record per action" true in the actual audit log, not just an aspiration (see `core/audit`'s tests and `features/audit_log.feature`).
+
+## 4. `core/policy` (V1: Go-native rules; Phase 3: OPA/Rego)
+
+V1 loads `cli/policies/default.yaml` into in-process Go rules (pattern match against parsed shell AST + MCP tool/argument tuples). The `Evaluate(event ActionEvent) (decision.Decision, error)` function signature is deliberately identical to what an OPA-backed implementation would expose, so Phase 3's swap to `open-policy-agent/opa/rego` (embedded, no network hop) is a drop-in replacement behind the same interface — not a rewrite of call sites.
+
+## 5. `cli/shell` — AST parsing + semantic bypass detection
+
+Built on `mvdan.cc/sh/v3/syntax`. Two layers, not one:
+
+1. **Syntax layer (mvdan/sh AST)**: reliably defeats naive regex-bypass tricks — extra whitespace, quoting variations, variable expansion structure, multi-line wrapping, heredocs. This is what "parse, don't regex" actually buys you.
+2. **Semantic layer (hand-written, on top of the AST)**: mvdan/sh's `syntax` package does **not** resolve shell aliases (only the opt-in `interp` interpreter does, which means actually executing), does **not** decode runtime data like base64 payloads, and treats `/proc/self/...` paths as opaque string literals. These are real, documented gaps (see `docs/threat-model.md`), covered instead by:
+   - a maintained alias-lookup table for known-dangerous command aliases,
+   - a structural rule flagging `... | base64 -d | sh` (or `bash`/`zsh`/`eval`) pipelines regardless of the payload content,
+   - a maintained string-match list of known sandbox-bypass paths (`/proc/self/root/...`, `/proc/self/exe`, etc).
+
+Every rule in both layers ships with a fuzz corpus and a "must never trigger" regression list — see `docs/00-統一開發計畫（定案版）.md` §六 and the test strategy in the original `開發計畫.md`.
+
+## 6. `cli/cmd` hook entrypoint — Claude Code / Cursor integration contract
+
+See `docs/cli-reference.md` §11 for the exact wire format. Summary: both agents only treat **exit code 2** as blocking; any other non-zero code fails open (action proceeds).
+
+**Important correction from an earlier draft of this doc**: the hook's stdin/stdout are already reserved for the JSON protocol with Claude Code itself, so a `Prompt`-tier decision cannot be resolved by returning `permissionDecision: "ask"` and asking Claude Code to show its own generic prompt — that would silently replace Damping's own branded confirmation UI (§12 of the CLI reference) with a different one Damping doesn't control. Instead (`cli/cmd/hook.go` + the per-OS `tty_unix.go`/`tty_windows.go`), Damping opens the controlling terminal directly (`/dev/tty` on Unix) for the interactive prompt, resolves the decision fully, and only then responds to Claude Code with a plain exit code — the hook never actually returns `"ask"` to the agent in V1. If no controlling terminal is available (e.g. a headless/CI execution context), a `Prompt`-tier decision defaults to `Deny` rather than either hanging or silently allowing. In every case:
+- exit `2` with a human-readable reason on stderr for a hard deny (including a resolved-to-deny prompt, or the no-TTY fallback),
+- exit `0` for allow (directly, or resolved from a prompt) — no JSON needed on this path in V1,
+- never let an internal crash silently look like a normal allow — write a `degraded` audit record even when the external agent will fail open regardless.
+
+## 7. `cli/adapter/mcp` — V1 thin adapter (not a gateway)
+
+The official `github.com/modelcontextprotocol/go-sdk` has no built-in interceptor/middleware hook point — it's a "register tools" SDK, not a "wrap existing calls" SDK. So `damping mcp wrap <server-command>` works by sitting between the MCP **client** and the tool-call dispatch, normalizing each outgoing tool call into an `ActionEvent` (`channel: mcp`, `action_type: tool_call`) and running it through the same `core/policy` + `core/audit` as the CLI adapter — no OAuth, no token re-issuance, no confused-deputy defense. Full Gateway-grade MCP interception (reverse proxy in front of real MCP servers, OAuth 2.1, audience binding) is Phase 3, implemented as an actual standalone MCP server the client talks to instead of the real one.
+
+## 8. CI pipeline (`.github/workflows/ci.yml`)
+
+Per PR: `golangci-lint` (incl. `gosec`) → `go test ./...` → `godog` BDD run against `features/*.feature` → SBOM generation (`cyclonedx-gomod`). Any failure blocks merge. Dependabot on; npm publishing (once `cf/`/`dashboard/` exist) goes through OIDC provenance, not long-lived tokens — a direct lesson from the 2026 Cline token-theft incident referenced in the original planning docs.
