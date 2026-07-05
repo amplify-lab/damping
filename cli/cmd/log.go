@@ -178,9 +178,22 @@ func printEvent(w io.Writer, e event.ActionEvent, asJSON bool) error {
 	if asJSON {
 		return json.NewEncoder(w).Encode(e)
 	}
+	// A degraded event's Outcome() is still a plain "allow" (see
+	// decision.Decision — Degraded is a separate flag, not a verdict of its
+	// own), so the plain-table view otherwise renders it identically to a
+	// genuine policy allow — found via a manual UX walkthrough of the real
+	// binary: a doctor run clearly warns about degraded events, but nothing
+	// in `damping log`'s own default output — the more natural first place
+	// to look — hinted that a given row was one, only `--json`'s raw
+	// "degraded":true field did. Marked here so scanning the table itself
+	// is enough to notice.
+	decision := string(e.Decision.Outcome())
+	if e.Decision.Degraded {
+		decision += " (degraded)"
+	}
 	_, err := fmt.Fprintf(w, "%-20s %-7s %-14s %-30s %-8s %s\n",
 		e.Timestamp.Format("2006-01-02 15:04:05"),
-		e.Channel, e.Actor, truncate(e.Target, 30), e.RiskLevel, e.Decision.Outcome())
+		e.Channel, e.Actor, truncate(e.Target, 30), e.RiskLevel, decision)
 	return err
 }
 
