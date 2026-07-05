@@ -38,7 +38,7 @@ Nobody else in this space unifies CLI and MCP under one engine and one audit tra
 
 ## Physics, briefly
 
-*Damping* (阻尼), in physics, is the force that suppresses runaway oscillation and brings a system back to a stable range — it doesn't stop the system, it stabilizes it. That's the whole product philosophy: **governance isn't about blocking your AI agent. It's about damping its failure modes so it runs stably.** (Part of Amplify Lab's physics-themed product family — see `docs/品牌與命名體系.md`.)
+*Damping* (阻尼), in physics, is the force that suppresses runaway oscillation and brings a system back to a stable range — it doesn't stop the system, it stabilizes it. That's the whole product philosophy: **governance isn't about blocking your AI agent. It's about damping its failure modes so it runs stably.** (Part of Amplify Lab's physics-themed product family.)
 
 ## Quick start
 
@@ -136,14 +136,13 @@ Documented in detail (schema, CLI surface, UX copy) so implementing it is a matt
 
 | Path | What |
 | --- | --- |
-| [`docs/00-統一開發計畫（定案版）.md`](docs/00-統一開發計畫（定案版）.md) | **Start here** — the current authoritative strategy + roadmap (Traditional Chinese; resolves conflicts across the earlier planning docs below) |
+| [`docs/00-統一開發計畫（定案版）.md`](docs/00-統一開發計畫（定案版）.md) | **Start here** — the current authoritative strategy + roadmap (Traditional Chinese) |
 | [`docs/architecture.md`](docs/architecture.md) | Monorepo layout, module naming, `ActionEvent`/`Decision` schema |
 | [`docs/cli-reference.md`](docs/cli-reference.md) | Full `damping` command surface, hook contract, policy file schema |
 | [`docs/threat-model.md`](docs/threat-model.md) | What Damping defends against, known bypass classes, fail-open vs. fail-closed |
 | [`docs/ux-dashboard-spec.md`](docs/ux-dashboard-spec.md) | Phase 4/5 team dashboard & enterprise compliance UI spec |
 | [`features/`](features/) | Gherkin BDD scenarios — the acceptance criteria for every phase |
 | `core/`, `cli/` | The Go modules described above |
-| [`docs/市場調查與現況總覽.md`](docs/市場調查與現況總覽.md), [`docs/營運計劃書.md`](docs/營運計劃書.md), [`docs/總體開發藍圖-Fable5接手版.md`](docs/總體開發藍圖-Fable5接手版.md), [`docs/開發計畫.md`](docs/開發計畫.md), [`docs/品牌與命名體系.md`](docs/品牌與命名體系.md) | Historical planning record (market research, business plan, brand naming) — kept as provenance, superseded where they conflict with the doc above |
 
 ## How this project is developed: BDD, scenario-first
 
@@ -187,4 +186,4 @@ Apache License 2.0 — see [`LICENSE`](LICENSE).
 
 ---
 
-*Damping is developed by [Amplify Lab](docs/品牌與命名體系.md), under 牧本科技股份有限公司 (Muben Technology Co., Ltd.), a Taiwan-registered entity — relevant to Damping's later enterprise/sovereign-governance tier, not to the individual/free tier above.*
+*Damping is developed by Amplify Lab, under 牧本科技股份有限公司 (Muben Technology Co., Ltd.), a Taiwan-registered entity — relevant to Damping's later enterprise/sovereign-governance tier, not to the individual/free tier above.*

@@ -1,6 +1,6 @@
-# GoReleaser config for the `damping` binary (cli/) — see docs/開發計畫.md
-# §1.4 ("Phase 1就要做到最方便": Homebrew, a one-line install script, and
-# GitHub Releases binaries for every platform) and README.md's Quick Start,
+# GoReleaser config for the `damping` binary (cli/) — Phase 1 requires making
+# install as easy as possible: Homebrew, a one-line install script, and
+# GitHub Releases binaries for every platform. See README.md's Quick Start,
 # which already advertises `brew install damping` and
 # `curl -sSL https://damping.dev/install | sh` as the expected UX.
 #
