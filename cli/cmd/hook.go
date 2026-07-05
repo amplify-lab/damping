@@ -126,7 +126,7 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 		return nil
 	}
 
-	d, err := hookadapter.EvaluateCommand(rawCommand, engine)
+	d, err := evaluateCommandRecovering(rawCommand, engine)
 	if err != nil {
 		logDegraded(cmd, writer, hasAuditSink, sessionID, actor, "analyzing command: "+err.Error())
 		return nil
@@ -172,6 +172,37 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 	// Allow (directly, or resolved from a prompt): exit 0, the agent
 	// proceeds through its normal permission flow.
 	return nil
+}
+
+// evaluateCommandRecovering wraps hookadapter.EvaluateCommand with a
+// recover() so a genuine crash in shell.Analyze (adversarial input is, by
+// design, the whole point of what this function parses — see
+// cli/shell/fuzz_test.go) fails open with a logged degraded record, per
+// docs/threat-model.md §6's explicit design, rather than crashing this
+// entire subprocess.
+//
+// A review found this recover() didn't exist at all: an unhandled panic
+// here used to exit the subprocess with Go's own default panic status
+// (2), which happens to equal Damping's own hard-deny exit code today —
+// so a crash accidentally failed closed instead of the documented fail-
+// open-and-degraded behavior. That was never a deliberate design decision,
+// just an unexamined coincidence of the Go runtime's default panic
+// behavior — not something to depend on (a future Go version, or a panic
+// on a different goroutine, isn't guaranteed to produce the same exit
+// code), and it silently contradicted features/audit_log.feature's own
+// "shell parser crashes -> fails open, logged degraded" scenario. Scoped
+// to this one call site rather than cli/adapter/hook.EvaluateCommand
+// itself, since `damping policy test` (an interactive, foreground command
+// a human runs directly) should still show a real panic/stack trace for
+// debugging, not have it silently swallowed the same way an unattended
+// hook invocation should.
+func evaluateCommandRecovering(raw string, engine policy.Evaluator) (d decision.Decision, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("shell.Analyze panicked: %v", r)
+		}
+	}()
+	return hookadapter.EvaluateCommand(raw, engine)
 }
 
 // newTTYPrompter is a package-level var (not a direct call to
