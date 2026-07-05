@@ -1,0 +1,73 @@
+# Damping default policy — installed to ~/.damping/policy.yaml by `damping init`.
+# Schema documented in docs/cli-reference.md §13. The matcher for each rule id
+# is hardcoded Go in core/policy/rules.go for V1 (see docs/architecture.md §4
+# on why: OPA/Rego arrives in Phase 3). This file controls which rules are
+# active and at what risk/action — not the matching grammar itself.
+version: 1
+
+protected_paths:
+  - ~/.ssh
+  - ~/.aws
+  - .env
+  - .env.production
+
+allowlisted_install_domains:
+  - damping.dev
+  - raw.githubusercontent.com
+
+rules:
+  - id: destructive.rm_rf_protected
+    description: Recursive+force delete targeting a protected path — if this proceeds, this will delete your entire home directory or filesystem root
+    risk: critical
+    action: prompt
+
+  - id: destructive.git_push_force
+    description: Force-push can overwrite remote history
+    risk: high
+    action: prompt
+
+  - id: destructive.sql_drop_truncate
+    description: DROP TABLE / TRUNCATE issued via a shell-invoked DB client
+    risk: high
+    action: prompt
+
+  - id: destructive.chmod_777_recursive
+    description: Recursive world-writable permissions
+    risk: medium
+    action: prompt
+
+  - id: destructive.curl_pipe_sh_unallowlisted
+    description: curl|sh or wget|sh from a domain not in allowlisted_install_domains
+    risk: medium
+    action: prompt
+
+  - id: destructive.encoded_payload_pipe
+    description: base64-decode (or similar) piped into a shell/eval
+    risk: high
+    action: prompt
+
+  - id: destructive.proc_sandbox_bypass
+    description: Known /proc-based sandbox bypass path literals
+    risk: critical
+    action: deny
+
+  - id: destructive.dynamic_command_construction
+    description: Command name built dynamically (e.g. command substitution) and cannot be statically resolved
+    risk: medium
+    action: prompt
+
+  - id: destructive.write_protected_path
+    description: Output redirected (>, >>, etc) into a protected path
+    risk: critical
+    action: prompt
+
+  - id: mcp.write_tool_unscoped_identity
+    description: Write-tagged MCP tool called with no bound identity
+    risk: high
+    action: prompt
+
+# Populated at runtime by the TTY prompt's "always allow/deny" choice.
+# Hand-editing is fine (that's what `damping policy edit` is for) but these
+# usually grow organically as you use the tool.
+always_allow: []
+always_deny: []

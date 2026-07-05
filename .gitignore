@@ -1,0 +1,14 @@
+# Go build artifacts
+/cli/damping
+/cli/damping.exe
+*.test
+*.out
+
+# Editor/OS cruft
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Local damping state if ever created inside the repo during manual testing
+/.damping/
