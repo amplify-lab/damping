@@ -26,6 +26,7 @@ import (
 
 	"github.com/cucumber/godog"
 
+	"github.com/amplify-lab/damping/cli/adapter/agent"
 	"github.com/amplify-lab/damping/cli/cmd"
 	"github.com/amplify-lab/damping/cli/dashboard"
 	"github.com/amplify-lab/damping/cli/policies"
@@ -87,6 +88,29 @@ func TestFeatures_LocalDashboard(t *testing.T) {
 				if err := os.WriteFile(w.policyPath, []byte(policies.Default), 0o600); err != nil {
 					return ctx, err
 				}
+
+				// A review found this test never isolated the machine state
+				// handleSummary reads beyond AuditPath/PolicyPath:
+				// enforcement.IsDisabled() resolves paths.DisabledMarker()
+				// from $DAMPING_HOME (dashboard.Config has no field for it
+				// at all), and the agent-registered check reads
+				// paths.ClaudeSettings()/CursorHooks() — without isolation
+				// both silently read this machine's real
+				// ~/.damping/disabled, ~/.claude/settings.json, and
+				// ~/.cursor/hooks.json instead of anything the scenario
+				// itself establishes.
+				claudeSettings := filepath.Join(dir, "claude", "settings.json")
+				cursorHooks := filepath.Join(dir, "cursor", "hooks.json")
+				t.Setenv("DAMPING_HOME", dir)
+				t.Setenv("DAMPING_CLAUDE_SETTINGS", claudeSettings)
+				t.Setenv("DAMPING_CURSOR_HOOKS", cursorHooks)
+				if err := agent.InstallClaudeCodeHook(claudeSettings, false); err != nil {
+					return ctx, err
+				}
+				if err := agent.InstallCursorHook(cursorHooks, false); err != nil {
+					return ctx, err
+				}
+
 				srv := dashboard.NewServer(dashboard.Config{AuditPath: w.auditPath, PolicyPath: w.policyPath})
 				w.httpServer = httptest.NewServer(srv.Handler())
 				return ctx, nil
@@ -179,8 +203,32 @@ func TestFeatures_LocalDashboard(t *testing.T) {
 				return nil
 			})
 			sc.Then(`^the summary should report which agents are registered$`, func() error {
-				if !strings.Contains(w.respBody, `"agents"`) {
-					return fmt.Errorf("expected an agents field, got: %s", w.respBody)
+				// A review found this only checked the "agents" JSON key's
+				// presence — summary.Agents has no omitempty tag, so the
+				// key always exists regardless of value, making this
+				// assertion pass unconditionally at compile time,
+				// independent of whether agent hook detection actually
+				// works. Now decodes the real field and checks both
+				// fixture hooks installed in sc.Before are actually
+				// reported.
+				var s struct {
+					Agents []string `json:"agents"`
+				}
+				if err := json.Unmarshal([]byte(w.respBody), &s); err != nil {
+					return err
+				}
+				want := []string{"claude-code", "cursor"}
+				for _, agent := range want {
+					found := false
+					for _, got := range s.Agents {
+						if got == agent {
+							found = true
+							break
+						}
+					}
+					if !found {
+						return fmt.Errorf("expected %q among reported agents, got %v", agent, s.Agents)
+					}
 				}
 				return nil
 			})
