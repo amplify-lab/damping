@@ -40,7 +40,17 @@ func newMCPWrapCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			writer, _ := newAuditWriter()
+			// A review found this used to discard the ok-bool entirely
+			// (`writer, _ := newAuditWriter()`), unlike its two sibling call
+			// sites (hook.go, onoff.go) — so whenever the audit sink couldn't
+			// be constructed (e.g. no HOME in a sandboxed runner), every MCP
+			// tool call for this session's whole lifetime went unaudited with
+			// zero indication anything degraded. logDegraded falls back to
+			// stderr here since there's no sink to record the degradation in.
+			writer, hasAuditSink := newAuditWriter()
+			if !hasAuditSink {
+				logDegraded(cmd, writer, hasAuditSink, "unknown", "mcp-client", "constructing audit writer: no audit sink available; MCP tool calls for this session will not be recorded")
+			}
 
 			return mcpadapter.Wrap(cmd.Context(), args, engine, policyPath, writer, "mcp-client")
 		},

@@ -15,6 +15,7 @@ import (
 
 	gosdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/amplify-lab/damping/cli/paths"
 	"github.com/amplify-lab/damping/cli/ui"
 	"github.com/amplify-lab/damping/core/audit"
 	"github.com/amplify-lab/damping/core/decision"
@@ -442,6 +443,51 @@ func TestWrap_CrossChannelAuditWithCLI(t *testing.T) {
 	mcpOnly, _ := audit.ReadAll(auditPath, audit.Filter{Channel: event.ChannelMCP})
 	if len(cliOnly) != 1 || len(mcpOnly) != 1 {
 		t.Fatalf("expected exactly 1 cli event and 1 mcp event, got %d cli, %d mcp", len(cliOnly), len(mcpOnly))
+	}
+}
+
+// TestWrap_RespectsOff is a regression test for a real doc/behavior
+// mismatch: docs/cli-reference.md §6 says `damping off` means "your agent's
+// commands will NOT be checked" with no channel qualifier, but the MCP wrap
+// adapter used to never call enforcement.IsDisabled() at all — a destructive
+// tool call would still be evaluated (and denied) even while enforcement was
+// supposedly off. Checked per-call, not just at Wrap's startup, since this
+// process stays alive for the whole MCP session.
+func TestWrap_RespectsOff(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DAMPING_HOME", filepath.Join(dir, "damping-home"))
+	marker, err := paths.DisabledMarker()
+	if err != nil {
+		t.Fatalf("resolving disabled marker path: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(marker), 0o700); err != nil {
+		t.Fatalf("creating damping home: %v", err)
+	}
+	if err := os.WriteFile(marker, []byte(""), 0o600); err != nil {
+		t.Fatalf("writing disabled marker: %v", err)
+	}
+
+	engine := loadTestEngine(t)
+	auditPath := filepath.Join(t.TempDir(), "audit.jsonl")
+	writer := audit.NewWriter(auditPath)
+	cs := setupWrap(t, engine, testPolicyPath(t), writer)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := cs.CallTool(ctx, &gosdk.CallToolParams{Name: "delete_all"})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected a destructive tool call to be forwarded unchecked while enforcement is off, got error result: %+v", result)
+	}
+
+	events, err := audit.ReadAll(auditPath, audit.Filter{})
+	if err != nil {
+		t.Fatalf("reading audit log: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("expected no audit events while enforcement is off, got %d", len(events))
 	}
 }
 

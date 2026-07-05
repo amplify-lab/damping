@@ -81,6 +81,32 @@ Feature: MCP tool-call governance (V1 thin adapter)
     # Full OAuth 2.1 + confused-deputy defense is Phase 3 (gateway/), not V1.
     # See docs/architecture.md §7 and docs/00-統一開發計畫（定案版）.md §四修正三.
 
+  # These two scenarios are also disclosed pass-throughs (see this file's
+  # step-definition doc comment): this file only exercises the pure
+  # policy.Evaluator level, with no real MCP client/server/transport, but
+  # both behaviors below live in cli/adapter/mcp/wrap.go's real per-call tool
+  # handler, one level up from anything policy.Evaluate alone can prove.
+  # Read the named Go tests, not just this Gherkin, to see them enforced.
+  Scenario: "damping off" is respected by the MCP channel, checked on every tool call
+    # Regression guard for a real doc/behavior mismatch: docs/cli-reference.md
+    # §6 says "damping off" means the agent's commands "will NOT be checked"
+    # with no channel qualifier, but damping mcp wrap used to never call
+    # enforcement.IsDisabled() at all — see
+    # cli/adapter/mcp/wrap_test.go's TestWrap_RespectsOff.
+    Given the "filesystem.delete_all" tool is annotated with destructiveHint=true
+    And Damping enforcement is off
+    When the agent calls MCP tool "filesystem.delete_all" with args {"path":"/data"}
+    Then Damping should allow the call immediately without evaluating it
+
+  Scenario: A missing audit sink for the MCP channel is a loud, logged degradation, not a silent one
+    # Regression guard: `damping mcp wrap` used to discard the audit-writer
+    # construction error entirely, so every tool call for the session went
+    # unaudited with zero indication anything degraded — see
+    # cli/cmd/cmd_test.go's TestMCPWrap_LogsDegradedWhenAuditSinkUnavailable.
+    Given the audit sink cannot be constructed for this session
+    When "damping mcp wrap" starts
+    Then Damping should print a stderr warning that the audit sink is unavailable
+
   @phase3
   Scenario: Confused deputy defense (Gateway, Phase 3 — not implemented in V1)
     Given an agent holds a token scoped to "ServerA"

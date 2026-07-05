@@ -17,8 +17,10 @@ import (
 
 // IsDisabled reports whether enforcement is currently off, respecting an
 // expired --for duration (auto re-enable) by treating it as already on.
-// Shared by `damping status`, `damping doctor`, the hook entrypoint, and the
-// local dashboard's summary panel.
+// Shared by `damping status`, `damping doctor`, the hook entrypoint, the MCP
+// wrap adapter (checked fresh on every tool call, not just once at process
+// startup — see cli/adapter/mcp/wrap.go), and the local dashboard's summary
+// panel.
 func IsDisabled() (bool, error) {
 	marker, err := paths.DisabledMarker()
 	if err != nil {

@@ -779,6 +779,38 @@ func TestHook_MalformedInputFailsOpenButLogsDegraded(t *testing.T) {
 	}
 }
 
+// TestMCPWrap_LogsDegradedWhenAuditSinkUnavailable is a regression test for
+// a real silent-failure bug: `writer, _ := newAuditWriter()` used to discard
+// the ok-bool entirely, unlike its two sibling call sites in this same file
+// (the hook entrypoint above, and newOffCmd) — so whenever the audit sink
+// couldn't be constructed, every MCP tool call for the whole session went
+// unaudited with zero stderr output, zero degraded event, nothing. --config
+// is passed explicitly so policy loading succeeds even though HOME/
+// DAMPING_HOME (and therefore the audit path) cannot be resolved.
+func TestMCPWrap_LogsDegradedWhenAuditSinkUnavailable(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	policyPath := filepath.Join(t.TempDir(), "policy.yaml")
+	raw, err := os.ReadFile(filepath.Join("..", "policies", "default.yaml"))
+	if err != nil {
+		t.Fatalf("reading default policy: %v", err)
+	}
+	if err := os.WriteFile(policyPath, raw, 0o600); err != nil {
+		t.Fatalf("writing policy copy: %v", err)
+	}
+
+	t.Setenv("DAMPING_HOME", "")
+	t.Setenv("HOME", "")
+
+	_, stderr, _ := run(t, "", "--config", policyPath, "mcp", "wrap", "--", "definitely-not-a-real-binary-xyz")
+	if !strings.Contains(stderr, "no audit sink available") {
+		t.Fatalf("expected a degraded stderr warning about the missing audit sink, got: %q", stderr)
+	}
+}
+
 // TestHook_PersistsAlwaysAllowPattern exercises the full loop end-to-end:
 // a Prompt-tier command resolved via "Always allow" ([A]) must be written
 // back into the policy file, and a *second* identical command must then be

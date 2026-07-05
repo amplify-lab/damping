@@ -30,6 +30,7 @@ import (
 
 	gosdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/amplify-lab/damping/cli/enforcement"
 	"github.com/amplify-lab/damping/cli/ui"
 	"github.com/amplify-lab/damping/core/audit"
 	"github.com/amplify-lab/damping/core/decision"
@@ -116,6 +117,18 @@ func registerForwardingTool(server *gosdk.Server, cs *gosdk.ClientSession, tool 
 	}
 
 	server.AddTool(forwarded, func(ctx context.Context, req *gosdk.CallToolRequest) (*gosdk.CallToolResult, error) {
+		// Checked fresh on every call, not just once at Wrap's startup — this
+		// process stays alive for the MCP client's whole session, and a human
+		// running `damping off` mid-session must take effect immediately, the
+		// same way it does for the CLI hook (a fresh subprocess per command,
+		// so a startup-only check there already amounts to "check every
+		// call"). See docs/cli-reference.md §6: `damping off` claims agent
+		// commands "will NOT be checked" — this used to not apply to the MCP
+		// channel at all.
+		if disabled, _ := enforcement.IsDisabled(); disabled {
+			return cs.CallTool(ctx, &gosdk.CallToolParams{Name: req.Params.Name, Arguments: req.Params.Arguments})
+		}
+
 		facts := factsFromCall(tool, req)
 
 		var d decision.Decision
