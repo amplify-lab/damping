@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -210,6 +212,54 @@ func TestResolvePrompt_PersistsAlwaysAllowChoice(t *testing.T) {
 	}
 }
 
+// TestResolvePrompt_ConcurrentCallsForSameRawOnlyPromptOnce is a regression
+// test found via adversarial review: registerForwardingTool's handler checks
+// the overlay before ever calling resolvePrompt, so two goroutines racing on
+// the exact same not-yet-decided raw call both miss that pre-lock check and
+// both reach resolvePrompt, serialized by ttyPromptMu. Without a second
+// overlay check right after acquiring the lock, the loser would re-prompt a
+// human for a call the winner (just ahead of it) already resolved a moment
+// earlier — and could even persist a contradictory answer (e.g. "always
+// deny" after the winner just recorded "always allow") for the same raw
+// string. go test -race stays clean regardless, since this was a race-free
+// but logically wrong sequencing, not a data race — this test asserts the
+// actual behavior (exactly one prompt, one consistent outcome), which -race
+// alone cannot catch.
+func TestResolvePrompt_ConcurrentCallsForSameRawOnlyPromptOnce(t *testing.T) {
+	orig := newTTYPrompter
+	defer func() { newTTYPrompter = orig }()
+
+	var promptCount int32
+	newTTYPrompter = func() (ui.Prompter, func(), error) {
+		atomic.AddInt32(&promptCount, 1)
+		return ui.TTYPrompter{In: strings.NewReader("A\n"), Out: io.Discard}, func() {}, nil
+	}
+
+	policyPath := testPolicyPath(t)
+	overlay := &alwaysOverlay{}
+
+	const n = 2
+	results := make([]decision.Decision, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i] = resolvePrompt(policyPath, overlay, "delete_all {}", decision.Decision{Verdict: decision.Prompt})
+		}(i)
+	}
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&promptCount); got != 1 {
+		t.Fatalf("expected exactly one TTY prompt across %d concurrent calls for the same raw, got %d", n, got)
+	}
+	for i := 1; i < n; i++ {
+		if results[i].Outcome() != results[0].Outcome() {
+			t.Fatalf("expected every concurrent call to resolve to the same verdict, got %v and %v", results[0].Outcome(), results[i].Outcome())
+		}
+	}
+}
+
 // TestResolvePrompt_FailedPersistNotifiesAndLeavesOverlayUntouched proves the
 // failure path stays loud rather than silently pretending the choice was
 // remembered when it wasn't actually saved to disk.
@@ -310,6 +360,49 @@ func TestWrap_PersistsAlwaysAllowChoiceForRestOfSession(t *testing.T) {
 	}
 	if result.IsError {
 		t.Fatalf("expected the second identical call to be silently allowed via the overlay, got error result: %+v", result)
+	}
+}
+
+// TestWrap_PersistsAlwaysDenyChoiceForRestOfSession mirrors
+// TestWrap_PersistsAlwaysAllowChoiceForRestOfSession for the "D" (always
+// deny) choice — a coverage gap flagged via adversarial review, since only
+// the always-allow path had an end-to-end session-level test.
+func TestWrap_PersistsAlwaysDenyChoiceForRestOfSession(t *testing.T) {
+	engine := loadTestEngine(t)
+	auditPath := filepath.Join(t.TempDir(), "audit.jsonl")
+	writer := audit.NewWriter(auditPath)
+	cs := setupWrap(t, engine, testPolicyPath(t), writer)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	orig := newTTYPrompter
+	defer func() { newTTYPrompter = orig }()
+	newTTYPrompter = func() (ui.Prompter, func(), error) {
+		return ui.TTYPrompter{In: strings.NewReader("D\n"), Out: io.Discard}, func() {}, nil
+	}
+
+	result, err := cs.CallTool(ctx, &gosdk.CallToolParams{Name: "delete_all"})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected the always-deny resolution to deny the first call, got: %+v", result)
+	}
+
+	// A second, independent call for the exact same tool+args must now be
+	// silently denied via the in-memory overlay — proven by never invoking
+	// the prompter again.
+	newTTYPrompter = func() (ui.Prompter, func(), error) {
+		t.Fatal("prompter must not be invoked once the exact call is in the always-deny overlay")
+		return ui.TTYPrompter{}, func() {}, nil
+	}
+	result, err = cs.CallTool(ctx, &gosdk.CallToolParams{Name: "delete_all"})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected the second identical call to be silently denied via the overlay, got: %+v", result)
 	}
 }
 
