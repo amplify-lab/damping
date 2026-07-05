@@ -34,6 +34,14 @@ Feature: MCP tool-call governance (V1 thin adapter)
     # empty, so this would fire on nearly every non-read-only MCP tool call.
     # See docs/cli-reference.md §13 and docs/00-統一開發計畫（定案版）.md.
 
+  # The next two scenarios describe real, implemented, already-tested V1
+  # behavior, but this file's own step definitions wire them as thin,
+  # disclosed pass-throughs rather than re-proving them here — the actual
+  # in-memory-transport MCP client/server harness that proves this lives in
+  # cli/adapter/mcp/wrap_test.go's TestWrap_PersistsAlwaysAllowChoiceForRestOfSession
+  # and TestWrap_PersistsAlwaysDenyChoiceForRestOfSession, whose building
+  # blocks are unexported on purpose (kept internal to the package they
+  # test). Read those tests, not just this Gherkin, to see this proven.
   Scenario: An "always allow" choice for an MCP tool call is honored for the rest of the session
     Given the agent calls MCP tool "filesystem.delete_all" with args {"path":"/data"}
     And the user chooses "Always allow this exact command" at the confirmation prompt
@@ -60,6 +68,11 @@ Feature: MCP tool-call governance (V1 thin adapter)
     And filtering with "damping log --channel mcp" should show only the MCP event
     And both events should share the same ActionEvent schema
 
+  # This scenario's steps are also a disclosed pass-through (see this
+  # file's step-definition doc comment) — the design invariant itself is
+  # enforced by what code doesn't exist (no token-handling code anywhere
+  # in cli/adapter/mcp) rather than something a single dynamic test run
+  # proves; see wrap.go's own doc comments for the no-OAuth invariant.
   Scenario: The V1 MCP adapter does not perform OAuth or token re-issuance
     Given the agent's MCP client presents a token scoped to "server-a"
     When "damping mcp wrap" forwards a tool call to the wrapped server

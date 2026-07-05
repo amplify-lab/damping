@@ -32,11 +32,16 @@ Feature: Policy configuration and dry-run testing
     # track byte/line offsets into the YAML file.
     And Damping should not attempt to load the invalid file into the running policy engine
 
-  Scenario Outline: A new rule must have both a "should block" and a "should not block" test case
+  # This is a process/review convention about the test suite's own
+  # completeness, not a product behavior — the step definitions backing it
+  # are a disclosed pass-through, not a runtime check that reads
+  # dangerous_command.feature to confirm real coverage exists per rule_id.
+  # Enforced today by code review (see CONTRIBUTING.md), not by godog.
+  Scenario Outline: A new rule should have both a "blocks" and a "does not block" test case
     Given a new rule "<rule_id>" is proposed
-    Then there must be at least one scenario asserting it blocks a real dangerous case
-    And there must be at least one scenario asserting it does not block a normal, safe case
-    And a rule without both is not permitted to merge
+    Then reviewers should expect at least one scenario asserting it blocks a real dangerous case
+    And reviewers should expect at least one scenario asserting it does not block a normal, safe case
+    And a rule without both should not be merged
 
     Examples:
       | rule_id                          |
