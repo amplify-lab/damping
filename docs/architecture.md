@@ -15,7 +15,11 @@
 │   │                         #   rule registry (rules.go) + matchers split by transport (rules_shell.go, rules_mcp.go —
 │   │                         #   each transport's rule family grows independently, see §4), OPAEngine + embedded
 │   │                         #   Rego module (opa.go, policy.rego) — Phase 3, see §4
-│   └── audit/                # Append-only JSONL sink + reader/filter
+│   ├── atomicfile/            # Write() — temp-file+rename crash-safe write, shared by policy's
+│   │                         #   AppendAlwaysPattern and cli/adapter/agent's hook installers (both
+│   │                         #   overwrite an existing file in place and needed the identical fix)
+│   └── audit/                # Append-only JSONL sink + reader/filter; Writer.Append also rotates
+│                             #   via Rotate() once the file crosses a size threshold
 ├── cli/                     # Go module: `damping` binary (product line A)
 │   ├── cmd/                 # Cobra command tree — one file per command (init.go, doctor.go, log.go, ...)
 │   ├── shell/                # AST traversal (parser.go), Facts extraction (facts.go), static-value
@@ -169,11 +173,13 @@ type Decision struct {
 
 Built on `mvdan.cc/sh/v3/syntax`. Two layers, not one:
 
-1. **Syntax layer (mvdan/sh AST)**: reliably defeats naive regex-bypass tricks — extra whitespace, quoting variations, variable expansion structure, multi-line wrapping, heredocs. This is what "parse, don't regex" actually buys you.
+1. **Syntax layer (mvdan/sh AST)**: reliably defeats naive regex-bypass tricks — extra whitespace, quoting variations, variable expansion structure, multi-line wrapping. `parser.go`'s walk also recurses into every command/process substitution wherever a word can carry one (argument, assignment value, redirect target, here-string — not just the command-name position) and re-parses a heredoc body as its own script whenever it's addressed to a real shell interpreter (`sh`/`bash`/`zsh`/`dash`/`ksh` — a heredoc fed to a non-shell command like `cat` is left as inert data). This is what "parse, don't regex" actually buys you.
 2. **Semantic layer (hand-written, on top of the AST)**: mvdan/sh's `syntax` package does **not** resolve shell aliases (only the opt-in `interp` interpreter does, which means actually executing), does **not** decode runtime data like base64 payloads, and treats `/proc/self/...` paths as opaque string literals. These are real, documented gaps (see `docs/threat-model.md`), covered instead by:
-   - a maintained alias-lookup table for known-dangerous command aliases,
-   - a structural rule flagging `... | base64 -d | sh` (or `bash`/`zsh`/`eval`) pipelines regardless of the payload content,
+   - a small, deliberately extensible alias-lookup table demonstrating the resolution mechanism (`facts.go`'s `knownAliases`, resolved consistently for both a lone command and a pipeline stage) — not a claim of comprehensive dotfile-framework coverage,
+   - a structural rule flagging a `base64`/`base32`/`uudecode` (unambiguous bare command names) or `xxd -r`/`openssl enc -d`/`openssl base64 -d` (ambiguous tools, matched by a targeted flag pattern instead) pipeline feeding into `sh`/`bash`/`zsh`/`eval`/`source`, regardless of the payload content,
    - a maintained string-match list of known sandbox-bypass paths (`/proc/self/root/...`, `/proc/self/exe`, etc).
+
+`rm -rf`'s target check (`rules_shell.go`'s `matchRmRfProtected`) inspects every non-flag path operand independently, not just the last word — `rm` accepts multiple path operands in one invocation, and checking only the last word both false-positived on a trailing flag (`rm -rf node_modules -v`) and silently missed a dangerous earlier operand (`rm -rf /etc build`), a real bug found via review and fixed.
 
 `Analyze` — not each rule individually, which would just fragment the same coverage — has real Go native fuzz coverage (`cli/shell/fuzz_test.go`'s `FuzzAnalyze`), seeded from every real bypass this package's tests assert on and run through the full `Analyze` → `Engine.Evaluate` pipeline every seed and mutation, on every rule at once; CI runs it for 30s per PR, longer locally. "Must never trigger" regressions live as ordinary Go tests (e.g. `TestAnalyze_AllowsSafeEverydayCommands`) — see `docs/00-統一開發計畫（定案版）.md` §六 and the test strategy in the original `開發計畫.md`.
 
@@ -193,6 +199,8 @@ The official `github.com/modelcontextprotocol/go-sdk` has no built-in intercepto
 An `[A]`/`[D]` "always" choice at the prompt persists exactly like the CLI hook's (`policy.AppendAlwaysPattern` writes it into the same policy file), but `damping mcp wrap` is one long-lived process for an entire MCP session rather than a fresh subprocess per action — so writing to disk alone wouldn't make "always" true for the *rest of this session*, only for a hypothetical future run that reloads the file. `always_overlay.go`'s `alwaysOverlay` closes that gap: a small in-memory, mutex-guarded mirror of what was just persisted, checked before `engine.Evaluate` on every subsequent call in the same session, one instance shared across every tool `wrapTransport` registers.
 
 No OAuth, no token inspection or re-issuance, no confused-deputy defense — that's Phase 3's `gateway/`, an actual standalone reverse-proxy MCP server, not this in-process pair.
+
+`registerForwardingTool`'s handler checks `enforcement.IsDisabled()` fresh on *every* call, not just once when `wrapTransport` starts — a real bug found via review: unlike the CLI hook (a fresh subprocess per command, so a startup-only check there already amounts to "check every call"), `mcp wrap` is one long-lived process, and `damping off` mid-session must take effect immediately, the same way it does for the CLI. When disabled, the call is forwarded straight through with no evaluation and no audit record — matching `docs/cli-reference.md` §6's claim that agent commands "will NOT be checked."
 
 **The one default-active MCP rule (`mcp.destructive_tool_call`) deliberately does not need identity.** It fires only when the wrapped server itself sets `ToolAnnotations.DestructiveHint: true` — a signal that requires no AD/LDAP binding to be meaningful. The identity-gated rule (`mcp.write_tool_unscoped_identity`) is fully implemented in `core/policy/rules_mcp.go` but is **not** in `cli/policies/default.yaml`'s active rule list: with no identity system at the individual tier (`ActionEvent.Identity` is always empty pre-Phase 5), it would flag nearly every non-explicitly-read-only tool call — the exact nagging failure mode this project treats as its top product risk. Phase 5's enterprise policy config re-enables it once identity binding makes "unscoped" a real signal.
 
