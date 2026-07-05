@@ -42,28 +42,73 @@ Nobody else in this space unifies CLI and MCP under one engine and one audit tra
 
 ## Quick start
 
+### 1. Install and set up
+
 ```
 brew install damping        # or: curl -sSL https://damping.dev/install | sh
 damping init                # detects Claude Code / Cursor, installs the default policy, registers hooks
 ```
 
-That's it — Damping runs invisibly until something dangerous happens, then it asks.
+`damping init` prints a confirmation for every agent it found and wired up, and closes with a one-line demo suggestion (`ask your agent to run rm -rf /tmp/test`) — that's step 2 below.
+
+### 2. Watch it intercept something
+
+Ask your agent (Claude Code, Cursor) to run something Damping's default policy treats as destructive — `rm -rf /tmp/test` is the safe way to see this without risking real data. You'll see this at your terminal, not in the agent's own chat window (Damping owns its own confirmation prompt on `/dev/tty`, independent of whichever agent triggered it):
 
 ```
-damping status              # is it on, which policy, which agents are wired up
-damping doctor               # health check — hook registration, policy validity, degraded-mode history
-damping log                  # replay everything it's intercepted, across every channel
-damping policy test "rm -rf ~/"   # dry-run a command against your policy, no side effects
-damping off --for 30m         # pause enforcement (the only sanctioned way to disable it — see docs/threat-model.md §4)
+⚠  Damping intercepted a destructive command
+
+  Command: rm -rf ~/
+  Rule:    destructive.rm_rf_protected
+  Reason:  Recursive+force delete of a path that isn't a known regenerable build/cache directory (node_modules, dist, build, ...) — for your home directory, filesystem root, or a configured protected path, this could destroy irreplaceable data
+
+  [a] Allow once   [A] Always allow this exact command
+  [d] Deny once    [D] Always deny this exact command
+>
 ```
 
-To cover your MCP servers too, point your MCP client config at Damping instead of the real server directly:
+- **`a`** / **`d`** decide just this one call.
+- **`A`** / **`D`** persist the decision (an exact-match pattern written into your policy file) so the same command never prompts again — useful once you've confirmed a repeated command in your workflow (e.g. `rm -rf ./dist/*` in a build script) is actually fine.
+
+### 3. Review what happened
+
+Every action Damping evaluates — allowed, prompted, or denied, on either channel — lands in one audit trail:
+
+```
+damping log                        # replay everything it's intercepted, across every channel
+damping log --risk critical        # just the critical-severity events
+damping log --channel mcp --since 24h
+damping log --follow               # tail -f style, live
+```
+
+Or open the same log in a local, zero-setup web view:
+
+```
+damping dashboard                  # binds to 127.0.0.1:4243 by default
+```
+
+<img src="docs/assets/dashboard-demo.png" alt="damping dashboard showing a filterable event table with per-session risk sparklines, mixing CLI and MCP channel events across all four risk tiers" width="700">
+
+*(Real output from a seeded local audit log — not a mockup. Rows span both channels, all four risk tiers, both allow/deny/prompt outcomes, and two different agents, which is the whole point: one table, not one per tool.)*
+
+### 4. Cover your MCP servers too
+
+Point your MCP client config at Damping instead of the real server directly:
 
 ```
 damping mcp wrap -- npx @some-org/example-mcp-server
 ```
 
-Damping discovers the real server's tools, re-exposes them unchanged, and runs every call through the same policy engine and audit log as your terminal — before forwarding it on.
+Damping discovers the real server's tools, re-exposes them unchanged, and runs every call through the exact same policy engine and audit log as your terminal — before forwarding it on. Nothing about the wrapped server's behavior changes from the client's point of view except that a destructive tool call can now be intercepted, exactly like a shell command.
+
+### 5. Everyday commands
+
+```
+damping status                     # is it on, which policy, which agents are wired up
+damping doctor                     # health check — hook registration, policy validity, degraded-mode history
+damping policy test "rm -rf ~/"     # dry-run a command against your policy, no side effects
+damping off --for 30m               # pause enforcement (the only sanctioned way to disable it — see docs/threat-model.md §4)
+```
 
 Full command reference: [`docs/cli-reference.md`](docs/cli-reference.md).
 
@@ -78,7 +123,7 @@ Everything below is implemented and covered by passing tests — not aspirationa
 - **BDD scenarios that actually run** — every V1-scope `features/*.feature` file executes for real via `godog` (`cli/bdd`), not just as documentation: `dangerous_command.feature` (47 scenarios), `self_protection.feature`, `mcp_tool_governance.feature`, `audit_log.feature`, `policy_config.feature`, and `local_dashboard.feature`. Scenarios genuinely covered elsewhere by an equivalent, more thorough test (e.g. MCP always-allow/deny session persistence, already exercised end-to-end in `cli/adapter/mcp/wrap_test.go`) or describing a real design invariant that isn't independently checkable from a single dynamic test run (e.g. "no adapter writes to the audit file directly") get documented pass-through steps rather than a second, weaker re-implementation — see each `cli/bdd/*_test.go` file's doc comment for which and why. `features/compliance_report.feature` (@phase5) and `features/team_dashboard.feature` (@phase4) are feature-level-tagged for phases with no implementation yet, so they aren't wired at all.
 - **OPA/Rego policy engine (Phase 3)** — every rule above also has an embedded OPA/Rego implementation (`core/policy/policy.rego` + `opa.go`), selectable per-deployment via `policy.yaml`'s `engine: opa` field instead of the Go-native default. `core/policy/opa_equivalence_test.go` proves both engines return byte-identical decisions for every rule; `opa_bench_test.go` gates eval latency at sub-millisecond. See `docs/architecture.md` §4.
 - **`damping dashboard`** — a local, single-user web view of the same audit log `damping log` reads (`cli/dashboard`): dark-themed summary strip, a filterable event table (same `channel`/`risk`/`actor`/`outcome`/`since`/`limit` vocabulary as the CLI), a row-click detail view of the full event, per-session risk sparklines, and a live tail via Server-Sent Events — no separate frontend build (vanilla JS + a Tailwind-compiled stylesheet checked into the repo, embedded via `go:embed`). This is **not** Phase 4's team dashboard (`docs/ux-dashboard-spec.md`) — that's a separate, not-yet-built React+TS app needing a Cloudflare account and an SSO vendor decision; this one binds to `127.0.0.1` only, has no auth, and needs no infrastructure at all. See `docs/cli-reference.md` §9.1.
-- **Release engineering** (`.goreleaser.yaml`, `install.sh`, `.github/workflows/release.yml`) — cross-platform builds (linux/darwin, amd64/arm64), a Homebrew formula, and the one-line install script this README's Quick Start already assumes, all verified end-to-end locally (`goreleaser release --snapshot --clean --skip=publish` produces working binaries; `install.sh` tested against a local fake release server). What's *not* live yet: an actual published GitHub Release, since that needs the real `amplify-lab` GitHub org and `damping.dev` domain, both still pending Tim's own confirmation/registration (see `docs/00-統一開發計畫（定案版）.md` "立即可執行的下一步" item 1) — the tooling is ready to activate the moment those land, not a guess at infrastructure that doesn't exist.
+- **Release engineering** (`.goreleaser.yaml`, `install.sh`, `.github/workflows/release.yml`) — cross-platform builds (linux/darwin, amd64/arm64), a Homebrew cask, and the one-line install script this README's Quick Start already assumes, all verified end-to-end locally (`goreleaser release --snapshot --clean --skip=publish` produces working binaries; `install.sh` tested against a local fake release server). `amplify-lab` (GitHub org) and `damping.dev` (domain) are both real and registered. What's *not* live yet: an actual published GitHub Release and the code itself hasn't been pushed to `github.com/amplify-lab/damping` — the tooling is ready to activate the moment that happens.
 
 ## What's designed but not yet built
 
@@ -120,7 +165,7 @@ Not every step is (or should be) a from-scratch runtime check. A step gets a **d
 ## Building from source
 
 ```
-git clone https://github.com/amplify-lab/damping   # org name pending final confirmation — see docs/00-統一開發計畫（定案版）.md §二
+git clone https://github.com/amplify-lab/damping
 cd damping
 cd core && go build ./... && go test ./...
 cd ../cli && go build ./... && go test ./...
