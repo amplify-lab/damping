@@ -9,13 +9,15 @@
 // is producing exactly this Facts shape from a real tool call, which is
 // cli/adapter/mcp's own package's responsibility to test, not this one's.
 //
-// The two "always allow/deny persists for the rest of the session" scenarios
-// and the "no OAuth" scenario get intentionally thin, pass-through step
-// definitions below rather than real assertions: they describe real,
-// implemented, already-tested V1 behavior (see
-// cli/adapter/mcp/wrap_test.go's TestWrap_PersistsAlwaysAllowChoiceForRestOfSession
-// and friends for the always-allow/deny persistence, and wrap.go's own doc
-// comments for the no-OAuth design invariant), but proving them again
+// The two "always allow/deny persists for the rest of the session" scenarios,
+// the "no OAuth" scenario, and the "damping off"/missing-audit-sink pair get
+// intentionally thin, pass-through step definitions below rather than real
+// assertions: they describe real, implemented, already-tested V1 behavior
+// (see cli/adapter/mcp/wrap_test.go's TestWrap_PersistsAlwaysAllowChoiceForRestOfSession
+// and friends for the always-allow/deny persistence, TestWrap_RespectsOff and
+// cli/cmd/cmd_test.go's TestMCPWrap_LogsDegradedWhenAuditSinkUnavailable for
+// the off/audit-sink pair, and wrap.go's own doc comments for the no-OAuth
+// design invariant), but proving them again
 // through godog would mean either re-implementing wrap_test.go's real
 // in-memory-transport MCP client/server harness a second time in this
 // package (its building blocks are unexported, precisely to keep that
@@ -248,6 +250,17 @@ rules:
 			sc.When(`^"damping mcp wrap" forwards a tool call to the wrapped server$`, func() error { return nil })
 			sc.Then(`^Damping should not inspect, validate, or re-issue any OAuth token$`, func() error { return nil })
 			sc.Then(`^Damping should only evaluate the tool name and arguments against policy$`, func() error { return nil })
+
+			// --- "damping off" / missing-audit-sink: both live in
+			// cli/adapter/mcp/wrap.go's real per-call tool handler, one level
+			// above anything policy.Evaluate alone can prove — see the
+			// feature file's scenario comments for the real Go tests ---
+
+			sc.Given(`^Damping enforcement is off$`, func() error { return nil })
+			sc.Then(`^Damping should allow the call immediately without evaluating it$`, func() error { return nil })
+			sc.Given(`^the audit sink cannot be constructed for this session$`, func() error { return nil })
+			sc.When(`^"damping mcp wrap" starts$`, func() error { return nil })
+			sc.Then(`^Damping should print a stderr warning that the audit sink is unavailable$`, func() error { return nil })
 		},
 		Options: &godog.Options{
 			Format: "pretty",
