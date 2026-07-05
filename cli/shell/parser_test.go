@@ -271,6 +271,28 @@ func TestAnalyze_ResolvesKnownAliasToItsDangerousTarget(t *testing.T) {
 	}
 }
 
+// TestAnalyze_ResolvesKnownAliasInPipelineStage is a regression test for a
+// real inconsistency: knownAliases used to be consulted only in
+// factsFromCall (a lone command or either side of &&/||), never in
+// collectPipelineCommands (the "a | b | c" path) — so an alias used as a
+// pipeline stage would silently bypass resolution while the identical alias
+// outside a pipeline would not. Checked directly against the extracted
+// Facts (not through Evaluate) since no shipped pipeline rule currently
+// keys off "rm" as a stage name — this proves the two extraction paths
+// agree, independent of whether any rule happens to act on the result yet.
+func TestAnalyze_ResolvesKnownAliasInPipelineStage(t *testing.T) {
+	facts, err := Analyze("nuke | cat")
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if len(facts) != 1 || !facts[0].IsPipeline {
+		t.Fatalf("expected a single pipeline Facts entry, got %+v", facts)
+	}
+	if len(facts[0].PipelineCmds) == 0 || facts[0].PipelineCmds[0] != "rm" {
+		t.Fatalf("expected the pipeline's first stage alias \"nuke\" to resolve to \"rm\", got PipelineCmds=%v", facts[0].PipelineCmds)
+	}
+}
+
 func TestAnalyze_FlagsDynamicallyConstructedCommand(t *testing.T) {
 	e := loadEngine(t)
 	d := evaluateRaw(t, e, "$(echo rm) -rf ~/")
