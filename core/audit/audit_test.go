@@ -315,11 +315,10 @@ func TestFollow_EmitsOnlyEventsAppendedAfterStartOffset(t *testing.T) {
 		t.Fatalf("append: %v", err)
 	}
 
-	info, err := os.Stat(path)
+	startInfo, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	startOffset := info.Size()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -327,7 +326,7 @@ func TestFollow_EmitsOnlyEventsAppendedAfterStartOffset(t *testing.T) {
 	got := make(chan event.ActionEvent, 4)
 	done := make(chan error, 1)
 	go func() {
-		done <- Follow(ctx, path, startOffset, Filter{}, 5*time.Millisecond, func(e event.ActionEvent) error {
+		done <- Follow(ctx, path, startInfo, Filter{}, 5*time.Millisecond, func(e event.ActionEvent) error {
 			got <- e
 			return nil
 		})
@@ -371,7 +370,7 @@ func TestFollow_RespectsFilter(t *testing.T) {
 	got := make(chan event.ActionEvent, 4)
 	done := make(chan error, 1)
 	go func() {
-		done <- Follow(ctx, path, 0, Filter{Channel: event.ChannelMCP}, 5*time.Millisecond, func(e event.ActionEvent) error {
+		done <- Follow(ctx, path, nil, Filter{Channel: event.ChannelMCP}, 5*time.Millisecond, func(e event.ActionEvent) error {
 			got <- e
 			return nil
 		})
@@ -421,7 +420,7 @@ func TestFollow_HandlesRotation(t *testing.T) {
 	got := make(chan event.ActionEvent, 4)
 	done := make(chan error, 1)
 	go func() {
-		done <- Follow(ctx, path, 0, Filter{}, 5*time.Millisecond, func(e event.ActionEvent) error {
+		done <- Follow(ctx, path, nil, Filter{}, 5*time.Millisecond, func(e event.ActionEvent) error {
 			got <- e
 			return nil
 		})
@@ -460,13 +459,97 @@ func TestFollow_HandlesRotation(t *testing.T) {
 	<-done
 }
 
+// TestFollow_DetectsRotationThatCompletedBeforeItStarted is a regression
+// test for a real bug: Follow used to take a bare startOffset int64, always
+// initializing its internal lastInfo to nil — so a rotation that already
+// completed in the window between the caller's own pre-Follow os.Stat and
+// Follow's first internal check could never be detected by file identity
+// at all on that first check, only by the much weaker size-shrink
+// fallback, which doesn't help when the new file has already regrown past
+// the old offset by the time anyone looks. Reproduces that exact window: a
+// baseline is stat'd, the file is then rotated away and refilled with
+// unrelated, larger content *before* Follow is ever called, and Follow must
+// still recognize the identity change (via the caller-supplied startInfo)
+// rather than seeking into the new file at the stale offset.
+func TestFollow_DetectsRotationThatCompletedBeforeItStarted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	w := NewWriter(path)
+
+	baseline := sampleEvent(event.ChannelCLI, event.RiskLow, decision.Allow)
+	baseline.EventID = "evt_baseline"
+	if err := w.Append(baseline); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	// The caller's own pre-Follow stat — this is what log.go/handlers.go
+	// capture before ever calling Follow.
+	startInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+
+	// Simulate a rotation completing in the window between that stat and
+	// Follow actually starting: rename the file away, then write a fresh
+	// file at the same path containing unrelated events whose total size
+	// already exceeds startInfo's size — the exact condition under which
+	// the old size-shrink fallback could never fire either.
+	if err := os.Rename(path, path+".rotated"); err != nil {
+		t.Fatalf("simulating rotation: %v", err)
+	}
+	w2 := NewWriter(path)
+	newGenEvent1 := sampleEvent(event.ChannelCLI, event.RiskLow, decision.Allow)
+	newGenEvent1.EventID = "evt_new_gen_1"
+	newGenEvent2 := sampleEvent(event.ChannelCLI, event.RiskLow, decision.Allow)
+	newGenEvent2.EventID = "evt_new_gen_2"
+	if err := w2.Append(newGenEvent1); err != nil {
+		t.Fatalf("append to new generation: %v", err)
+	}
+	if err := w2.Append(newGenEvent2); err != nil {
+		t.Fatalf("append to new generation: %v", err)
+	}
+	if info, statErr := os.Stat(path); statErr != nil || info.Size() <= startInfo.Size() {
+		t.Fatalf("test setup invariant violated: new generation must be larger than the old offset (old=%d)", startInfo.Size())
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	got := make(chan event.ActionEvent, 4)
+	done := make(chan error, 1)
+	go func() {
+		done <- Follow(ctx, path, startInfo, Filter{}, 5*time.Millisecond, func(e event.ActionEvent) error {
+			got <- e
+			return nil
+		})
+	}()
+
+	seen := map[string]bool{}
+	for len(seen) < 2 {
+		select {
+		case e := <-got:
+			seen[e.EventID] = true
+		case <-time.After(1 * time.Second):
+			t.Fatalf("timed out waiting for the new generation's events; got so far: %v", seen)
+		}
+	}
+	if !seen["evt_new_gen_1"] || !seen["evt_new_gen_2"] {
+		t.Fatalf("expected both new-generation events to be read from the top of the new file, got %v", seen)
+	}
+	if seen["evt_baseline"] {
+		t.Fatal("did not expect the old generation's baseline event to be re-emitted")
+	}
+
+	cancel()
+	<-done
+}
+
 func TestFollow_StopsOnContextCancel(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "audit.jsonl")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- Follow(ctx, path, 0, Filter{}, 5*time.Millisecond, func(event.ActionEvent) error {
+		done <- Follow(ctx, path, nil, Filter{}, 5*time.Millisecond, func(event.ActionEvent) error {
 			return nil
 		})
 	}()
@@ -493,7 +576,7 @@ func TestFollow_PropagatesCallbackError(t *testing.T) {
 	}
 
 	wantErr := errors.New("boom")
-	err := Follow(context.Background(), path, 0, Filter{}, 5*time.Millisecond, func(event.ActionEvent) error {
+	err := Follow(context.Background(), path, nil, Filter{}, 5*time.Millisecond, func(event.ActionEvent) error {
 		return wantErr
 	})
 	if !errors.Is(err, wantErr) {
@@ -518,7 +601,7 @@ func TestFollow_ErrorsOnGenuineCorruptionInFollowedPortion(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- Follow(ctx, path, 0, Filter{}, 5*time.Millisecond, func(event.ActionEvent) error {
+		done <- Follow(ctx, path, nil, Filter{}, 5*time.Millisecond, func(event.ActionEvent) error {
 			return nil
 		})
 	}()

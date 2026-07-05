@@ -48,11 +48,13 @@ func newLogCmd() *cobra.Command {
 			// Captured before reading existing events (not after), so a
 			// record appended in between lands on the "already shown" side
 			// of the boundary at worst — a harmless rare duplicate — rather
-			// than falling in a gap Follow would never pick up either. See
-			// core/audit.Follow's doc comment.
-			var startOffset int64
+			// than falling in a gap Follow would never pick up either. The
+			// real os.FileInfo (not just its Size()) is passed to Follow so
+			// its very first internal check has a real identity to compare
+			// against — see core/audit.Follow's doc comment.
+			var startInfo os.FileInfo
 			if info, statErr := os.Stat(auditPath); statErr == nil {
-				startOffset = info.Size()
+				startInfo = info
 			} else if !os.IsNotExist(statErr) {
 				return statErr
 			}
@@ -75,7 +77,7 @@ func newLogCmd() *cobra.Command {
 			// stderr, which normally shares the same terminal as stdout.
 			fmt.Fprintln(cmd.ErrOrStderr(), "Watching for new events... (Ctrl+C to stop)")
 			w := cmd.OutOrStdout()
-			return audit.Follow(cmd.Context(), auditPath, startOffset, f, logFollowPollInterval, func(e event.ActionEvent) error {
+			return audit.Follow(cmd.Context(), auditPath, startInfo, f, logFollowPollInterval, func(e event.ActionEvent) error {
 				return printEvent(w, e, asJSON)
 			})
 		},
