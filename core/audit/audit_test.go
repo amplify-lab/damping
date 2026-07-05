@@ -2,6 +2,7 @@ package audit
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -51,6 +52,71 @@ func TestWriter_Append_RejectsInvalidEvent(t *testing.T) {
 	w := NewWriter(path)
 	if err := w.Append(event.ActionEvent{}); err == nil {
 		t.Fatal("expected an error appending an invalid (empty) event")
+	}
+}
+
+// TestReadAll_TolerantOfTornTrailingWrite is a regression test found via
+// adversarial review: Writer.Append is not the only thing that can leave a
+// non-newline-terminated final line on disk — a process killed mid-write
+// does too, and this must not be confused with real corruption. Before
+// this fix, ReadAll used bufio.Scanner, which returns a final unterminated
+// fragment as an ordinary complete token — so any unclean kill during the
+// very last Append permanently broke every future `damping log` call on
+// that file (ReadAll would hit the same truncated "line" every time and
+// return zero events, not just omit the incomplete one).
+func TestReadAll_TolerantOfTornTrailingWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	w := NewWriter(path)
+	if err := w.Append(sampleEvent(event.ChannelCLI, event.RiskLow, decision.Allow)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	// Simulate a write killed partway through: valid complete JSON with no
+	// trailing newline, appended directly (bypassing Writer.Append, which
+	// always writes the newline in the same call).
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("opening for torn write simulation: %v", err)
+	}
+	if _, err := f.Write([]byte(`{"event_id":"evt_torn","session_id":"s1","actor":"x","channel":"cli"`)); err != nil {
+		t.Fatalf("writing torn line: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing: %v", err)
+	}
+
+	got, err := ReadAll(path, Filter{})
+	if err != nil {
+		t.Fatalf("expected a torn trailing write to be tolerated, not treated as an error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected exactly the 1 complete record (torn trailing line ignored), got %d", len(got))
+	}
+}
+
+// TestReadAll_StillErrorsOnGenuineMidFileCorruption proves the fix above
+// doesn't overcorrect: a malformed line that *does* have its terminating
+// newline (so it can't be an in-flight write) is real corruption and must
+// still surface as an error, exactly as before.
+func TestReadAll_StillErrorsOnGenuineMidFileCorruption(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	w := NewWriter(path)
+	if err := w.Append(sampleEvent(event.ChannelCLI, event.RiskLow, decision.Allow)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("opening to inject corruption: %v", err)
+	}
+	if _, err := f.Write([]byte("not valid json at all\n")); err != nil {
+		t.Fatalf("writing corrupt line: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing: %v", err)
+	}
+
+	if _, err := ReadAll(path, Filter{}); err == nil {
+		t.Fatal("expected an error for a genuinely malformed, newline-terminated record")
 	}
 }
 
@@ -351,6 +417,68 @@ func TestFollow_StopsOnContextCancel(t *testing.T) {
 		}
 	case <-time.After(1 * time.Second):
 		t.Fatal("timed out waiting for Follow to stop after context cancellation")
+	}
+}
+
+// TestFollow_PropagatesCallbackError is a coverage gap found via
+// adversarial review: Follow's own doc comment claims fn returning an
+// error "stops the tail immediately," but nothing exercised that path.
+func TestFollow_PropagatesCallbackError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	w := NewWriter(path)
+	if err := w.Append(sampleEvent(event.ChannelCLI, event.RiskLow, decision.Allow)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	wantErr := errors.New("boom")
+	err := Follow(context.Background(), path, 0, Filter{}, 5*time.Millisecond, func(event.ActionEvent) error {
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected Follow to propagate fn's error, got %v", err)
+	}
+}
+
+// TestFollow_ErrorsOnGenuineCorruptionInFollowedPortion is the Follow-side
+// counterpart to TestReadAll_StillErrorsOnGenuineMidFileCorruption: a
+// malformed but newline-terminated line appended *after* Follow starts must
+// still surface as an error (it can't be an in-flight write, since it has
+// its terminating newline), not be silently swallowed.
+func TestFollow_ErrorsOnGenuineCorruptionInFollowedPortion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	w := NewWriter(path)
+	if err := w.Append(sampleEvent(event.ChannelCLI, event.RiskLow, decision.Allow)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- Follow(ctx, path, 0, Filter{}, 5*time.Millisecond, func(event.ActionEvent) error {
+			return nil
+		})
+	}()
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("opening to inject corruption: %v", err)
+	}
+	if _, err := f.Write([]byte("not valid json at all\n")); err != nil {
+		t.Fatalf("writing corrupt line: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing: %v", err)
+	}
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected Follow to return an error for a genuinely malformed followed record")
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for Follow to notice the corrupt line")
 	}
 }
 

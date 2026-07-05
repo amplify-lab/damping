@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -49,21 +50,58 @@ func run(t *testing.T, stdin string, args ...string) (stdout, stderr string, err
 	return outBuf.String(), errBuf.String(), err
 }
 
-// runWithContext is run's variant for commands that read cmd.Context() to
-// know when to stop — currently only `damping log --follow`. The returned
-// strings are only safe to read once the caller observes this function has
-// returned (e.g. via a channel), since outBuf/errBuf are written to for as
-// long as root.ExecuteContext(ctx) is still running.
-func runWithContext(t *testing.T, ctx context.Context, stdin string, args ...string) (stdout, stderr string, err error) {
+// syncBuffer is a concurrency-safe io.Writer wrapper around bytes.Buffer —
+// unlike bytes.Buffer itself, its String() is safe to poll from a test's
+// main goroutine while a command started via startLogFollow is still
+// writing to it in a background goroutine.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// startLogFollow starts `damping log --follow ...` in the background,
+// returning concurrency-safe stdout/stderr buffers the caller can poll
+// (via waitForContains) while the command is still running, and a channel
+// that receives its final error once ctx is cancelled and it stops.
+func startLogFollow(t *testing.T, ctx context.Context, args ...string) (stdout, stderr *syncBuffer, done <-chan error) {
 	t.Helper()
 	root := NewRootCmd()
-	var outBuf, errBuf bytes.Buffer
-	root.SetOut(&outBuf)
-	root.SetErr(&errBuf)
-	root.SetIn(strings.NewReader(stdin))
+	stdout, stderr = &syncBuffer{}, &syncBuffer{}
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+	root.SetIn(strings.NewReader(""))
 	root.SetArgs(args)
-	err = root.ExecuteContext(ctx)
-	return outBuf.String(), errBuf.String(), err
+	doneCh := make(chan error, 1)
+	go func() { doneCh <- root.ExecuteContext(ctx) }()
+	return stdout, stderr, doneCh
+}
+
+// waitForContains polls buf until its content contains substr or timeout
+// elapses — used instead of a fixed sleep so follow-mode tests aren't
+// tuned to a specific poll interval/sleep-duration ratio that could be
+// flaky on a slower or more loaded machine.
+func waitForContains(t *testing.T, buf *syncBuffer, substr string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if strings.Contains(buf.String(), substr) {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("timed out after %v waiting for %q, got:\n%s", timeout, substr, buf.String())
 }
 
 func TestInit_WritesPolicyAndRegistersClaudeHook(t *testing.T) {
@@ -654,26 +692,24 @@ func TestLog_FollowPrintsExistingThenNewEvents(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	type followResult struct {
-		stdout, stderr string
-		err            error
-	}
-	resultCh := make(chan followResult, 1)
-	go func() {
-		stdout, stderr, err := runWithContext(t, ctx, "", "log", "--follow")
-		resultCh <- followResult{stdout, stderr, err}
-	}()
+	stdout, stderr, done := startLogFollow(t, ctx, "log", "--follow")
 
-	// Give --follow time to print the existing event and start polling
-	// before the new one is appended. Appended directly via audit.Writer
-	// rather than another run(t, ..., "hook", "pretooluse") call: NewRootCmd
-	// registers --config against root.go's package-level configFlag var, so
-	// a second concurrent NewRootCmd() call from this goroutine while the
-	// follow goroutine's own NewRootCmd() call is in flight is racy — a
+	// Wait for the follow-mode notice rather than a fixed sleep — proves
+	// the initial batch has printed and the poll loop has started, without
+	// tuning this test to a specific poll-interval/sleep-duration ratio
+	// that could be flaky on a slower or more loaded machine.
+	waitForContains(t, stderr, "Watching for new events", 1*time.Second)
+	if !strings.Contains(stdout.String(), "existing") {
+		t.Fatalf("expected the pre-existing event in the initial batch, got:\n%s", stdout.String())
+	}
+
+	// Appended directly via audit.Writer rather than another
+	// run(t, ..., "hook", "pretooluse") call: NewRootCmd registers --config
+	// against root.go's package-level configFlag var, so a second
+	// concurrent NewRootCmd() call from this goroutine while the follow
+	// goroutine's own NewRootCmd() call is in flight is racy — a
 	// pre-existing test-harness limitation unrelated to what this test
 	// actually exercises.
-	time.Sleep(50 * time.Millisecond)
-
 	auditPath, err := paths.Audit()
 	if err != nil {
 		t.Fatalf("resolving audit path: %v", err)
@@ -685,29 +721,16 @@ func TestLog_FollowPrintsExistingThenNewEvents(t *testing.T) {
 		t.Fatalf("appending new event: %v", err)
 	}
 
-	// Give the poll loop time to pick up the new append before stopping.
-	time.Sleep(50 * time.Millisecond)
+	waitForContains(t, stdout, "newone", 1*time.Second)
 	cancel()
 
-	var res followResult
 	select {
-	case res = <-resultCh:
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("log --follow: %v (stderr: %s)", err, stderr.String())
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for `damping log --follow` to stop after context cancellation")
-	}
-	if res.err != nil {
-		t.Fatalf("log --follow: %v (stderr: %s)", res.err, res.stderr)
-	}
-	// On stderr, not stdout — so --json mode's stdout stays pure
-	// newline-delimited JSON, safe to pipe into jq or a script.
-	if !strings.Contains(res.stderr, "Watching for new events") {
-		t.Fatalf("expected the follow-mode notice on stderr, got:\n%s", res.stderr)
-	}
-	if !strings.Contains(res.stdout, "existing") {
-		t.Fatalf("expected the pre-existing event in the initial batch, got:\n%s", res.stdout)
-	}
-	if !strings.Contains(res.stdout, "newone") {
-		t.Fatalf("expected the newly appended event to show up via --follow, got:\n%s", res.stdout)
 	}
 }
 
@@ -733,32 +756,21 @@ func TestLog_FollowJSONKeepsStdoutPureNDJSON(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	type followResult struct {
-		stdout, stderr string
-		err            error
-	}
-	resultCh := make(chan followResult, 1)
-	go func() {
-		stdout, stderr, err := runWithContext(t, ctx, "", "log", "--follow", "--json")
-		resultCh <- followResult{stdout, stderr, err}
-	}()
+	stdout, stderr, done := startLogFollow(t, ctx, "log", "--follow", "--json")
 
-	time.Sleep(50 * time.Millisecond)
+	waitForContains(t, stderr, "Watching for new events", 1*time.Second)
 	cancel()
 
-	var res followResult
 	select {
-	case res = <-resultCh:
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("log --follow --json: %v (stderr: %s)", err, stderr.String())
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for `damping log --follow --json` to stop")
 	}
-	if res.err != nil {
-		t.Fatalf("log --follow --json: %v (stderr: %s)", res.err, res.stderr)
-	}
-	if !strings.Contains(res.stderr, "Watching for new events") {
-		t.Fatalf("expected the follow-mode notice on stderr, got:\n%s", res.stderr)
-	}
-	for _, line := range strings.Split(strings.TrimRight(res.stdout, "\n"), "\n") {
+
+	for _, line := range strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n") {
 		if line == "" {
 			continue
 		}
