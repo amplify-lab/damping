@@ -55,6 +55,24 @@ jobs:
       # regression case (go test picks those up even without -fuzz).
       - run: go test ./shell/... -run=^$ -fuzz=FuzzAnalyze -fuzztime=30s
 
+  release-check:
+    name: release tooling (.goreleaser.yaml)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      # Validates .goreleaser.yaml and does a real cross-platform snapshot
+      # build (no GitHub token or tap repo access needed) on every PR —
+      # catches a regression here at review time, not the day someone
+      # actually pushes a release tag.
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean --skip=publish
+
   security:
     name: gosec + SBOM
     runs-on: ubuntu-latest

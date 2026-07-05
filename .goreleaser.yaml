@@ -22,7 +22,12 @@ project_name: damping
 
 before:
   hooks:
-    - sh -c "cd cli && go mod tidy"
+    # Hard-fails (rather than silently tidying and proceeding) if go mod
+    # tidy would change anything — a release build should never ship a
+    # binary built from a dependency resolution nobody reviewed or
+    # committed. Found via adversarial review of an earlier version of this
+    # file, which just ran `go mod tidy` unconditionally.
+    - sh -c "cd cli && go mod tidy && git diff --exit-code -- go.mod go.sum"
 
 builds:
   - id: damping
@@ -77,16 +82,30 @@ release:
     owner: amplify-lab
     name: damping
 
-brews:
+# homebrew_casks, not the older brews: key — brews was soft-deprecated at
+# v2.10 and hard-deprecated (enforced, `goreleaser check` fails) at v2.16.
+# GoReleaser's own guidance for exactly this case (a pre-compiled CLI
+# binary, not a GUI .app bundle) is to use a cask with `binaries:` — see
+# https://goreleaser.com/customization/homebrew_casks/. `license` has no
+# effect on a cask (GoReleaser's own schema notes this); the repo's
+# top-level LICENSE file is what actually governs, and is bundled into the
+# archive itself via archives[0].files above.
+homebrew_casks:
   - name: damping
     repository:
       owner: amplify-lab
       name: homebrew-tap
-    directory: Formula
+      # The default GITHUB_TOKEN a release workflow run gets is scoped only
+      # to the damping repo itself — pushing a formula/cask update to this
+      # separate homebrew-tap repo needs its own PAT or GitHub App token,
+      # supplied via this env var (see .github/workflows/release.yml).
+      # Found missing via adversarial review: this repository.token field
+      # didn't exist at all in an earlier version of this file, silently
+      # falling back to the wrong (repo-scoped) token instead of erroring
+      # clearly, even once the HOMEBREW_TAP_GITHUB_TOKEN secret is set.
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
     homepage: "https://damping.dev"
     description: "One policy, one audit trail — across your terminal and your MCP servers."
-    license: "Apache-2.0"
-    install: |
-      bin.install "damping"
-    test: |
-      system "#{bin}/damping", "version"
+    binaries:
+      - damping
