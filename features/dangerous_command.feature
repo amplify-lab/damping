@@ -53,6 +53,26 @@ Feature: Intercept destructive shell commands
     Then Damping should intercept the command
     And the matched rule should be "destructive.sql_drop_truncate"
 
+  Scenario Outline: Block destructive MongoDB operations issued via mongosh, not just SQL keywords
+    # Regression guard: mongosh was listed as a covered client, but the
+    # rule's only pattern matched SQL keywords ("DROP TABLE"/"TRUNCATE"),
+    # which never appear in mongosh's real JS method-call syntax — so real
+    # destructive Mongo operations silently never fired this rule.
+    When the agent attempts to execute "mongosh --eval '<operation>'"
+    Then Damping should intercept the command
+    And the matched rule should be "destructive.sql_drop_truncate"
+
+    Examples:
+      | operation                  |
+      | db.dropDatabase()          |
+      | db.users.drop()            |
+      | db.users.deleteMany({})    |
+      | db.users.remove({})        |
+
+  Scenario: Allow a filtered MongoDB deleteMany (false-positive guard)
+    When the agent attempts to execute "mongosh --eval 'db.users.deleteMany({status:1})'"
+    Then Damping should allow the command immediately
+
   Scenario: Block recursive world-writable permissions
     When the agent attempts to execute "chmod -R 777 /var/www"
     Then Damping should intercept the command

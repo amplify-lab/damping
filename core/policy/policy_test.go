@@ -201,6 +201,45 @@ func TestEvaluate_BlocksDestructiveSQL(t *testing.T) {
 	}
 }
 
+// TestEvaluate_BlocksDestructiveMongoOperations is a regression test for a
+// real coverage gap: mongosh was listed as a covered client, but the
+// matcher's only pattern (SQL keywords "DROP TABLE"/"TRUNCATE") can never
+// match mongosh's real JS method-call syntax, so real destructive Mongo
+// operations silently never fired this rule despite mongosh appearing to be
+// supported.
+func TestEvaluate_BlocksDestructiveMongoOperations(t *testing.T) {
+	e := loadDefaultEngine(t)
+	cases := []string{
+		`db.dropDatabase()`,
+		`db.users.drop()`,
+		`db.users.deleteMany({})`,
+		`db.users.remove({})`,
+	}
+	for _, raw := range cases {
+		d := e.Evaluate(Facts{Raw: "mongosh --eval " + raw, Command: "mongosh", Args: []string{"--eval", raw}})
+		if d.PolicyID != "destructive.sql_drop_truncate" {
+			t.Errorf("evaluating %q: expected rule destructive.sql_drop_truncate, got %q (verdict %v)", raw, d.PolicyID, d.Verdict)
+		}
+	}
+}
+
+// TestEvaluate_AllowsSafeMongoOperations is the false-positive guard: a
+// filtered deleteMany/remove (ordinary, common usage) and read-only Mongo
+// operations must stay allowed.
+func TestEvaluate_AllowsSafeMongoOperations(t *testing.T) {
+	e := loadDefaultEngine(t)
+	cases := []string{
+		`db.users.deleteMany({status: "inactive"})`,
+		`db.users.find({})`,
+	}
+	for _, raw := range cases {
+		d := e.Evaluate(Facts{Raw: "mongosh --eval " + raw, Command: "mongosh", Args: []string{"--eval", raw}})
+		if d.Verdict != decision.Allow {
+			t.Errorf("evaluating %q: expected allow, got %v (rule %q)", raw, d.Verdict, d.PolicyID)
+		}
+	}
+}
+
 func TestEvaluate_BlocksRecursiveChmod777(t *testing.T) {
 	e := loadDefaultEngine(t)
 	d := e.Evaluate(Facts{Raw: "chmod -R 777 /var/www", Command: "chmod", Args: []string{"-R", "777", "/var/www"}})
