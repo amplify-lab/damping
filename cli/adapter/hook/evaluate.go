@@ -6,8 +6,6 @@
 package hook
 
 import (
-	"time"
-
 	"github.com/amplify-lab/damping/cli/shell"
 	"github.com/amplify-lab/damping/core/decision"
 	"github.com/amplify-lab/damping/core/event"
@@ -46,23 +44,5 @@ func EvaluateCommand(raw string, engine *policy.Engine) (decision.Decision, erro
 // is ever written for a given intercepted action — see
 // features/audit_log.feature.
 func BuildActionEvent(eventID string, sessionID, actor, raw string, d decision.Decision) event.ActionEvent {
-	risk := event.RiskLow
-	switch d.Verdict {
-	case decision.Deny:
-		risk = event.RiskCritical
-	case decision.Prompt:
-		risk = event.RiskHigh
-	}
-	return event.ActionEvent{
-		EventID:    eventID,
-		Timestamp:  time.Now(),
-		SessionID:  sessionID,
-		Actor:      actor,
-		Channel:    event.ChannelCLI,
-		ActionType: event.ActionShellExec,
-		Target:     raw,
-		Raw:        raw,
-		RiskLevel:  risk,
-		Decision:   d,
-	}
+	return event.New(eventID, sessionID, actor, event.ChannelCLI, event.ActionShellExec, raw, raw, d)
 }

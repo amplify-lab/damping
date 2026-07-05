@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 
@@ -10,6 +8,7 @@ import (
 
 	hookadapter "github.com/amplify-lab/damping/cli/adapter/hook"
 	"github.com/amplify-lab/damping/cli/paths"
+	"github.com/amplify-lab/damping/cli/ui"
 	"github.com/amplify-lab/damping/core/audit"
 	"github.com/amplify-lab/damping/core/decision"
 	"github.com/amplify-lab/damping/core/event"
@@ -100,7 +99,7 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 	}
 
 	if d.Verdict == decision.Prompt {
-		prompter, closeTTY, err := openTTYPrompter()
+		prompter, closeTTY, err := newTTYPrompter()
 		if err != nil {
 			// No controlling terminal available (e.g. a background/CI
 			// execution context) — a Prompt-tier decision that can't be
@@ -109,14 +108,20 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 			d.Resolve(decision.Deny)
 			d.Reason = "no controlling terminal available to ask; denied by default: " + d.Reason
 		} else {
-			resolved := prompter.Confirm(in.ToolInput.Command, d)
-			d.Resolve(resolved)
+			resolution := prompter.Confirm(in.ToolInput.Command, d)
+			d.Resolve(resolution.Verdict)
 			closeTTY()
+
+			if resolution.Persist {
+				if err := policy.AppendAlwaysPattern(policyPath, resolution.Verdict, in.ToolInput.Command); err != nil && hasAuditSink {
+					_ = writer.Append(degradedEvent(in.SessionID, "claude-code", "persisting always-"+string(resolution.Verdict)+" pattern: "+err.Error()))
+				}
+			}
 		}
 	}
 
 	if hasAuditSink {
-		ev := hookadapter.BuildActionEvent(newEventID(), in.SessionID, "claude-code", in.ToolInput.Command, d)
+		ev := hookadapter.BuildActionEvent(event.NewID(), in.SessionID, "claude-code", in.ToolInput.Command, d)
 		_ = writer.Append(ev)
 	}
 
@@ -131,6 +136,15 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 	return nil
 }
 
+// newTTYPrompter is a package-level var (not a direct call to
+// ui.OpenTTYPrompter) so tests can substitute a scripted fake reader
+// instead of a real controlling terminal — see cmd_test.go's
+// TestHook_PersistsAlwaysAllowPattern. cli/adapter/mcp uses
+// ui.OpenTTYPrompter directly for the same reason (see docs/architecture.md
+// §6/§7) — both adapters share one implementation now instead of each
+// opening /dev/tty themselves.
+var newTTYPrompter = ui.OpenTTYPrompter
+
 func newAuditWriter() (*audit.Writer, bool) {
 	p, err := paths.Audit()
 	if err != nil {
@@ -140,15 +154,9 @@ func newAuditWriter() (*audit.Writer, bool) {
 }
 
 func degradedEvent(sessionID, actor, reason string) event.ActionEvent {
-	return hookadapter.BuildActionEvent(newEventID(), sessionID, actor, "", decision.Decision{
+	return hookadapter.BuildActionEvent(event.NewID(), sessionID, actor, "", decision.Decision{
 		Verdict:  decision.Allow,
 		Degraded: true,
 		Reason:   reason,
 	})
-}
-
-func newEventID() string {
-	b := make([]byte, 8)
-	_, _ = rand.Read(b)
-	return "evt_" + hex.EncodeToString(b)
 }

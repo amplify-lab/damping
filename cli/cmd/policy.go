@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 
 	"github.com/spf13/cobra"
 
@@ -18,7 +20,36 @@ func newPolicyCmd() *cobra.Command {
 	c.AddCommand(newPolicyListCmd())
 	c.AddCommand(newPolicyTestCmd())
 	c.AddCommand(newPolicyValidateCmd())
+	c.AddCommand(newPolicyEditCmd())
 	return c
+}
+
+func newPolicyEditCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "edit",
+		Short: "Open the policy file in $EDITOR",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path, err := resolvePolicyPath()
+			if err != nil {
+				return err
+			}
+			editor := os.Getenv("EDITOR")
+			if editor == "" {
+				editor = "vi"
+			}
+			editCmd := exec.Command(editor, path)
+			editCmd.Stdin = os.Stdin
+			editCmd.Stdout = os.Stdout
+			editCmd.Stderr = os.Stderr
+			if err := editCmd.Run(); err != nil {
+				return fmt.Errorf("running %s: %w", editor, err)
+			}
+			if _, err := policy.LoadConfig(path); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "⚠  saved, but the policy file no longer validates: %v\n", err)
+			}
+			return nil
+		},
+	}
 }
 
 func newPolicyListCmd() *cobra.Command {

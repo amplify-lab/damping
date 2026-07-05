@@ -12,14 +12,14 @@
 | `damping on` / `damping off` | 1 | Enable / temporarily disable enforcement |
 | `damping log` | 1 | Replay the local audit trail |
 | `damping policy list` / `test` / `edit` / `validate` | 1 | Inspect and dry-run the policy file |
-| `damping mcp wrap` | 1 | V1 thin MCP stdio wrapper (policy + audit only, no OAuth) |
+| `damping mcp wrap -- <server-command>` | 1 | V1 thin MCP stdio wrapper (policy + audit only, no OAuth) — **implemented**, see §9 |
 | `damping hook <event>` | 1 | Internal entrypoint invoked by agent hook configs — not meant for direct interactive use |
 | `damping sync enable` / `disable` | 4 | Team tier opt-in cloud sync (not implemented until Phase 4) |
-| `damping completion <shell>` | 1 | Shell completion script (bash/zsh/fish/powershell) |
+| `damping completion <shell>` | 1 | Shell completion script (bash/zsh/fish/powershell) — provided automatically by Cobra |
 | `damping version` | 1 | Print version + build info |
 | `damping upgrade` | 2+ | Self-update (documented now, implemented post-launch) |
 
-Global flags on every command: `--config <path>` (default `~/.damping/policy.yaml`), `--json` (machine-readable output where applicable), `-v/--verbose`.
+Global flag on every command: `--config <path>` (default `~/.damping/policy.yaml`, or `$DAMPING_HOME/policy.yaml`). `--json` is `log`-specific, not global (see §7) — there is no global `--json` or `-v/--verbose` flag in V1; don't assume one.
 
 ## 2. Exit codes (the CLI binary itself — distinct from the hook contract in §6)
 
@@ -59,18 +59,16 @@ Read-only, idempotent, safe to run anytime — the diagnostic pattern research c
 $ damping doctor
 Damping doctor — environment check
 
-  ✓ damping binary in PATH (v0.1.0)
-  ✓ Policy file valid (~/.damping/policy.yaml, sha256:9f3a...)
-  ✓ Claude Code hook registered and matches expected entry
+  ✓ Policy file valid (~/.damping/policy.yaml, 10 rules)
+  ✓ Claude Code hook registered
   ✗ Cursor hook missing — was it removed outside `damping off`?
       → run `damping init --agent cursor --force` to reinstall
-  ⚠ 2 degraded-mode events in the last 7 days (hook timeout) — run `damping log --outcome degraded` for details
-  ✓ Audit log writable (~/.damping/audit.jsonl, 4.2MB, last rotated 2026-06-01)
+  ⚠ 2 degraded-mode event(s) in the last 7 days — run `damping log --outcome degraded` for details
 
-1 check failed, 1 warning. See above for next steps.
+1 check(s) failed, 1 warning(s).
 ```
 
-Exit code 4 if any check fails. `--verbose` includes a paste-ready bundle for a GitHub issue. `--json` for scripting.
+Exit code 4 if any check fails. An agent whose hook was never registered at all (never ran `damping init`, or that agent isn't installed) shows an informational `·` line ("not registered — run `damping init`") rather than either ✓ or ✗ — only an agent that **was** previously seen registered and has since disappeared is treated as a failure (see `docs/threat-model.md` §4's self-protection requirement). `--verbose`/paste-ready bundle and `--json` output described in earlier drafts of this doc are **not implemented in V1** — `damping doctor` takes no flags today.
 
 The "hook missing since last check" case is the direct, user-visible surface of the self-protection requirement in `docs/threat-model.md` §4 — it must never be silently absent from this output.
 
@@ -79,7 +77,7 @@ The "hook missing since last check" case is the direct, user-visible surface of 
 ```
 $ damping status
 Damping: ON
-Policy:  ~/.damping/policy.yaml (12 rules)
+Policy:  ~/.damping/policy.yaml (10 rules)
 Agents:  claude-code (active), cursor (active)
 Sync:    disabled (individual tier)
 ```
@@ -105,18 +103,17 @@ $ damping on
 
 ```
 $ damping log --channel mcp --risk high --since 24h
-TIME                  CHANNEL  ACTOR        TARGET                        RISK   DECISION
-2026-07-05 09:41:02    mcp     claude-code  database.delete_record        high   deny (mcp.write_tool_unscoped_identity)
-2026-07-05 08:12:55    mcp     claude-code  filesystem.write_file          medium prompt→allow (user)
+TIME                 CHANNEL ACTOR          TARGET                         RISK     DECISION
+2026-07-05 09:41:02  mcp     claude-code    filesystem.delete_all          high     deny
 
-$ damping log --format json | jq '.[0]'
-{"event_id":"...", "channel":"mcp", "action_type":"tool_call", ...}
+$ damping log --json | head -1 | jq .
+{"event_id":"evt_...", "channel":"mcp", "action_type":"tool_call", "decision":{"verdict":"prompt","resolved_verdict":"deny",...}, ...}
 
-$ damping log show a1b2c3d4
-# full ActionEvent for one event_id — raw command/call, parsed args, policy_id, resolution timeline
+$ damping log show evt_a1b2c3d4
+# pretty-printed full ActionEvent for one event_id — raw command/call, parsed args, policy_id, decision (including resolved_verdict if it was a resolved Prompt)
 ```
 
-Filters: `--channel cli|mcp`, `--risk low|medium|high|critical`, `--since <duration>`, `--actor <name>`, `--outcome allow|deny|prompt|degraded`, `--limit N`, `--follow` (tail -f style live stream). Default output is a human-readable table; `--format json` for scripting/SIEM ingestion. Empty results print `No audit events matched those filters.` — never a blank screen.
+Filters: `--channel cli|mcp`, `--risk low|medium|high|critical`, `--since <duration>`, `--actor <name>`, `--outcome allow|deny|prompt|degraded`, `--limit N` (most-recent N events). Default output is a human-readable table (the `DECISION` column shows `Decision.Outcome()` — the resolved verdict, not the raw pre-prompt one); `--json` outputs newline-delimited JSON (NDJSON — one object per line, not a JSON array; pipe through `jq -s` to slurp into an array, or `head -1 | jq .` for one record) for scripting/SIEM ingestion. Empty results print `No audit events matched those filters.` — never a blank screen. `--follow` (tail -f style live streaming) is documented as a future addition but **not implemented in V1** — `damping log` always reads a snapshot of the file and exits.
 
 Filtering by `--channel` is also the concrete, in-product demonstration of the cross-channel unification claim in the master plan — this is where a skeptical reviewer sees "one log, two channels" for themselves.
 
@@ -130,7 +127,7 @@ destructive.git_push_force            high      prompt
 destructive.sql_drop_truncate         high      prompt
 destructive.chmod_777_recursive       medium    prompt
 destructive.curl_pipe_sh_unallowlisted medium   prompt
-mcp.write_tool_unscoped_identity       high      deny
+mcp.destructive_tool_call              high      prompt
 
 $ damping policy test "rm -rf ~/Documents"
 → Would PROMPT (rule: destructive.rm_rf_protected, risk: critical)
@@ -188,8 +185,8 @@ Shell command interception:
   Risk:    critical — this will delete your entire home directory
   Rule:    destructive.rm_rf_protected
 
-  [a] Allow once   [A] Always allow this pattern
-  [d] Deny once    [D] Always deny this pattern
+  [a] Allow once   [A] Always allow this exact command
+  [d] Deny once    [D] Always deny this exact command
   [v] View full command   [?] Why is this flagged?
 
 >
@@ -202,20 +199,20 @@ MCP tool-call interception:
 
   Agent:   claude-code (session 8f3a21)
   Channel: mcp
-  Server:  database-mcp
-  Tool:    database.delete_record
-  Args:    {"table":"users","id":"*"}
-  Risk:    high — wildcard delete via a write-tagged tool
-  Rule:    mcp.write_tool_unscoped_identity
+  Server:  filesystem-mcp
+  Tool:    filesystem.delete_all
+  Args:    {"path":"/data"}
+  Risk:    high — the server itself declares this tool destructive (destructiveHint)
+  Rule:    mcp.destructive_tool_call
 
-  [a] Allow once   [A] Always allow this pattern
-  [d] Deny once    [D] Always deny this pattern
+  [a] Allow once   [A] Always allow this exact call
+  [d] Deny once    [D] Always deny this exact call
   [v] View raw call   [?] Why is this flagged?
 
 >
 ```
 
-`Always allow/deny` patterns support prefix/glob matching (e.g. `git status*`) so users build a durable allowlist instead of being re-prompted for the same class of action — the single biggest lever against "annoyance churn" per the CLI UX research. Deny always overrides allow when both a user-set always-allow and always-deny pattern could match (defense-in-depth: an accidental broad allow can't silently swallow a narrower, more specific deny).
+`[A]`/`[D]` persist the **exact command text** into `always_allow`/`always_deny` (via `core/policy.AppendAlwaysPattern`, which edits the policy YAML through `yaml.Node` surgery rather than a full round trip, so comments and formatting elsewhere in the file survive). The underlying matcher (`core/policy/rules.go`'s `matchGlobPattern`) also supports a trailing `*` as a prefix wildcard for hand-authored rules (e.g. `git status*` typed directly into the policy file) — but V1's automatic `[A]`/`[D]` persistence does not auto-generalize into a glob on its own; it remembers only the one exact command you approved. Deny always overrides allow when both a always-allow and always-deny pattern could match (defense-in-depth: an accidental broad allow can't silently swallow a narrower, more specific deny) — see `core/policy.Engine.Evaluate`, which checks `always_deny` before `always_allow`.
 
 ## 13. Policy file schema (`~/.damping/policy.yaml`, installed by `damping init`)
 
@@ -271,10 +268,15 @@ rules:
     description: Output redirected (>, >>, etc) into a protected path
     risk: critical
     action: prompt
-  - id: mcp.write_tool_unscoped_identity
-    description: Write-tagged MCP tool called with no bound identity
+  - id: mcp.destructive_tool_call
+    description: MCP tool the server itself declared destructive (ToolAnnotations.DestructiveHint)
     risk: high
     action: prompt
+
+# mcp.write_tool_unscoped_identity is implemented (core/policy/rules.go) but
+# deliberately NOT listed here — see the note in the shipped
+# cli/policies/default.yaml for why: no identity system exists at the
+# individual tier, so this rule would nag on nearly every MCP tool call.
 
 # Populated at runtime by the TTY prompt's "always allow/deny" choice — not hand-edited normally.
 always_allow: []

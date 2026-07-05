@@ -234,8 +234,26 @@ func TestEvaluate_FlagsDynamicallyConstructedCommand(t *testing.T) {
 
 // --- features/mcp_tool_governance.feature ---
 
+// TestEvaluate_BlocksWriteToolWithoutIdentity tests the
+// mcp.write_tool_unscoped_identity matcher directly against a purpose-built
+// Config, NOT the shipped default policy — this rule is implemented but
+// deliberately not active in cli/policies/default.yaml (see the comment
+// there and in rules.go): with no identity system in the individual tier,
+// it would flag nearly every MCP tool call. Phase 5's enterprise policy is
+// expected to enable it once identity binding exists.
 func TestEvaluate_BlocksWriteToolWithoutIdentity(t *testing.T) {
-	e := loadDefaultEngine(t)
+	cfg, err := ParseConfig([]byte(`
+version: 1
+rules:
+  - id: mcp.write_tool_unscoped_identity
+    description: test
+    risk: high
+    action: prompt
+`))
+	if err != nil {
+		t.Fatalf("parsing config: %v", err)
+	}
+	e := New(cfg)
 	d := e.Evaluate(Facts{
 		Channel: event.ChannelMCP, ActionType: event.ActionToolCall,
 		Command: "database.delete_record", ToolTags: []string{"write"}, HasIdentity: false,
@@ -253,6 +271,22 @@ func TestEvaluate_AllowsReadOnlyToolCall(t *testing.T) {
 	})
 	if d.Verdict != decision.Allow {
 		t.Fatalf("expected read-only tool call to be allowed, got %v", d.Verdict)
+	}
+}
+
+// TestEvaluate_PromptsOnServerDeclaredDestructiveTool tests the rule that
+// IS active by default for the individual tier — it needs no identity
+// system because the server itself declares the tool destructive (MCP's
+// standard ToolAnnotations.DestructiveHint), unlike the identity-gated rule
+// above.
+func TestEvaluate_PromptsOnServerDeclaredDestructiveTool(t *testing.T) {
+	e := loadDefaultEngine(t)
+	d := e.Evaluate(Facts{
+		Channel: event.ChannelMCP, ActionType: event.ActionToolCall,
+		Command: "filesystem.delete_all", ToolTags: []string{"destructive"},
+	})
+	if d.PolicyID != "mcp.destructive_tool_call" {
+		t.Fatalf("expected rule mcp.destructive_tool_call, got %q (verdict %v)", d.PolicyID, d.Verdict)
 	}
 }
 

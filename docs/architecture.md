@@ -8,18 +8,25 @@
 /damping (repo root — this directory)
 ├── go.work
 ├── core/                    # Go module: transport-agnostic policy engine + event schema
-│   ├── event/               # ActionEvent, Channel, ActionType, RiskLevel
+│   ├── event/               # ActionEvent, Channel/ActionType/RiskLevel (action_event.go), New()+NewID() constructors (build.go)
 │   ├── decision/            # Verdict, Decision
-│   ├── policy/              # Rule loading + evaluation (Go-native V1, OPA/Rego from Phase 3)
+│   ├── policy/              # Facts + Engine.Evaluate (policy.go), Config load/validate (config.go),
+│   │                         #   always-allow/deny persistence (persist.go), always-pattern matching (patterns.go),
+│   │                         #   rule registry (rules.go) + matchers split by transport (rules_shell.go, rules_mcp.go —
+│   │                         #   each transport's rule family grows independently, see §4)
 │   └── audit/                # Append-only JSONL sink + reader/filter
 ├── cli/                     # Go module: `damping` binary (product line A)
-│   ├── cmd/                 # Cobra command tree (init, doctor, log, on/off, hook, version)
-│   ├── shell/                # mvdan/sh AST parsing + semantic bypass-pattern detection
-│   ├── adapter/hook/         # shared evaluate/build-event logic used by `policy test` and the real hook
-│   ├── adapter/agent/        # Claude Code / Cursor hook-file install & detection
+│   ├── cmd/                 # Cobra command tree — one file per command (init.go, doctor.go, log.go, ...)
+│   ├── shell/                # AST traversal (parser.go), Facts extraction (facts.go), static-value
+│   │                         #   resolution (literal.go) — see §5
+│   ├── adapter/hook/         # shared evaluate/build-event logic used by `policy test` and the real CLI hook
+│   ├── adapter/mcp/          # V1 thin MCP adapter — protocol wiring (wrap.go), Facts extraction (facts.go) — see §7
+│   ├── adapter/agent/        # Claude Code / Cursor hook-file install & detection; shared JSON-file
+│   │                         #   read/write (jsonfile.go) so it isn't mistaken for Claude-Code-specific
 │   ├── paths/                 # ~/.damping/* path resolution ($DAMPING_HOME override for tests)
 │   ├── policies/              # canonical default.yaml + go:embed wrapper (see note below)
-│   └── ui/                   # TTY confirmation prompt (talks to /dev/tty, not stdin/stdout — see §6)
+│   └── ui/                   # Prompter interface + TTYPrompter (prompt.go), /dev/tty opening split by
+│                             #   build tag (tty_unix.go, tty_windows.go) — shared by cmd/hook.go and adapter/mcp
 ├── gateway/                 # NOT YET SCAFFOLDED — Phase 3 Go module: MCPWarden Gateway (Track B)
 ├── cf/                      # NOT YET SCAFFOLDED — Phase 4 TypeScript: Cloudflare Workers (Track A)
 ├── dashboard/               # NOT YET SCAFFOLDED — Phase 4 React+TS: audit/policy dashboard
@@ -152,14 +159,20 @@ Every rule in both layers ships with a fuzz corpus and a "must never trigger" re
 
 See `docs/cli-reference.md` §11 for the exact wire format. Summary: both agents only treat **exit code 2** as blocking; any other non-zero code fails open (action proceeds).
 
-**Important correction from an earlier draft of this doc**: the hook's stdin/stdout are already reserved for the JSON protocol with Claude Code itself, so a `Prompt`-tier decision cannot be resolved by returning `permissionDecision: "ask"` and asking Claude Code to show its own generic prompt — that would silently replace Damping's own branded confirmation UI (§12 of the CLI reference) with a different one Damping doesn't control. Instead (`cli/cmd/hook.go` + the per-OS `tty_unix.go`/`tty_windows.go`), Damping opens the controlling terminal directly (`/dev/tty` on Unix) for the interactive prompt, resolves the decision fully, and only then responds to Claude Code with a plain exit code — the hook never actually returns `"ask"` to the agent in V1. If no controlling terminal is available (e.g. a headless/CI execution context), a `Prompt`-tier decision defaults to `Deny` rather than either hanging or silently allowing. In every case:
+**Important correction from an earlier draft of this doc**: the hook's stdin/stdout are already reserved for the JSON protocol with Claude Code itself, so a `Prompt`-tier decision cannot be resolved by returning `permissionDecision: "ask"` and asking Claude Code to show its own generic prompt — that would silently replace Damping's own branded confirmation UI (§12 of the CLI reference) with a different one Damping doesn't control. Instead, Damping opens the controlling terminal directly (`/dev/tty` on Unix, via `cli/ui.OpenTTYPrompter` — the per-OS split lives in `cli/ui/tty_unix.go`/`tty_windows.go`, not in `cli/cmd`, specifically so `cli/adapter/mcp` can reuse the exact same prompter instead of duplicating it) for the interactive prompt, resolves the decision fully, and only then responds to Claude Code with a plain exit code — the hook never actually returns `"ask"` to the agent in V1. If no controlling terminal is available (e.g. a headless/CI execution context), a `Prompt`-tier decision defaults to `Deny` rather than either hanging or silently allowing. In every case:
 - exit `2` with a human-readable reason on stderr for a hard deny (including a resolved-to-deny prompt, or the no-TTY fallback),
 - exit `0` for allow (directly, or resolved from a prompt) — no JSON needed on this path in V1,
 - never let an internal crash silently look like a normal allow — write a `degraded` audit record even when the external agent will fail open regardless.
 
-## 7. `cli/adapter/mcp` — V1 thin adapter (not a gateway)
+## 7. `cli/adapter/mcp` — V1 thin adapter (not a gateway) — **implemented**
 
-The official `github.com/modelcontextprotocol/go-sdk` has no built-in interceptor/middleware hook point — it's a "register tools" SDK, not a "wrap existing calls" SDK. So `damping mcp wrap <server-command>` works by sitting between the MCP **client** and the tool-call dispatch, normalizing each outgoing tool call into an `ActionEvent` (`channel: mcp`, `action_type: tool_call`) and running it through the same `core/policy` + `core/audit` as the CLI adapter — no OAuth, no token re-issuance, no confused-deputy defense. Full Gateway-grade MCP interception (reverse proxy in front of real MCP servers, OAuth 2.1, audience binding) is Phase 3, implemented as an actual standalone MCP server the client talks to instead of the real one.
+The official `github.com/modelcontextprotocol/go-sdk` has no built-in interceptor/middleware hook point — it's a "register tools" SDK, not a "wrap existing calls" SDK. So `damping mcp wrap -- <server-command>` is a real client+server pair (`wrap.go`'s `wrapTransport`): it connects to the real server as an `mcp.Client` (over a `CommandTransport` subprocess), discovers its tools via `ClientSession.Tools` (auto-paginating), and re-exposes each one, unmodified, on an `mcp.Server` running over this process's own stdin/stdout (`StdioTransport`). Every forwarded tool's handler (`registerForwardingTool`) normalizes the call into `policy.Facts` (`facts.go`), runs it through the exact same `core/policy` engine and `core/audit` sink the CLI hook uses, and — only on `allow` (directly or resolved from a `Prompt` via the same `/dev/tty` mechanism as §6) — forwards the call to the real server via `ClientSession.CallTool`, returning its result unmodified. A `deny` never reaches the real server at all; it comes back as a normal `CallToolResult{IsError:true}` so the calling LLM sees a legible refusal rather than a protocol-level error.
+
+No OAuth, no token inspection or re-issuance, no confused-deputy defense — that's Phase 3's `gateway/`, an actual standalone reverse-proxy MCP server, not this in-process pair.
+
+**The one default-active MCP rule (`mcp.destructive_tool_call`) deliberately does not need identity.** It fires only when the wrapped server itself sets `ToolAnnotations.DestructiveHint: true` — a signal that requires no AD/LDAP binding to be meaningful. The identity-gated rule (`mcp.write_tool_unscoped_identity`) is fully implemented in `core/policy/rules_mcp.go` but is **not** in `cli/policies/default.yaml`'s active rule list: with no identity system at the individual tier (`ActionEvent.Identity` is always empty pre-Phase 5), it would flag nearly every non-explicitly-read-only tool call — the exact nagging failure mode this project treats as its top product risk. Phase 5's enterprise policy config re-enables it once identity binding makes "unscoped" a real signal.
+
+Testing this without real subprocesses uses the SDK's `mcp.NewInMemoryTransports()` — two paired transports connecting a fake "real" MCP server directly to `wrapTransport`, and a second pair connecting `wrapTransport` to a test client — see `wrap_test.go`. This proves the actual product claim end-to-end (not just unit-tested in isolation): a destructive tool call is denied before ever reaching the fake server, and a CLI-channel event plus an MCP-channel event both land in one audit file, distinguishable only by `Channel`.
 
 ## 8. CI pipeline (`.github/workflows/ci.yml`)
 
