@@ -100,6 +100,23 @@ Documented in detail (schema, CLI surface, UX copy) so implementing it is a matt
 | `core/`, `cli/` | The Go modules described above |
 | [`docs/市場調查與現況總覽.md`](docs/市場調查與現況總覽.md), [`docs/營運計劃書.md`](docs/營運計劃書.md), [`docs/總體開發藍圖-Fable5接手版.md`](docs/總體開發藍圖-Fable5接手版.md), [`docs/開發計畫.md`](docs/開發計畫.md), [`docs/品牌與命名體系.md`](docs/品牌與命名體系.md) | Historical planning record (market research, business plan, brand naming) — kept as provenance, superseded where they conflict with the doc above |
 
+## How this project is developed: BDD, scenario-first
+
+This project's own governing rule (from `docs/00-統一開發計畫（定案版）.md`'s closing line) is **情境通過才算完成** — "a scenario only counts as done once it passes." A feature isn't considered built until its Gherkin acceptance criteria are wired to real code and green — not the other way around (code first, tests added after, if at all).
+
+The two halves:
+- **`features/*.feature`** — Gherkin, one scenario per acceptance criterion, written in plain English before any implementation exists. Meant to be readable by someone who has never opened the Go source.
+- **`cli/bdd/*_test.go`** — the real step-definition wiring, via [`cucumber/godog`](https://github.com/cucumber/godog), one file per feature file. This isn't a separate suite you have to remember to invoke: each file's `godog.TestSuite` runs from an ordinary `func TestFeatures_X(t *testing.T)`, so a plain `go test ./...` from `cli/` already executes every scenario as part of the normal test run — same pass/fail semantics as everything else, no extra CI step.
+
+Run just the BDD suite on its own:
+```
+cd cli && go test ./bdd/... -v
+```
+
+Not every step is (or should be) a from-scratch runtime check. A step gets a **documented pass-through** instead of a second, weaker re-implementation when the behavior is already proven end-to-end by an equivalent, more thorough test elsewhere (e.g. MCP always-allow/deny session persistence is exercised by `cli/adapter/mcp/wrap_test.go`, not reinvented as Gherkin steps), or when the scenario describes a structural invariant that isn't independently observable from a single dynamic test run (e.g. "no adapter writes to the audit file directly"). Every such pass-through must carry an inline comment naming which real test covers it and why — an undocumented no-op step is a bug in the suite, not an accepted shortcut, since it silently stops proving the thing its own Gherkin wording claims to prove. If you find one without that comment, that's worth a bug report or a PR on its own.
+
+`@phase4`/`@phase5`-tagged scenarios (`team_dashboard.feature`, `compliance_report.feature`) describe features that don't exist yet — intentionally unwired, not broken.
+
 ## Building from source
 
 ```
