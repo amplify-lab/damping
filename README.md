@@ -8,8 +8,8 @@ Damping sits between your AI coding agent (Claude Code, Cursor, and more to come
 ⚠  Damping intercepted a destructive command
 
   Command: rm -rf ~/
-  Risk:    critical — if this proceeds, this will delete your entire home directory
   Rule:    destructive.rm_rf_protected
+  Reason:  Recursive+force delete targeting a protected path — if this proceeds, this will delete your entire home directory or filesystem root
 
   [a] Allow once   [A] Always allow this exact command
   [d] Deny once    [D] Always deny this exact command
