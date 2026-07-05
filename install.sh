@@ -41,6 +41,36 @@ detect_arch() {
 	esac
 }
 
+# verify_checksum confirms archive_path really is the exact file
+# .goreleaser.yaml's checksum step recorded for archive_name in the same
+# release, failing loudly rather than installing an unverified binary.
+# Found missing entirely via adversarial review: this script downloaded and
+# installed the archive with no integrity check at all — anyone able to
+# tamper with the download in transit (a compromised CDN edge, a
+# TLS-terminating proxy) got their payload installed silently, sometimes via
+# sudo. sha256sum (Linux) and shasum (macOS's actual default; it has no
+# sha256sum) produce the same "<hash>  <filename>" line shape .goreleaser.yaml's
+# checksums.txt uses, so either can check a single extracted line directly.
+verify_checksum() {
+	archive_path=$1
+	archive_name=$2
+	checksums_file=$3
+
+	line=$(grep " ${archive_name}\$" "$checksums_file" || true)
+	[ -n "$line" ] || die "no checksum entry found for ${archive_name} in checksums.txt"
+	expected=$(printf '%s\n' "$line" | awk '{print $1}')
+
+	if command -v sha256sum >/dev/null 2>&1; then
+		actual=$(sha256sum "$archive_path" | awk '{print $1}')
+	elif command -v shasum >/dev/null 2>&1; then
+		actual=$(shasum -a 256 "$archive_path" | awk '{print $1}')
+	else
+		die "need sha256sum or shasum to verify the downloaded archive"
+	fi
+
+	[ "$expected" = "$actual" ] || die "checksum mismatch for ${archive_name}: expected ${expected}, got ${actual} — refusing to install a tampered or corrupted download"
+}
+
 # resolve_version prints the exact tag to install (e.g. "v1.2.3"), either
 # from $DAMPING_VERSION or by asking the GitHub API for the latest release
 # — deliberately not the simpler "/releases/latest/download/<fixed-name>"
@@ -68,13 +98,16 @@ main() {
 	version_num=${version#v}
 
 	archive="damping_${version_num}_${os}_${arch}.tar.gz"
-	url="https://github.com/${REPO}/releases/download/${version}/${archive}"
+	base_url="https://github.com/${REPO}/releases/download/${version}"
 
 	tmp_dir=$(mktemp -d)
 	trap 'rm -rf "$tmp_dir"' EXIT INT TERM
 
 	log "Downloading damping ${version} for ${os}/${arch}..."
-	curl -fsSL "$url" -o "${tmp_dir}/${archive}" || die "download failed: $url"
+	curl -fsSL "${base_url}/${archive}" -o "${tmp_dir}/${archive}" || die "download failed: ${base_url}/${archive}"
+	curl -fsSL "${base_url}/checksums.txt" -o "${tmp_dir}/checksums.txt" || die "downloading checksums.txt failed: ${base_url}/checksums.txt"
+
+	verify_checksum "${tmp_dir}/${archive}" "$archive" "${tmp_dir}/checksums.txt"
 
 	tar -xzf "${tmp_dir}/${archive}" -C "$tmp_dir" damping
 
