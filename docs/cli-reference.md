@@ -26,8 +26,8 @@ Global flag on every command: `--config <path>` (default `~/.damping/policy.yaml
 | Code | Meaning |
 | --- | --- |
 | 0 | Success |
-| 1 | General error |
-| 2 | Usage error (bad flags/arguments) |
+| 1 | General error — **including bad flags/unknown subcommands**: Cobra's own arg/flag validation errors are plain errors with no special exit code, so they fall through to this one (verified directly: `damping log --bogus-flag` and `damping nonexistent-subcommand` both exit 1, not 2) |
+| 2 | `damping hook pretooluse` only — a hard deny (see §11). Not a general "usage error" code despite an earlier draft of this table claiming that; nothing else in the CLI produces exit 2 |
 | 3 | `damping policy test` — the tested command was flagged (verdict `deny` or `prompt`, i.e. anything but a plain `allow` — see §8) |
 | 4 | `damping doctor` — one or more checks failed |
 

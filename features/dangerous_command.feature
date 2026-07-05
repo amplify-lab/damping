@@ -89,6 +89,10 @@ Feature: Intercept destructive shell commands
     And the matched rule should be "destructive.encoded_payload_pipe"
     And Damping does not need to decode the payload to flag it
 
+  Scenario: Allow plain base64 encoding with no shell sink (false-positive guard)
+    When the agent attempts to execute "echo hello | base64"
+    Then Damping should allow the command immediately
+
   Scenario: Detect a known /proc sandbox-bypass path
     When the agent attempts to execute "/proc/self/root/usr/bin/npx rm -rf /"
     Then Damping should intercept the command
