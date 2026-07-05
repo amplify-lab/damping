@@ -11,8 +11,8 @@ Damping sits between your AI coding agent (Claude Code, Cursor, and more to come
   Risk:    critical — if this proceeds, this will delete your entire home directory
   Rule:    destructive.rm_rf_protected
 
-  [a] Allow once   [A] Always allow this pattern
-  [d] Deny once    [D] Always deny this pattern
+  [a] Allow once   [A] Always allow this exact command
+  [d] Deny once    [D] Always deny this exact command
 >
 ```
 
@@ -62,7 +62,7 @@ Full command reference: [`docs/cli-reference.md`](docs/cli-reference.md).
 
 Everything below is implemented and covered by passing tests — not aspirational:
 
-- **`core/`** — the transport-agnostic `ActionEvent` schema, the V1 policy engine (10 default rules, split across `rules_shell.go`/`rules_mcp.go` by transport), always-allow/deny pattern matching (`patterns.go`) and **persistence** (`persist.go` — edits the policy YAML via `yaml.Node` surgery so comments and formatting elsewhere in the file survive), and the append-only JSONL audit log. `go test ./...` from `core/`.
+- **`core/`** — the transport-agnostic `ActionEvent` schema, the V1 policy engine (11 default rules, split across rules_shell.go/rules_mcp.go/rules_selfprotection.go by concern), always-allow/deny pattern matching (`patterns.go`) and **persistence** (`persist.go` — edits the policy YAML via `yaml.Node` surgery so comments and formatting elsewhere in the file survive), and the append-only JSONL audit log. `go test ./...` from `core/`.
 - **`cli/`** — the `damping` binary: `init`, `doctor`, `status`, `on`/`off`, `log` (with `--channel`/`--risk`/`--actor`/`--outcome`/`--since`/`--limit` filters, plus `log show <event_id>`), `policy list`/`test`/`validate`, `version`, and the real Claude Code `PreToolUse` hook entrypoint (`damping hook pretooluse`), including the exact `/dev/tty`-based confirmation flow with full **allow once / always allow / deny once / always deny** support (see `docs/architecture.md` §6 for why stdin/stdout can't be reused for that). `go test ./...` from `cli/`.
 - **`damping mcp wrap -- <server-command>`** — the V1 thin MCP adapter (`cli/adapter/mcp`), a real client+server pair built on the official Go SDK: it discovers the wrapped server's tools, re-exposes them unchanged, and runs every tool call through the exact same `core/policy` engine and `core/audit` log the CLI hook uses, before forwarding an allowed call to the real subprocess. Verified end-to-end both with the SDK's in-memory test transports (`wrap_test.go`) and manually against real OS subprocesses (a real MCP client → `damping mcp wrap` → a real wrapped server, three separate processes). No OAuth, no confused-deputy defense — that's Phase 3.
 - **Shell danger detection** (`cli/shell`) — real `mvdan.cc/sh/v3` AST parsing (`parser.go`), Facts extraction (`facts.go`), and an explicit semantic layer for what AST parsing alone doesn't catch (`literal.go` + rule matchers): known aliases, base64-pipe-to-shell structural patterns, `/proc` sandbox-bypass path literals, dynamically-constructed command names, and writes redirected into protected paths. See `docs/threat-model.md` §3.

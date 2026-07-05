@@ -10,6 +10,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/amplify-lab/damping/cli/paths"
+	"github.com/amplify-lab/damping/core/decision"
+	"github.com/amplify-lab/damping/core/event"
 )
 
 func newOffCmd() *cobra.Command {
@@ -41,6 +43,23 @@ func newOffCmd() *cobra.Command {
 			}
 			if err := os.WriteFile(marker, []byte(content), 0o600); err != nil {
 				return err
+			}
+
+			// features/self_protection.feature requires self_disable to be
+			// audited like any other action — this is the single most
+			// security-sensitive action in the whole tool, so it gets no
+			// exemption from the audit trail. A human typing `damping off`
+			// directly has no agent session, hence the "local" session id.
+			if writer, hasAuditSink := newAuditWriter(); hasAuditSink {
+				raw := "damping off"
+				if forDuration != "" {
+					raw = fmt.Sprintf("damping off --for %s", forDuration)
+				}
+				ev := event.New(event.NewID(), "local", "human", event.ChannelCLI, event.ActionSelfDisable, "damping off", raw,
+					decision.Decision{Verdict: decision.Allow, Reason: "explicit human action at the terminal — the only sanctioned disable path"})
+				if err := writer.Append(ev); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "damping: failed to write audit record for this self_disable: %v\n", err)
+				}
 			}
 
 			w := cmd.OutOrStdout()

@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sync"
 
 	gosdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -156,9 +157,34 @@ func sessionIDOf(session *gosdk.ServerSession) string {
 // stream with the outer client, exactly the same reasoning as the CLI hook
 // entrypoint). Persisting an "always allow/deny" resolution for MCP tool
 // calls is not yet implemented in V1 — see docs/architecture.md §7's note
-// on scope — a Prompt decision is resolved once, per call, every time.
+// on scope — a Prompt decision is resolved once, per call, every time. If
+// the human chose [A]/[D] anyway, they're told explicitly that it wasn't
+// remembered — the prompt itself advertises "always", so silently treating
+// it as "once" would be a real, if small, dishonesty (found via code
+// review: the resolution.Persist flag was read nowhere at all before this).
+// newTTYPrompter is a package-level var (not a direct call to
+// ui.OpenTTYPrompter) so tests can substitute a scripted fake reader
+// instead of a real controlling terminal — the same pattern
+// cli/cmd/hook.go uses for the identical reason.
+var newTTYPrompter = ui.OpenTTYPrompter
+
+// ttyPromptMu serializes TTY prompts within one `damping mcp wrap` process.
+// Unlike the CLI hook (a fresh one-shot subprocess per command), a single
+// `mcp wrap` process stays alive for the MCP client's whole session and can
+// have the MCP SDK invoke registerForwardingTool's handler concurrently for
+// simultaneous tool calls — without this, two Prompt-tier calls at once
+// would interleave their prompt text and input reads on the same
+// controlling terminal, producing a garbled, unanswerable mess. This does
+// not address a *second*, separate `damping` process (the CLI hook, or
+// another `mcp wrap`) prompting on the same terminal at the same time —
+// that cross-process race is a documented, lower-priority known limitation.
+var ttyPromptMu sync.Mutex
+
 func resolvePrompt(raw string, d decision.Decision) decision.Decision {
-	prompter, closeTTY, err := ui.OpenTTYPrompter()
+	ttyPromptMu.Lock()
+	defer ttyPromptMu.Unlock()
+
+	prompter, closeTTY, err := newTTYPrompter()
 	if err != nil {
 		d.Resolve(decision.Deny)
 		d.Reason = "no controlling terminal available to ask; denied by default: " + d.Reason
@@ -167,5 +193,8 @@ func resolvePrompt(raw string, d decision.Decision) decision.Decision {
 	defer closeTTY()
 	resolution := prompter.Confirm(raw, d)
 	d.Resolve(resolution.Verdict)
+	if resolution.Persist {
+		prompter.Notify("Note: \"always\" isn't remembered for MCP tool calls yet in this version — this choice applies to this call only.")
+	}
 	return d
 }

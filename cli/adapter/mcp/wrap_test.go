@@ -1,14 +1,18 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	gosdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/amplify-lab/damping/cli/ui"
 	"github.com/amplify-lab/damping/core/audit"
 	"github.com/amplify-lab/damping/core/decision"
 	"github.com/amplify-lab/damping/core/event"
@@ -138,6 +142,64 @@ func TestWrap_DeniesDestructiveToolCall(t *testing.T) {
 	}
 	if events[0].Decision.PolicyID != "mcp.destructive_tool_call" {
 		t.Fatalf("expected rule mcp.destructive_tool_call, got %q", events[0].Decision.PolicyID)
+	}
+}
+
+// TestResolvePrompt_NotifiesWhenPersistIsRequestedButUnsupported is a
+// regression test for a real honesty gap found via code review: the shared
+// TTY prompt advertises "[A] Always allow"/"[D] Always deny" to MCP callers
+// too (it's the same Prompter used for CLI), but MCP tool-call persistence
+// isn't implemented in V1 — before this fix, choosing "A" silently behaved
+// like "allow once" with no indication the user's actual choice was
+// discarded.
+func TestResolvePrompt_NotifiesWhenPersistIsRequestedButUnsupported(t *testing.T) {
+	orig := newTTYPrompter
+	defer func() { newTTYPrompter = orig }()
+
+	var out bytes.Buffer
+	newTTYPrompter = func() (ui.Prompter, func(), error) {
+		return ui.TTYPrompter{In: strings.NewReader("A\n"), Out: &out}, func() {}, nil
+	}
+
+	d := decision.Decision{Verdict: decision.Prompt, PolicyID: "mcp.destructive_tool_call"}
+	resolved := resolvePrompt("delete_all {}", d)
+
+	if resolved.Outcome() != decision.Allow {
+		t.Fatalf("expected the resolved verdict to be Allow, got %v", resolved.Outcome())
+	}
+	if !strings.Contains(out.String(), "isn't remembered for MCP tool calls") {
+		t.Fatalf("expected a notice that the always-allow choice wasn't persisted, got output:\n%s", out.String())
+	}
+}
+
+func TestResolvePrompt_NoNoticeForOnceChoices(t *testing.T) {
+	orig := newTTYPrompter
+	defer func() { newTTYPrompter = orig }()
+
+	var out bytes.Buffer
+	newTTYPrompter = func() (ui.Prompter, func(), error) {
+		return ui.TTYPrompter{In: strings.NewReader("a\n"), Out: &out}, func() {}, nil
+	}
+
+	d := decision.Decision{Verdict: decision.Prompt}
+	resolvePrompt("read_thing {}", d)
+
+	if strings.Contains(out.String(), "isn't remembered") {
+		t.Fatalf("did not expect a persistence notice for a plain 'allow once' choice, got:\n%s", out.String())
+	}
+}
+
+func TestResolvePrompt_NoTTYDefaultsToDeny(t *testing.T) {
+	orig := newTTYPrompter
+	defer func() { newTTYPrompter = orig }()
+	newTTYPrompter = func() (ui.Prompter, func(), error) {
+		return nil, nil, io.ErrClosedPipe
+	}
+
+	d := decision.Decision{Verdict: decision.Prompt}
+	resolved := resolvePrompt("delete_all {}", d)
+	if resolved.Outcome() != decision.Deny {
+		t.Fatalf("expected deny-by-default when no controlling terminal is available, got %v", resolved.Outcome())
 	}
 }
 

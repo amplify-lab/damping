@@ -27,6 +27,11 @@ const (
 	ActionToolCall    ActionType = "tool_call"
 	ActionHTTPRequest ActionType = "http_request" // reserved, Phase 3+
 	ActionMemoryWrite ActionType = "memory_write" // reserved, Phase 6 (Memory Guard)
+	// ActionSelfDisable records a `damping off` invocation — the one
+	// sanctioned way to disable enforcement (see docs/threat-model.md §4).
+	// features/self_protection.feature requires this to be audited like any
+	// other action, precisely because it is the most security-sensitive one.
+	ActionSelfDisable ActionType = "self_disable"
 )
 
 // RiskLevel is the policy engine's risk classification for an action.

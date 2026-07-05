@@ -18,10 +18,18 @@ Feature: Damping cannot be silently disabled
     Then Damping enforcement should stop for 30 minutes
     And Damping should automatically re-enable itself afterward without further input
 
-  Scenario: The agent cannot invoke the disable path as a normal tool call
-    Given the agent only has access to the Bash and MCP tool-call surfaces it is instructed to use
-    When the agent is not explicitly instructed by the human to run "damping off"
-    Then there should be no ordinary task flow that causes "damping off" to run unattended
+  Scenario: The agent's own attempt to run "damping off" is denied, not just discouraged
+    When the agent attempts to execute "damping off" via its own Bash tool call
+    Then Damping should intercept the command
+    And the matched rule should be "self_protection.damping_off_attempt"
+    And Damping should deny the command
+    # This is enforced by an actual policy rule (core/policy/rules_selfprotection.go),
+    # not merely a convention — a human running "damping off" directly at their own
+    # terminal never reaches this rule at all, since it never goes through the hook.
+
+  Scenario: Harmless damping subcommands are not swept up by the self-protection rule
+    When the agent attempts to execute "damping status" via its own Bash tool call
+    Then Damping should allow the command immediately
 
   Scenario: Hook removal outside "damping off" is detected and surfaced
     Given Damping's hook entry was present in "~/.claude/settings.json" during the last "damping doctor" run

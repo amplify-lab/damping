@@ -25,6 +25,13 @@ type Resolution struct {
 // the hook/policy-test code paths are exercised without a real TTY.
 type Prompter interface {
 	Confirm(raw string, d decision.Decision) Resolution
+	// Notify tells the human something outside the allow/deny question
+	// itself — e.g. cli/adapter/mcp uses this to say a requested "always"
+	// choice wasn't actually persisted, since MCP tool-call persistence
+	// isn't implemented in V1 (see wrap.go's resolvePrompt). Silently
+	// discarding an unsupported "always" choice would contradict what the
+	// prompt itself just told the user it would do.
+	Notify(msg string)
 }
 
 // TTYPrompter reads a single-character response from an io.Reader and
@@ -70,4 +77,8 @@ func (p TTYPrompter) Confirm(raw string, d decision.Decision) Resolution {
 			fmt.Fprintln(p.Out, "please enter 'a', 'A', 'd', or 'D'")
 		}
 	}
+}
+
+func (p TTYPrompter) Notify(msg string) {
+	fmt.Fprintln(p.Out, msg)
 }

@@ -55,6 +55,22 @@ func TestAnalyze_BlocksHomeDirectoryDeletion(t *testing.T) {
 	}
 }
 
+// TestAnalyze_BlocksMixedCaseRecursiveFlag is an end-to-end regression test
+// (real shell parsing, not hand-built Facts) for a real bypass: an earlier
+// version of the policy engine's flag matcher only recognized lowercase
+// "-rf"/"-fr", so "rm -Rf ~/" — a very common way to type this — slipped
+// through entirely. See core/policy/rules_shell_test.go for the matcher-
+// level table of every spelling.
+func TestAnalyze_BlocksMixedCaseRecursiveFlag(t *testing.T) {
+	e := loadEngine(t)
+	for _, raw := range []string{"rm -Rf ~/", "rm -fR ~/"} {
+		d := evaluateRaw(t, e, raw)
+		if d.PolicyID != "destructive.rm_rf_protected" {
+			t.Errorf("evaluating %q: expected destructive.rm_rf_protected, got %q (verdict %v)", raw, d.PolicyID, d.Verdict)
+		}
+	}
+}
+
 func TestAnalyze_BlocksRootDeletion(t *testing.T) {
 	e := loadEngine(t)
 	d := evaluateRaw(t, e, "rm -rf /")

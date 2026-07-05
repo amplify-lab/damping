@@ -75,6 +75,7 @@ const (
 	ActionToolCall    ActionType = "tool_call"
 	ActionHTTPRequest ActionType = "http_request" // reserved, Phase 3+
 	ActionMemoryWrite ActionType = "memory_write" // reserved, Phase 6 (Memory Guard)
+	ActionSelfDisable ActionType = "self_disable" // a `damping off` invocation — the audit trail's own most security-sensitive entry
 )
 
 type RiskLevel string

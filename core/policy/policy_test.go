@@ -309,3 +309,30 @@ always_deny:
 		t.Fatalf("expected the more specific always-deny pattern to win, got %v", d.Verdict)
 	}
 }
+
+// TestEvaluate_DeniesAgentAttemptToDisableDamping is the concrete
+// enforcement for "the agent cannot invoke the disable path as a normal
+// tool call" — see features/self_protection.feature. Before this rule
+// existed, nothing actually stopped an agent's own Bash tool call from
+// running `damping off`; the feature scenario described an intent with no
+// enforcement behind it.
+func TestEvaluate_DeniesAgentAttemptToDisableDamping(t *testing.T) {
+	e := loadDefaultEngine(t)
+	d := e.Evaluate(Facts{Raw: "damping off", Command: "damping", Args: []string{"off"}})
+	if d.PolicyID != "self_protection.damping_off_attempt" {
+		t.Fatalf("expected rule self_protection.damping_off_attempt, got %q (verdict %v)", d.PolicyID, d.Verdict)
+	}
+	if d.Verdict != decision.Deny {
+		t.Fatalf("expected a hard deny, got %v", d.Verdict)
+	}
+}
+
+func TestEvaluate_AllowsHarmlessDampingSubcommands(t *testing.T) {
+	e := loadDefaultEngine(t)
+	for _, args := range [][]string{{"status"}, {"doctor"}, {"log"}, {"on"}} {
+		d := e.Evaluate(Facts{Raw: "damping " + args[0], Command: "damping", Args: args})
+		if d.Verdict != decision.Allow {
+			t.Errorf("expected 'damping %s' to be allowed, got %v (rule %q)", args[0], d.Verdict, d.PolicyID)
+		}
+	}
+}
