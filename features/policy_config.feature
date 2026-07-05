@@ -25,7 +25,11 @@ Feature: Policy configuration and dry-run testing
   Scenario: Validating a policy file catches schema errors before they cause a crash
     Given a policy file with an invalid rule definition
     When the user runs "damping policy validate"
-    Then Damping should report the specific schema error and its location
+    Then Damping should report which rule id or field is invalid and why
+    # "Location" here means which rule/field, not a line:column source position —
+    # core/policy/config.go's Validate() names the offending rule id (e.g. an
+    # unknown rule id, a duplicate id, or an invalid action value), it does not
+    # track byte/line offsets into the YAML file.
     And Damping should not attempt to load the invalid file into the running policy engine
 
   Scenario Outline: A new rule must have both a "should block" and a "should not block" test case

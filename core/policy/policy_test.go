@@ -197,6 +197,23 @@ func TestEvaluate_DetectsEncodedPayloadPipeWithoutDecoding(t *testing.T) {
 	}
 }
 
+// TestEvaluate_AllowsBase64EncodingWithoutAShellSink is the required "safe"
+// counterpart to the scenario above — see features/policy_config.feature's
+// pairing rule ("must have both a should-block and a should-not-block
+// case"), which this rule was missing until code review flagged it.
+// Encoding (or decoding) data through base64 is an everyday, harmless
+// operation; only a decode feeding into a shell/eval is the actual signal.
+func TestEvaluate_AllowsBase64EncodingWithoutAShellSink(t *testing.T) {
+	e := loadDefaultEngine(t)
+	d := e.Evaluate(Facts{
+		Raw:        "echo hello | base64",
+		IsPipeline: true, PipelineCmds: []string{"echo", "base64"},
+	})
+	if d.Verdict != decision.Allow {
+		t.Fatalf("expected a plain base64 encode with no shell sink to be allowed, got %v (rule %q)", d.Verdict, d.PolicyID)
+	}
+}
+
 func TestEvaluate_DetectsProcSandboxBypass(t *testing.T) {
 	e := loadDefaultEngine(t)
 	d := e.Evaluate(Facts{Raw: "/proc/self/root/usr/bin/npx rm -rf /"})

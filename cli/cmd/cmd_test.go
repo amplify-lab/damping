@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/amplify-lab/damping/cli/paths"
 	"github.com/amplify-lab/damping/cli/ui"
 )
 
@@ -127,6 +129,45 @@ func TestDoctor_FailsWhenHookRemovedOutsideOff(t *testing.T) {
 	}
 }
 
+// TestDoctor_WarnsWhenPolicyHashChanges exercises the tamper-evidence check
+// described in docs/threat-model.md §8: doctor remembers the policy file's
+// hash between runs and flags any change, without needing to understand
+// what specifically changed.
+func TestDoctor_WarnsWhenPolicyHashChanges(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	// First run establishes the hash baseline.
+	if _, _, err := run(t, "", "doctor"); err != nil {
+		t.Fatalf("first doctor run: %v", err)
+	}
+
+	policyPath, err := paths.Policy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(policyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Still valid YAML, just different content — enough to change the hash.
+	if err := os.WriteFile(policyPath, append(data, []byte("\n# tampered\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := run(t, "", "doctor")
+	if err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if !strings.Contains(out, "hash changed") {
+		t.Fatalf("expected a policy-hash-changed warning, got: %s", out)
+	}
+	if !strings.Contains(out, "1 warning") {
+		t.Fatalf("expected the hash change to count as a warning (not a failure), got: %s", out)
+	}
+}
+
 func TestPolicyList_ShowsAllRules(t *testing.T) {
 	setupTestEnv(t)
 	if _, _, err := run(t, "", "init"); err != nil {
@@ -238,6 +279,91 @@ func TestOff_WritesSelfDisableAuditEvent(t *testing.T) {
 	}
 	if e.ActionType != "self_disable" {
 		t.Fatalf("expected action_type self_disable, got %q", e.ActionType)
+	}
+}
+
+func TestOff_ForFlag_RejectsInvalidDuration(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	_, _, err := run(t, "", "off", "--for", "not-a-duration")
+	if err == nil {
+		t.Fatal("expected an error for an invalid --for duration")
+	}
+	if !strings.Contains(err.Error(), "--for") {
+		t.Fatalf("expected the error to mention --for, got: %v", err)
+	}
+}
+
+func TestOff_ForFlag_AutoReEnablesAfterExpiry(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := run(t, "", "off", "--for", "1h"); err != nil {
+		t.Fatalf("off --for 1h: %v", err)
+	}
+
+	// Still disabled right after — the duration hasn't elapsed.
+	stillOff, err := IsDisabled()
+	if err != nil {
+		t.Fatalf("IsDisabled: %v", err)
+	}
+	if !stillOff {
+		t.Fatal("expected Damping to still be off immediately after 'off --for 1h'")
+	}
+
+	// Rewrite the marker as if the duration already expired, without
+	// waiting a real hour — this exercises IsDisabled's expiry comparison
+	// directly rather than the clock.
+	marker, err := paths.DisabledMarker()
+	if err != nil {
+		t.Fatal(err)
+	}
+	expired := time.Now().Add(-1 * time.Minute).Format(time.RFC3339)
+	if err := os.WriteFile(marker, []byte("off\nuntil="+expired+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	disabled, err := IsDisabled()
+	if err != nil {
+		t.Fatalf("IsDisabled: %v", err)
+	}
+	if disabled {
+		t.Fatal("expected IsDisabled to report false (auto re-enabled) once the --for duration has expired")
+	}
+
+	// And the marker file itself should have been cleaned up.
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("expected the expired marker file to be removed, stat err: %v", err)
+	}
+}
+
+func TestPolicyValidate_AcceptsTheShippedDefault(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, _, err := run(t, "", "policy", "validate")
+	if err != nil {
+		t.Fatalf("expected the shipped default policy to validate cleanly, got %v", err)
+	}
+	if !strings.Contains(out, "valid") {
+		t.Fatalf("expected a success message, got: %s", out)
+	}
+}
+
+func TestPolicyValidate_RejectsUnknownRuleID(t *testing.T) {
+	setupTestEnv(t)
+	dir := t.TempDir()
+	badPolicy := filepath.Join(dir, "policy.yaml")
+	if err := os.WriteFile(badPolicy, []byte("version: 1\nrules:\n  - id: not_a_real_rule\n    description: x\n    risk: low\n    action: allow\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := run(t, "", "--config", badPolicy, "policy", "validate")
+	if err == nil {
+		t.Fatal("expected an error for a policy file referencing an unknown rule id")
 	}
 }
 

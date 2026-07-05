@@ -177,6 +177,14 @@ func TestAnalyze_DetectsEncodedPayloadPipeWithoutDecoding(t *testing.T) {
 	}
 }
 
+func TestAnalyze_AllowsBase64EncodingWithoutAShellSink(t *testing.T) {
+	e := loadEngine(t)
+	d := evaluateRaw(t, e, "echo hello | base64")
+	if d.Verdict != decision.Allow {
+		t.Fatalf("expected a plain base64 encode with no shell sink to be allowed, got %v (rule %q)", d.Verdict, d.PolicyID)
+	}
+}
+
 func TestAnalyze_DetectsProcSandboxBypass(t *testing.T) {
 	e := loadEngine(t)
 	d := evaluateRaw(t, e, "/proc/self/root/usr/bin/npx rm -rf /")
