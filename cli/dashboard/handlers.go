@@ -148,13 +148,14 @@ func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 	// /api/events fetch before it opens this connection (see index.html's
 	// startStream, called right after loadEvents) — starting Follow at
 	// offset 0 here would replay the entire audit log as if every event
-	// were new, duplicating every row already on screen. Captured as the
-	// file's current size, the same way damping log --follow's own
-	// startOffset is (cli/cmd/log.go), so only events appended after this
-	// connection opens ever reach the client.
-	var startOffset int64
+	// were new, duplicating every row already on screen. The real
+	// os.FileInfo (not just its Size()) is captured the same way `damping
+	// log --follow`'s own startInfo is (cli/cmd/log.go), so only events
+	// appended after this connection opens ever reach the client, and
+	// Follow's first internal check has a real identity to compare against.
+	var startInfo os.FileInfo
 	if info, statErr := os.Stat(s.cfg.AuditPath); statErr == nil {
-		startOffset = info.Size()
+		startInfo = info
 	} else if !os.IsNotExist(statErr) {
 		http.Error(w, fmt.Sprintf("stat audit log: %v", statErr), http.StatusInternalServerError)
 		return
@@ -166,7 +167,7 @@ func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	err = audit.Follow(r.Context(), s.cfg.AuditPath, startOffset, f, 500*time.Millisecond, func(e event.ActionEvent) error {
+	err = audit.Follow(r.Context(), s.cfg.AuditPath, startInfo, f, 500*time.Millisecond, func(e event.ActionEvent) error {
 		data, err := json.Marshal(e)
 		if err != nil {
 			return err

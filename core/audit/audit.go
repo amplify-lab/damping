@@ -177,37 +177,57 @@ func ReadAll(path string, f Filter) ([]event.ActionEvent, error) {
 	return out, err
 }
 
-// Follow tails path starting at startOffset (typically the file's size at
-// the moment the caller finished an initial ReadAll, so nothing already
-// shown is repeated and nothing appended in between is missed — see
-// `damping log --follow` in cli/cmd/log.go), calling fn for each new
-// ActionEvent matching f as it's appended. It blocks until ctx is
-// cancelled, returning nil, or fn returns an error, which stops the tail
-// immediately.
+// Follow tails path starting from startInfo — the os.FileInfo the caller
+// observed right before calling Follow, typically right after finishing an
+// initial ReadAll (see `damping log --follow` in cli/cmd/log.go), or nil if
+// the file didn't exist at that point. Only appends after startInfo's size
+// are delivered. Follow calls fn for each new ActionEvent matching f as
+// it's appended, and blocks until ctx is cancelled, returning nil, or fn
+// returns an error, which stops the tail immediately.
 //
 // Follow polls rather than using a filesystem-event API (inotify/kqueue/
 // ReadDirectoryChangesW) to stay dependency-free and portable across every
 // platform Damping ships on; pollInterval trades responsiveness against
-// wakeups. Rotate renaming the file away and a fresh, smaller-or-not file
-// appearing at the same path is treated as "start over from the top of the
-// current file" — detected via file identity (os.SameFile), not just a
-// size check, since the new file isn't guaranteed to be smaller than the
-// old offset (a later event's JSON encoding can easily be longer than an
-// earlier one's).
-func Follow(ctx context.Context, path string, startOffset int64, f Filter, pollInterval time.Duration, fn func(event.ActionEvent) error) error {
-	offset := startOffset
-	var lastInfo os.FileInfo
+// wakeups. Rotate renaming the file away and a fresh file appearing at the
+// same path is treated as "start over from the top of the current file" —
+// detected via file identity (os.SameFile), not just a size check, since
+// the new file isn't guaranteed to be smaller than the old offset (a later
+// event's JSON encoding can easily be longer than an earlier one's).
+// startInfo is required (rather than a bare startOffset int64, an earlier
+// version's signature) specifically so this identity check has something
+// real to compare against from Follow's very first check — an earlier
+// version always started with a nil lastInfo, so a rotation completing
+// between the caller's own pre-Follow stat and Follow's first internal one
+// could never be detected by identity at all, only by the weaker
+// size-shrink fallback (which itself only helps if the poll happens to land
+// while the file is still smaller than the old offset). The first content
+// check now also runs immediately, before the first pollInterval tick,
+// narrowing that window further rather than always waiting one full
+// interval before ever looking.
+//
+// Known, disclosed limitation: this only detects rotation, it doesn't make
+// polling omniscient. A same-inode truncate-in-place rotation (e.g. an
+// external tool's logrotate `copytruncate` policy, as opposed to Damping's
+// own rename-based Rotate) keeps os.SameFile reporting "same file," so if
+// it also regrows past the old offset before the very next check, neither
+// the identity check nor the size-shrink fallback fires, and Follow
+// misreads the regrown content at the stale offset. Likewise, if the file
+// at path is replaced more than once between two consecutive checks (e.g.
+// two rotations firing faster than pollInterval), the generation that
+// existed only in between is already gone by the time Follow looks and can
+// never be read at all — an inherent limit of polling a path rather than
+// subscribing to filesystem events, not something a smarter offset/identity
+// comparison can fix. Neither case applies to Damping's own Rotate, which
+// is rename-based and fires at most once per Append call.
+func Follow(ctx context.Context, path string, startInfo os.FileInfo, f Filter, pollInterval time.Duration, fn func(event.ActionEvent) error) error {
+	var offset int64
+	if startInfo != nil {
+		offset = startInfo.Size()
+	}
+	lastInfo := startInfo
 	fileWasMissing := false
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-		}
-
+	check := func() error {
 		info, err := os.Stat(path)
 		if os.IsNotExist(err) {
 			// The file may reappear at this path (Rotate renames it away,
@@ -216,7 +236,7 @@ func Follow(ctx context.Context, path string, startOffset int64, f Filter, pollI
 			// top, never seeked into using a now-meaningless offset.
 			lastInfo = nil
 			fileWasMissing = true
-			continue
+			return nil
 		}
 		if err != nil {
 			return fmt.Errorf("audit: stat %s: %w", path, err)
@@ -234,7 +254,7 @@ func Follow(ctx context.Context, path string, startOffset int64, f Filter, pollI
 		lastInfo = info
 
 		if info.Size() == offset {
-			continue // nothing new this poll
+			return nil // nothing new this check
 		}
 
 		newOffset, err := followFrom(path, offset, f, fn)
@@ -242,6 +262,25 @@ func Follow(ctx context.Context, path string, startOffset int64, f Filter, pollI
 			return err
 		}
 		offset = newOffset
+		return nil
+	}
+
+	if err := check(); err != nil {
+		return err
+	}
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+		if err := check(); err != nil {
+			return err
+		}
 	}
 }
 
