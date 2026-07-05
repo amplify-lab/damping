@@ -76,8 +76,16 @@
   </div>
 </main>
 
+<div id="detail-drawer" class="hidden fixed inset-y-0 right-0 w-full max-w-md bg-slate-900 border-l border-slate-800 p-4 overflow-y-auto z-10" role="dialog" aria-label="Event detail">
+  <div class="flex justify-between items-center mb-3">
+    <h2 class="font-mono text-sm text-slate-300">Event detail</h2>
+    <button id="detail-close" class="text-slate-400 hover:text-slate-200 text-xl leading-none" aria-label="Close event detail">&times;</button>
+  </div>
+  <dl id="detail-fields" class="flex flex-col gap-1 text-sm"></dl>
+</div>
+
 <template id="row-template">
-  <tr class="border-b border-slate-900 last:border-0 hover:bg-slate-900/40">
+  <tr class="border-b border-slate-900 last:border-0 hover:bg-slate-900/40 cursor-pointer focus:outline-none focus:ring-1 focus:ring-teal-500" tabindex="0" role="button" aria-haspopup="dialog">
     <td class="px-3 py-2 whitespace-nowrap text-slate-400 font-mono text-xs" data-field="time"></td>
     <td class="px-3 py-2"><span class="badge" data-field="channel"></span></td>
     <td class="px-3 py-2" data-field="actor"></td>
@@ -149,8 +157,59 @@ function renderRow(ev) {
   decisionEl.classList.add(DECISION_CLASS[outcome] || "badge-allow");
   if (ev.decision && ev.decision.degraded) decisionEl.classList.add("badge-degraded");
 
+  // docs/ux-dashboard-spec.md §2.3: "Row click -> detail drawer: full
+  // ActionEvent". `ev` is already the full object this row was rendered
+  // from, so no second fetch is needed to show it.
+  row.addEventListener("click", () => renderDetail(ev));
+  row.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); renderDetail(ev); }
+  });
+
   return row;
 }
+
+function addDetailField(dl, label, value) {
+  const dt = document.createElement("dt");
+  dt.className = "text-slate-500 text-xs uppercase tracking-wide mt-2";
+  dt.textContent = label;
+  const dd = document.createElement("dd");
+  dd.className = "font-mono text-slate-200 text-xs break-words whitespace-pre-wrap";
+  dd.textContent = value;
+  dl.appendChild(dt);
+  dl.appendChild(dd);
+}
+
+function renderDetail(ev) {
+  const dl = document.getElementById("detail-fields");
+  dl.textContent = "";
+  addDetailField(dl, "Event ID", ev.event_id);
+  addDetailField(dl, "Time", fmtTime(ev.timestamp));
+  addDetailField(dl, "Session", ev.session_id);
+  addDetailField(dl, "Actor", ev.actor);
+  if (ev.identity) addDetailField(dl, "Identity", ev.identity);
+  addDetailField(dl, "Channel", ev.channel);
+  addDetailField(dl, "Action type", ev.action_type);
+  addDetailField(dl, "Target", ev.target);
+  addDetailField(dl, "Raw", ev.raw);
+  if (ev.parsed_args && Object.keys(ev.parsed_args).length) {
+    addDetailField(dl, "Parsed args", JSON.stringify(ev.parsed_args, null, 2));
+  }
+  addDetailField(dl, "Risk", ev.risk_level);
+  const d = ev.decision || {};
+  addDetailField(dl, "Verdict", d.verdict || "");
+  if (d.resolved_verdict) addDetailField(dl, "Resolved verdict (prompt -> " + d.resolved_verdict + ")", d.resolved_verdict);
+  if (d.policy_id) addDetailField(dl, "Policy ID", d.policy_id);
+  if (d.reason) addDetailField(dl, "Reason", d.reason);
+  if (d.degraded) addDetailField(dl, "Degraded", "true — this decision was made under an internal failure, not a real policy match");
+  document.getElementById("detail-drawer").classList.remove("hidden");
+}
+
+document.getElementById("detail-close").addEventListener("click", () => {
+  document.getElementById("detail-drawer").classList.add("hidden");
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") document.getElementById("detail-drawer").classList.add("hidden");
+});
 
 let currentEvents = [];
 
