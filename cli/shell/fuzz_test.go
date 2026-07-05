@@ -67,6 +67,16 @@ func FuzzAnalyze(f *testing.F) {
 		"nuke ~/Documents",
 		"$(echo rm) -rf ~/",
 		"setup() {\n\techo \"preparing workspace\"\n\trm -rf /\n}\nsetup\n",
+		"cat <(rm -rf ~)",
+		"echo hi > >(rm -rf ~)",
+		"cat <<< \"$(rm -rf ~)\"",
+		"bash <<'EOF'\nrm -rf ~\nEOF\n",
+		"cat <<EOF\n$(rm -rf ~)\nEOF\n",
+		// Nested heredocs-fed-to-shell — exercises the new recursive
+		// heredoc re-parse path at real (if shallow) nesting depth, the
+		// heredoc-specific counterpart to the deeply-nested $(...) seed
+		// below.
+		"bash <<'OUTER'\nbash <<'INNER'\nrm -rf ~\nINNER\nOUTER\n",
 
 		// Malformed / edge-case syntax — exactly the "adversarial input is
 		// the norm" class the plan docs call out, not just valid-but-risky
