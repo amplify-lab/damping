@@ -187,4 +187,4 @@ Testing this without real subprocesses uses the SDK's `mcp.NewInMemoryTransports
 
 ## 8. CI pipeline (`.github/workflows/ci.yml`)
 
-Per PR: `golangci-lint` (incl. `gosec`) → `go test ./...` → `godog` BDD run against `features/*.feature` → SBOM generation (`cyclonedx-gomod`). Any failure blocks merge. Dependabot on; npm publishing (once `cf/`/`dashboard/` exist) goes through OIDC provenance, not long-lived tokens — a direct lesson from the 2026 Cline token-theft incident referenced in the original planning docs.
+Per PR: `golangci-lint` (incl. `gosec`) → `go test ./...` → SBOM generation (`cyclonedx-gomod`). The `godog` BDD run against every V1-scope `features/*.feature` file (§7's `cli/bdd` package) isn't a separate pipeline step — it's a normal Go test package, so `go test ./...` already runs it, with the same pass/fail semantics as everything else in that step. Any failure blocks merge. Dependabot on; npm publishing (once `cf/`/`dashboard/` exist) goes through OIDC provenance, not long-lived tokens — a direct lesson from the 2026 Cline token-theft incident referenced in the original planning docs.

@@ -781,6 +781,31 @@ func TestLog_FollowJSONKeepsStdoutPureNDJSON(t *testing.T) {
 	}
 }
 
+// TestLog_JSONEmptyResultsNoticeGoesToStderr is a regression test for a
+// bug the BDD suite (cli/bdd's audit_log_test.go) caught: printEvents wrote
+// "No audit events matched those filters." to stdout unconditionally, even
+// in --json mode — a `damping log --json --follow` starting from an empty
+// audit log fed that plain-text line straight into what's supposed to be a
+// pure NDJSON stream, the exact same class of bug already fixed once for
+// the "Watching for new events" notice.
+func TestLog_JSONEmptyResultsNoticeGoesToStderr(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	stdout, stderr, err := run(t, "", "log", "--json")
+	if err != nil {
+		t.Fatalf("log --json: %v", err)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Fatalf("expected empty stdout for zero results in --json mode, got:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "No audit events matched those filters.") {
+		t.Fatalf("expected the empty-results notice on stderr, got:\n%s", stderr)
+	}
+}
+
 func TestLog_ShowPrintsFullEvent(t *testing.T) {
 	setupTestEnv(t)
 	if _, _, err := run(t, "", "init"); err != nil {

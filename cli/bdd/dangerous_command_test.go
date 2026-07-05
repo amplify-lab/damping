@@ -4,12 +4,16 @@
 // docs/00-統一開發計畫（定案版）.md's closing note: "情境通過才算完成"
 // (a scenario only counts as done once it passes).
 //
-// Only features/dangerous_command.feature is wired here for now (Phase 1's
-// most emphasized scenario file, per 開發計畫.md's "先攻這個最難的點"). The
-// remaining feature files' behaviors already have equivalent coverage as
-// plain Go tests in cli/cmd, core/policy, and core/audit — wiring them
-// through godog too is a reasonable, well-scoped follow-up, not a gap that
-// blocks V1.
+// This file wires features/dangerous_command.feature (Phase 1's most
+// emphasized scenario file, per 開發計畫.md's "先攻這個最難的點"), at the
+// pure policy.Engine level. Its sibling files in this package wire every
+// other V1-scope feature file (self_protection, mcp_tool_governance,
+// audit_log, policy_config) the same way, driving the real command tree via
+// harness_test.go's runDampingCommand where a scenario is really about the
+// CLI surface rather than the policy engine alone. features/compliance_report.feature
+// (@phase5) and features/team_dashboard.feature (@phase4) are entirely
+// feature-level-tagged for phases with no implementation yet, so neither
+// has a corresponding _test.go file — there is nothing to wire.
 package bdd
 
 import (

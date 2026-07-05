@@ -40,9 +40,10 @@ jobs:
       - uses: golangci/golangci-lint-action@v6
         with:
           working-directory: cli
-      # cli/bdd runs features/dangerous_command.feature through godog — see
-      # docs/00-統一開發計畫（定案版）.md: a scenario only counts as done
-      # once it passes, so this is not optional coverage.
+      # cli/bdd runs every V1-scope features/*.feature file through godog
+      # (dangerous_command, self_protection, mcp_tool_governance, audit_log,
+      # policy_config) — see docs/00-統一開發計畫（定案版）.md: a scenario
+      # only counts as done once it passes, so this is not optional coverage.
       - run: go test ./... -race -cover
 
   security:
