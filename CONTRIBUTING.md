@@ -9,29 +9,7 @@ Both should become a permanent, non-negotiable regression scenario — never a s
 
 ## Before you start
 
-- Read `docs/00-統一開發計畫（定案版）.md` for the current strategic/architectural state of the project (it supersedes the earlier planning docs where they conflict).
-- Read `docs/architecture.md` for the module layout and the `ActionEvent`/`Decision` schema.
-- Read `docs/threat-model.md` §3 for the known bypass classes and why AST parsing alone doesn't solve all of them.
-
-## Development setup
-
-```
-git clone <repo>
-cd damping
-go work sync          # or: cd core && go mod tidy; cd ../cli && go mod tidy
-cd core && go test ./...
-cd ../cli && go test ./...
-```
-
-Every package should build and test cleanly with `go build ./...`, `go vet ./...`, and `gofmt -l .` producing no output, from both `core/` and `cli/` independently.
-
-## Adding or changing a policy rule
-
-Every rule needs **both**:
-1. A scenario in `features/dangerous_command.feature` (or `mcp_tool_governance.feature`) asserting it **blocks** a real dangerous case.
-2. A scenario asserting it does **not** block a normal, safe case.
-
-A rule without both directions of test coverage will not be merged — see `features/policy_config.feature`'s own scenario about this. Add the matcher function in `core/policy/rules.go`, register it in the `matchers` map, add the rule's metadata to `cli/policies/default.yaml`, and mirror both directions as Go tests in `core/policy/policy_test.go` and/or `cli/shell/parser_test.go`.
+See [`CLAUDE.md`](CLAUDE.md) for the full repository map, build/test commands, the BDD-first development methodology, and the rules for adding or changing a policy rule (every rule needs both a "blocks the dangerous case" scenario and a "doesn't block the safe case" scenario — a rule without both directions of test coverage will not be merged).
 
 ## Commit style
 
