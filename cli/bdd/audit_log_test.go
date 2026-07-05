@@ -172,7 +172,15 @@ func TestFeatures_AuditLog(t *testing.T) {
 				return w.appendEvent(event.New(event.NewID(), "s1", "claude-code", event.ChannelCLI,
 					event.ActionShellExec, "rm -rf ~/", "rm -rf ~/", w.decision))
 			})
-			sc.Then(`^the audit log should show a single event with decision "([^"]*)"$`, func(string) error {
+			sc.Then(`^the audit log should show a single event with decision "([^"]*)"$`, func(wantDecision string) error {
+				// A review found this step captured the decision string
+				// but never used it — the body hardcoded a Prompt->Allow
+				// check regardless of what the Gherkin text said. It only
+				// ever looked correct because the sole scenario using this
+				// step happens to say "prompt→allow"; reusing this same
+				// step wording with a different string (e.g. "prompt→deny")
+				// would have silently still asserted Allow. Now genuinely
+				// parses "verdict→outcome" and checks both.
 				events, err := audit.ReadAll(w.auditPath, audit.Filter{})
 				if err != nil {
 					return err
@@ -180,9 +188,14 @@ func TestFeatures_AuditLog(t *testing.T) {
 				if len(events) != 1 {
 					return fmt.Errorf("expected exactly 1 event, got %d", len(events))
 				}
-				if events[0].Decision.Verdict != decision.Prompt || events[0].Decision.Outcome() != decision.Allow {
-					return fmt.Errorf("expected a resolved prompt->allow record, got verdict=%v outcome=%v",
-						events[0].Decision.Verdict, events[0].Decision.Outcome())
+				parts := strings.SplitN(wantDecision, "→", 2)
+				if len(parts) != 2 {
+					return fmt.Errorf(`expected a "verdict→outcome" decision string, got %q`, wantDecision)
+				}
+				wantVerdict, wantOutcome := decision.Verdict(parts[0]), decision.Verdict(parts[1])
+				if events[0].Decision.Verdict != wantVerdict || events[0].Decision.Outcome() != wantOutcome {
+					return fmt.Errorf("expected decision %q (verdict=%v outcome=%v), got verdict=%v outcome=%v",
+						wantDecision, wantVerdict, wantOutcome, events[0].Decision.Verdict, events[0].Decision.Outcome())
 				}
 				return nil
 			})
@@ -232,6 +245,27 @@ func TestFeatures_AuditLog(t *testing.T) {
 
 			// --- degraded-mode logging + doctor surfacing ---
 
+			// A review found these two steps hand-construct the resulting
+			// degraded ActionEvent directly via appendEvent, never actually
+			// calling hookadapter.EvaluateCommand/cli/cmd/hook.go's runHook
+			// — so this scenario can't detect whether a genuine crash in
+			// shell.Analyze really does fail open with a degraded record.
+			// That real mechanism (a recover() around the call, added after
+			// a review found it didn't exist at all — see cli/cmd/hook.go's
+			// evaluateCommandRecovering) is unit-tested directly instead, in
+			// cli/cmd/cmd_test.go's TestEvaluateCommandRecovering_RecoversFromPanic,
+			// using a policy.Evaluator stub that panics on demand — neither
+			// the real shell.Analyze nor the real policy.Engine can be made
+			// to panic reliably from a test (shell.Analyze specifically has
+			// ~1.2M fuzzed executions with zero panics found, see
+			// cli/shell/fuzz_test.go), and adding a test-only crash-trigger
+			// seam to this security tool's own production code would be a
+			// bigger liability than the coverage gap it would close. These
+			// two steps stay a documented fixture proving the downstream
+			// half (a degraded record gets written and damping doctor
+			// surfaces it) — the same precedent dangerous_command_test.go's
+			// own doc comment already establishes for a step that's real
+			// but not independently checkable from this vantage point.
 			sc.Given(`^the shell parser crashes while analyzing a command$`, func() error { return nil })
 			sc.When(`^the surrounding agent fails open per its own hook contract$`, func() error {
 				return w.appendEvent(event.New(event.NewID(), "unknown", "unknown", event.ChannelCLI,
