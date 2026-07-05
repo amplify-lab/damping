@@ -16,16 +16,25 @@ Damping sits between your AI coding agent (Claude Code, Cursor, and more to come
 >
 ```
 
-## Why not just use [dcg](https://github.com/Dicklesworthstone/destructive_command_guard) or another shell guardrail?
+## Why not just use dcg, Aegis, or Pipelock?
 
-Honestly, if all you want is "block `rm -rf`," dcg is mature, popular, and works well — you should consider it. Damping's actual bet is different: **the same policy engine and the same audit log also cover your MCP tool calls**, not just your terminal. Run `damping log` after your agent trips a rule in either place and you'll see both events, in one trail, filterable by channel:
+Honestly, if all you want is "block `rm -rf`," [dcg](https://github.com/Dicklesworthstone/destructive_command_guard) is mature, popular, and works well — you should consider it. Damping's actual bet is different: **the same policy engine and the same audit log also cover your MCP tool calls**, not just your terminal. Run `damping log` after your agent trips a rule in either place and you'll see both events, in one trail, filterable by channel:
 
 ```
 $ damping log --channel cli
 $ damping log --channel mcp
 ```
 
-Nobody else in this space unifies both under one engine and one audit trail at individual-developer scale (see `docs/00-統一開發計畫（定案版）.md` §三 for the full competitive breakdown). We also default to zero telemetry, ship as a single static Go binary (no npm dependency tree), and use real AST parsing (`mvdan/sh`) instead of regex — but the cross-channel story is the actual differentiator, not the shell-blocking demo alone.
+Here's the honest breakdown against the closest tools in this space — we'd rather list where they win than pretend they don't (docs/00-統一開發計畫（定案版）.md §三 has the full research this table is drawn from):
+
+| | Where it wins | What it doesn't do |
+| --- | --- | --- |
+| **[dcg](https://github.com/Dicklesworthstone/destructive_command_guard)** | 1,150+★, daily commits, 10+ agent integrations (Claude Code, Codex, Gemini CLI, Copilot CLI, Cursor, Grok, Aider), a much larger built-in rule set than Damping ships today | CLI-only — no MCP tool-call coverage, no cross-channel audit trail |
+| **[Aegis](https://github.com/Justin0504/Aegis)** | The closest OSS project to "one policy + audit gateway," with a cryptographic audit trail and human-in-the-loop approval, plus SDK support across 9+ frameworks | A gateway/SDK deployment model built around a runtime mediation point, not a lightweight per-agent CLI+MCP hook — different operational shape, not a drop-in alternative for an individual developer's terminal |
+| **[Pipelock](https://github.com/luckyPipewrench/pipelock)** | Purpose-built AI agent firewall for MCP/HTTP/A2A traffic — exfiltration, SSRF, and prompt-injection detection with signed action receipts | Answers "is data leaking out," not "what did this specific action do and who authorized it" — no fine-grained per-tool-call authorization or unified audit log |
+| **Damping** | One policy engine and one audit trail across both your terminal and your MCP servers, at individual-developer scale, with real AST parsing (`mvdan/sh`) instead of regex, zero telemetry, and a single static Go binary | Newest of the four — smaller rule library than dcg's out of the box; no encrypted audit trail or gateway deployment mode (Aegis's strengths) |
+
+Nobody else in this space unifies CLI and MCP under one engine and one audit trail at individual-developer scale — that's the actual differentiator, not the shell-blocking demo alone.
 
 ## Physics, briefly
 
