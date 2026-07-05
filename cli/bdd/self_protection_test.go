@@ -43,8 +43,19 @@ type selfProtectionWorld struct {
 	cfg      policy.Config
 	engine   *policy.Engine
 	decision decision.Decision
-	stdout   string
-	runErr   error
+	// decisionFresh is true only when w.decision was just set by the most
+	// recent run() or evaluate() call — never left over from an earlier
+	// step in the same scenario. Without this guard, a hook invocation that
+	// takes one of runHook's no-audit-event early-return paths (a non-Bash
+	// tool, or Damping disabled — see cli/cmd/hook.go) would silently leave
+	// w.decision holding a stale event from an earlier command, and a Then
+	// step checking it would pass or fail against the wrong thing entirely
+	// without any error surfacing the mismatch. Found via adversarial
+	// review: no current scenario actually hits this path, but the
+	// "opportunistic refresh" design had no guard against it at all.
+	decisionFresh bool
+	stdout        string
+	runErr        error
 }
 
 // run executes the real damping command tree in-process — deliberately not
@@ -52,26 +63,39 @@ type selfProtectionWorld struct {
 // command itself returns (e.g. an ExitCodeError for a hard deny) is stored
 // rather than propagated as a step failure: a command "failing" in that
 // sense is frequently the exact behavior a scenario expects to assert on,
-// not a test infrastructure problem. w.decision is opportunistically
-// refreshed from the most recent audit event (a no-op, harmlessly ignored,
-// for commands like `off`/`doctor` that don't produce one via the hook
-// path) so every "Damping should allow/deny/intercept" Then step can check
-// the same field regardless of whether it was populated by a real hook
-// invocation or by evaluate's pure policy-engine path.
+// not a test infrastructure problem. w.decision is refreshed from the most
+// recent audit event only if this specific run produced one — see
+// decisionFresh's doc comment — so every "Damping should allow/deny/
+// intercept" Then step can check the same field regardless of whether it
+// was populated by a real hook invocation or by evaluate's pure
+// policy-engine path, without silently trusting a stale value.
 func (w *selfProtectionWorld) run(stdin string, args ...string) error {
+	before, err := w.auditEvents()
+	if err != nil {
+		return err
+	}
 	w.stdout, _, w.runErr = runDampingCommand(stdin, args...)
-	if ev, err := w.lastAuditEvent(); err == nil {
-		w.decision = ev.Decision
+	after, err := w.auditEvents()
+	if err != nil {
+		return err
+	}
+	w.decisionFresh = len(after) > len(before)
+	if w.decisionFresh {
+		w.decision = after[len(after)-1].Decision
 	}
 	return nil
 }
 
-func (w *selfProtectionWorld) lastAuditEvent() (event.ActionEvent, error) {
+func (w *selfProtectionWorld) auditEvents() ([]event.ActionEvent, error) {
 	auditPath, err := paths.Audit()
 	if err != nil {
-		return event.ActionEvent{}, err
+		return nil, err
 	}
-	events, err := audit.ReadAll(auditPath, audit.Filter{})
+	return audit.ReadAll(auditPath, audit.Filter{})
+}
+
+func (w *selfProtectionWorld) lastAuditEvent() (event.ActionEvent, error) {
+	events, err := w.auditEvents()
 	if err != nil {
 		return event.ActionEvent{}, err
 	}
@@ -97,6 +121,7 @@ func (w *selfProtectionWorld) evaluate(raw string) error {
 		}
 	}
 	w.decision = worst
+	w.decisionFresh = true
 	return nil
 }
 
@@ -214,24 +239,36 @@ func TestFeatures_SelfProtection(t *testing.T) {
 				return w.run(stdin, "hook", "pretooluse")
 			})
 			sc.Then(`^Damping should intercept the command$`, func() error {
+				if !w.decisionFresh {
+					return fmt.Errorf("expected the most recent command to have produced a fresh decision, but none was recorded")
+				}
 				if w.decision.Outcome() == decision.Allow {
 					return fmt.Errorf("expected the command to be intercepted, but it was allowed")
 				}
 				return nil
 			})
 			sc.Then(`^the matched rule should be "([^"]*)"$`, func(id string) error {
+				if !w.decisionFresh {
+					return fmt.Errorf("expected the most recent command to have produced a fresh decision, but none was recorded")
+				}
 				if w.decision.PolicyID != id {
 					return fmt.Errorf("expected matched rule %q, got %q", id, w.decision.PolicyID)
 				}
 				return nil
 			})
 			sc.Then(`^Damping should deny the command$`, func() error {
+				if !w.decisionFresh {
+					return fmt.Errorf("expected the most recent command to have produced a fresh decision, but none was recorded")
+				}
 				if w.decision.Outcome() != decision.Deny {
 					return fmt.Errorf("expected a deny outcome, got %v", w.decision.Outcome())
 				}
 				return nil
 			})
 			sc.Then(`^Damping should allow the command immediately$`, func() error {
+				if !w.decisionFresh {
+					return fmt.Errorf("expected the most recent command to have produced a fresh decision, but none was recorded")
+				}
 				if w.decision.Outcome() != decision.Allow {
 					return fmt.Errorf("expected an allow outcome, got %v", w.decision.Outcome())
 				}
