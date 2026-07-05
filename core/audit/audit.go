@@ -33,6 +33,24 @@ func NewWriter(path string) *Writer {
 	return &Writer{path: path}
 }
 
+// maxAuditFileSize is the size threshold at which Append rotates the audit
+// file to a timestamped sibling before returning — see Rotate's own doc
+// comment for why V1 keeps this simple (single-generation, no retention/
+// compression/count-limit policy). Checked after every successful write
+// rather than on a separate timer or background goroutine, since Append is
+// the only place the file's size ever changes and so the only place that
+// needs to ask. Found via review: docs/00-統一開發計畫（定案版）.md §五
+// requires "basic file rotation ... to avoid growing without bound," and
+// Rotate itself was fully implemented and unit-tested, but nothing
+// anywhere in the program ever called it — the audit log grew forever in
+// real usage. ~10 MiB comfortably holds tens of thousands of typical JSONL
+// records, far more history than an individual developer's local audit
+// log realistically needs before starting a fresh generation is fine. A
+// package-level var, not a const, so tests can shrink it instead of
+// writing megabytes of fixture data — the same pattern cli/cmd/log.go's
+// logFollowPollInterval uses for the identical reason.
+var maxAuditFileSize int64 = 10 * 1024 * 1024
+
 // Append validates and writes one ActionEvent as a single JSON line. The
 // named return lets the deferred Close below surface a late write failure
 // (e.g. a full disk or quota error that only manifests when buffered data
@@ -68,6 +86,14 @@ func (w *Writer) Append(e event.ActionEvent) (err error) {
 	}
 	if _, werr := f.Write(append(line, '\n')); werr != nil {
 		return fmt.Errorf("audit: writing event: %w", werr)
+	}
+
+	// The event above is already durably appended by this point — a
+	// rotation failure here is a housekeeping problem, not a lost record,
+	// so the wrapped error says so explicitly rather than reading like a
+	// generic "the write failed" to a caller that only logs err.Error().
+	if _, rerr := Rotate(w.path, maxAuditFileSize, time.Now()); rerr != nil {
+		return fmt.Errorf("audit: event appended, but rotating the file afterward failed: %w", rerr)
 	}
 	return nil
 }
@@ -367,9 +393,35 @@ func Rotate(path string, maxSizeBytes int64, now time.Time) (rotated bool, err e
 	if info.Size() < maxSizeBytes {
 		return false, nil
 	}
-	rotatedPath := fmt.Sprintf("%s.%s", path, now.UTC().Format("20060102T150405Z"))
+	rotatedPath, err := uniqueRotatedPath(path, now)
+	if err != nil {
+		return false, err
+	}
 	if err := os.Rename(path, rotatedPath); err != nil {
 		return false, fmt.Errorf("audit: rotating %s: %w", path, err)
 	}
 	return true, nil
+}
+
+// uniqueRotatedPath finds a rotated-sibling filename for path that doesn't
+// already exist, appending a numeric suffix if the plain timestamped name
+// (second-resolution) collides with one already on disk. Found via review,
+// once Rotate started being called from every Append that crosses the
+// threshold rather than only as a rare manual/administrative operation: two
+// rotations within the same wall-clock second are entirely plausible under
+// a burst of intercepted commands, and os.Rename silently replaces an
+// existing destination — without this, a second rotation in the same
+// second would silently overwrite the first rotated file, permanently
+// losing whatever audit history it held.
+func uniqueRotatedPath(path string, now time.Time) (string, error) {
+	base := fmt.Sprintf("%s.%s", path, now.UTC().Format("20060102T150405Z"))
+	candidate := base
+	for i := 1; ; i++ {
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			return candidate, nil
+		} else if err != nil {
+			return "", fmt.Errorf("audit: checking rotated path %s: %w", candidate, err)
+		}
+		candidate = fmt.Sprintf("%s.%d", base, i)
+	}
 }
