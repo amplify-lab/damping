@@ -17,6 +17,7 @@
 package bdd
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"runtime"
@@ -79,7 +80,10 @@ func TestFeatures_DangerousCommand(t *testing.T) {
 	suite := godog.TestSuite{
 		ScenarioInitializer: func(sc *godog.ScenarioContext) {
 			w := &world{}
-			sc.BeforeScenario(func(*godog.Scenario) { *w = world{} })
+			sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
+				*w = world{}
+				return ctx, nil
+			})
 
 			sc.Given(`^Damping is running with the default policy$`, func() error {
 				cfg, err := policy.LoadConfig(policyPath)

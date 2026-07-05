@@ -37,7 +37,7 @@ func newPolicyEditCmd() *cobra.Command {
 			if editor == "" {
 				editor = "vi"
 			}
-			editCmd := exec.Command(editor, path)
+			editCmd := exec.Command(editor, path) // #nosec G204,G702 -- editor is the local user's own $EDITOR (or the "vi" fallback), invoked on their own policy file — the same convention git commit/crontab -e use; there is no privilege boundary between a user and their own configured editor
 			editCmd.Stdin = os.Stdin
 			editCmd.Stdout = os.Stdout
 			editCmd.Stderr = os.Stderr

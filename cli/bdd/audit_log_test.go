@@ -67,7 +67,10 @@ func TestFeatures_AuditLog(t *testing.T) {
 	suite := godog.TestSuite{
 		ScenarioInitializer: func(sc *godog.ScenarioContext) {
 			w := &auditLogWorld{}
-			sc.BeforeScenario(func(*godog.Scenario) { *w = auditLogWorld{} })
+			sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
+				*w = auditLogWorld{}
+				return ctx, nil
+			})
 			sc.After(func(ctx context.Context, sc *godog.Scenario, err error) (context.Context, error) {
 				if w.followCancel != nil {
 					w.followCancel()

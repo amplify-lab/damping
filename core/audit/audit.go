@@ -33,30 +33,41 @@ func NewWriter(path string) *Writer {
 	return &Writer{path: path}
 }
 
-// Append validates and writes one ActionEvent as a single JSON line.
-func (w *Writer) Append(e event.ActionEvent) error {
-	if err := e.Validate(); err != nil {
-		return fmt.Errorf("audit: refusing to write invalid event: %w", err)
+// Append validates and writes one ActionEvent as a single JSON line. The
+// named return lets the deferred Close below surface a late write failure
+// (e.g. a full disk or quota error that only manifests when buffered data
+// is actually flushed) instead of silently discarding it — found via
+// golangci-lint's errcheck: for a security audit log, "the write appeared
+// to succeed but the bytes never reached disk" is exactly the kind of
+// silent failure this project's own philosophy (docs/threat-model.md §6)
+// says must never happen.
+func (w *Writer) Append(e event.ActionEvent) (err error) {
+	if verr := e.Validate(); verr != nil {
+		return fmt.Errorf("audit: refusing to write invalid event: %w", verr)
 	}
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if err := os.MkdirAll(filepath.Dir(w.path), 0o700); err != nil {
-		return fmt.Errorf("audit: creating audit directory: %w", err)
+	if merr := os.MkdirAll(filepath.Dir(w.path), 0o700); merr != nil {
+		return fmt.Errorf("audit: creating audit directory: %w", merr)
 	}
-	f, err := os.OpenFile(w.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return fmt.Errorf("audit: opening %s: %w", w.path, err)
+	f, operr := os.OpenFile(w.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if operr != nil {
+		return fmt.Errorf("audit: opening %s: %w", w.path, operr)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("audit: closing %s: %w", w.path, cerr)
+		}
+	}()
 
-	line, err := json.Marshal(e)
-	if err != nil {
-		return fmt.Errorf("audit: encoding event: %w", err)
+	line, merr := json.Marshal(e)
+	if merr != nil {
+		return fmt.Errorf("audit: encoding event: %w", merr)
 	}
-	if _, err := f.Write(append(line, '\n')); err != nil {
-		return fmt.Errorf("audit: writing event: %w", err)
+	if _, werr := f.Write(append(line, '\n')); werr != nil {
+		return fmt.Errorf("audit: writing event: %w", werr)
 	}
 	return nil
 }
@@ -221,11 +232,13 @@ func Follow(ctx context.Context, path string, startOffset int64, f Filter, pollI
 // scope for V1; this is a known, narrow limitation, not something this
 // function tries to defend against.
 func followFrom(path string, offset int64, f Filter, fn func(event.ActionEvent) error) (int64, error) {
-	file, err := os.Open(path)
+	file, err := os.Open(path) // #nosec G304 -- path is the local user's own audit log (~/.damping default), not an attacker-influenced path; no cross-trust-boundary traversal risk
 	if err != nil {
 		return offset, fmt.Errorf("audit: opening %s: %w", path, err)
 	}
-	defer file.Close()
+	// A Close error on a read-only descriptor carries no data-loss risk
+	// (nothing buffered to flush) — deliberately, not accidentally, ignored.
+	defer func() { _ = file.Close() }()
 
 	if _, err := file.Seek(offset, io.SeekStart); err != nil {
 		return offset, fmt.Errorf("audit: seeking %s: %w", path, err)

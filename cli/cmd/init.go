@@ -54,7 +54,7 @@ func newInitCmd() *cobra.Command {
 			}
 
 			if agentFlag == "all" || agentFlag == "claude-code" {
-				if _, err := os.Stat(filepath.Dir(claudePath)); err == nil {
+				if _, err := os.Stat(filepath.Dir(claudePath)); err == nil { // #nosec G703 -- claudePath is $DAMPING_CLAUDE_SETTINGS or the fixed ~/.claude/settings.json default, set by the local user themselves, not attacker-influenced
 					fmt.Fprintf(w, "  ✓ Detected Claude Code (%s)\n", claudePath)
 					if !dryRun {
 						if err := agent.InstallClaudeCodeHook(claudePath, force); err != nil {
@@ -67,7 +67,7 @@ func newInitCmd() *cobra.Command {
 				}
 			}
 			if agentFlag == "all" || agentFlag == "cursor" {
-				if _, err := os.Stat(filepath.Dir(cursorPath)); err == nil {
+				if _, err := os.Stat(filepath.Dir(cursorPath)); err == nil { // #nosec G703 -- cursorPath is $DAMPING_CURSOR_HOOKS or the fixed ~/.cursor/hooks.json default, set by the local user themselves, not attacker-influenced
 					fmt.Fprintf(w, "  ✓ Detected Cursor (%s)\n", cursorPath)
 					if !dryRun {
 						if err := agent.InstallCursorHook(cursorPath, force); err != nil {

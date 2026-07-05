@@ -48,7 +48,7 @@ type RuleConfig struct {
 
 // LoadConfig reads and parses a policy YAML file from disk.
 func LoadConfig(path string) (Config, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) // #nosec G304 -- path is the local user's own policy file (~/.damping default or their own --config flag), not an attacker-influenced path; no cross-trust-boundary traversal risk
 	if err != nil {
 		return Config{}, fmt.Errorf("policy: reading %s: %w", path, err)
 	}
