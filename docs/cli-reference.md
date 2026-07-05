@@ -29,7 +29,7 @@ Global flag on every command: `--config <path>` (default `~/.damping/policy.yaml
 | 1 | General error — **including bad flags/unknown subcommands**: Cobra's own arg/flag validation errors are plain errors with no special exit code, so they fall through to this one (verified directly: `damping log --bogus-flag` and `damping nonexistent-subcommand` both exit 1, not 2) |
 | 2 | `damping hook pretooluse` only — a hard deny (see §11). Not a general "usage error" code despite an earlier draft of this table claiming that; nothing else in the CLI produces exit 2 |
 | 3 | `damping policy test` — the tested command was flagged (verdict `deny` or `prompt`, i.e. anything but a plain `allow` — see §8) |
-| 4 | `damping doctor` — one or more checks failed |
+| 4 | `damping doctor` — one or more checks failed; also `damping status` when enforcement is ON but the policy file failed to load (headline reads "NOT protecting you", see §5 — `damping off` always exits 0 regardless of policy validity, since OFF is already the stronger signal) |
 
 ## 3. `damping init`
 
@@ -82,6 +82,18 @@ Agents:  claude-code (active), cursor (active)
 Sync:    disabled (individual tier)
 ```
 
+If the policy file can't be loaded (missing, unreadable, or invalid YAML), the headline itself warns instead of a bare "ON" — the "ON" bit only ever meant "not explicitly `damping off`'d", entirely independent of whether the policy it's supposed to enforce can actually be read:
+
+```
+$ damping status
+Damping: ON, but NOT protecting you — the policy file failed to load, so every CLI shell-command action fails open (see Policy line below; `damping mcp wrap` instead refuses to start at all on this same error)
+Policy:  ~/.damping/policy.yaml (error: policy: reading ~/.damping/policy.yaml: open ~/.damping/policy.yaml: no such file or directory)
+Agents:  claude-code (active), cursor (active)
+Sync:    disabled (individual tier)
+```
+
+Exit code 4 in that case (see §2) — the same code `damping doctor` already uses for the identical underlying failure, so a script chaining `damping status && deploy` gets a real signal instead of silently continuing past a loud warning nobody parses stdout for.
+
 ## 6. `damping on` / `damping off`
 
 ```
@@ -95,6 +107,14 @@ $ damping off --for 30m
 
 $ damping on
 ✓ Damping enforcement is back ON.
+```
+
+`damping on` also re-checks whether the policy file it just re-enabled can actually load, warning right there if not — the one moment a user is most likely to trust "back ON" means "protected" without separately re-checking `damping status`:
+
+```
+$ damping on
+✓ Damping enforcement is back ON.
+⚠  But NOT protecting you — the policy file failed to load: policy: reading ~/.damping/policy.yaml: open ~/.damping/policy.yaml: no such file or directory
 ```
 
 `damping off` is the **only** sanctioned disable path (see `docs/threat-model.md` §4) — it is a deliberate human action at a terminal, not something reachable through a Bash tool call an agent would plausibly be instructed to run. `--for <duration>` avoids the "I forgot it was off" failure mode research flagged as a real churn risk (users disabling permanently out of launch-week frustration).
@@ -195,7 +215,6 @@ Shell command interception:
 
   [a] Allow once   [A] Always allow this exact command
   [d] Deny once    [D] Always deny this exact command
-
 >
 ```
 
@@ -210,7 +229,6 @@ MCP tool-call interception — the exact same template and wording (still "exact
 
   [a] Allow once   [A] Always allow this exact command
   [d] Deny once    [D] Always deny this exact command
-
 >
 ```
 
