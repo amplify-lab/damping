@@ -38,17 +38,18 @@ Global flag on every command: `--config <path>` (default `~/.damping/policy.yaml
 $ damping init
 Damping v0.1.0 — one-time setup
 
+  → Installed default policy to ~/.damping/policy.yaml
   ✓ Detected Claude Code (~/.claude/settings.json)
+  → Registered PreToolUse hook in Claude Code settings
   ✓ Detected Cursor (~/.cursor/hooks.json)
-  → Installing default policy to ~/.damping/policy.yaml
-  → Registering PreToolUse hook in Claude Code settings
-  → Registering beforeShellExecution hook in Cursor
-  ✓ Setup complete — try it: ask your agent to run `rm -rf /tmp/test`
+  → Registered beforeShellExecution hook in Cursor
+
+✓ Setup complete — try it: ask your agent to run `rm -rf /tmp/test`
 
 Run `damping doctor` any time to re-verify this setup.
 ```
 
-Flags: `--agent claude-code|cursor|all` (default `all`, only touches detected agents), `--force` (overwrite existing hook entries), `--dry-run` (print what would change, write nothing).
+Flags: `--agent claude-code|cursor|all` (default `all`, only touches detected agents), `--force` (overwrite existing policy/hook entries — this is the one flag that controls both, not hook entries alone), `--dry-run` (print what would change, write nothing; the closing line becomes "Setup complete (dry run) —" with no demo call-to-action, since nothing was actually installed to try).
 
 Target: install → first interception demo in under 3 minutes (per the original plan's UX bar).
 
@@ -72,6 +73,8 @@ Damping doctor — environment check
 Exit code 4 if any check fails. An agent whose hook was never registered at all (never ran `damping init`, or that agent isn't installed) shows an informational `·` line ("not registered — run `damping init`") rather than either ✓ or ✗ — only an agent that **was** previously seen registered and has since disappeared is treated as a failure (see `docs/threat-model.md` §4's self-protection requirement). `--verbose`/paste-ready bundle and `--json` output described in earlier drafts of this doc are **not implemented in V1** — `damping doctor` takes no flags today.
 
 The "hook missing since last check" case is the direct, user-visible surface of the self-protection requirement in `docs/threat-model.md` §4 — it must never be silently absent from this output.
+
+A fourth check line this section previously omitted: `damping doctor` also hashes the active policy file (SHA-256) and remembers it between runs; if the hash differs from what was recorded last time, it prints `⚠ Policy file hash changed since the last check (<path>)` in place of the `✓ Policy file valid` line, and counts as a warning — see `docs/threat-model.md` §8's tamper-evidence discussion. Like the hook-missing case, this needs at least two runs to fire (the first run establishes the baseline hash with no way to know if it's already been tampered with).
 
 ## 5. `damping status`
 
@@ -104,7 +107,7 @@ $ damping off
     Run `damping on` to re-enable.
 
 $ damping off --for 30m
-⚠  Damping enforcement paused for 30m (until 10:33 local time), then auto re-enables.
+⚠  Damping enforcement paused for 30m (until 10:33PM), then auto re-enables.
 
 $ damping on
 ✓ Damping enforcement is back ON.
@@ -144,22 +147,27 @@ Filtering by `--channel` is also the concrete, in-product demonstration of the c
 
 ```
 $ damping policy list
-ID                                    RISK      ACTION
-destructive.rm_rf_protected           critical  prompt
-destructive.git_push_force            high      prompt
-destructive.sql_drop_truncate         high      prompt
-destructive.chmod_777_recursive       medium    prompt
-destructive.curl_pipe_sh_unallowlisted medium   prompt
-mcp.destructive_tool_call              high      prompt
-self_protection.damping_off_attempt    critical  deny
+ID                                         RISK      ACTION
+destructive.rm_rf_protected                critical  prompt
+destructive.git_push_force                 high      prompt
+destructive.sql_drop_truncate              high      prompt
+destructive.chmod_777_recursive            medium    prompt
+destructive.curl_pipe_sh_unallowlisted     medium    prompt
+destructive.encoded_payload_pipe           high      prompt
+destructive.proc_sandbox_bypass            critical  deny
+destructive.dynamic_command_construction   medium    prompt
+destructive.write_protected_path           critical  prompt
+mcp.destructive_tool_call                  high      prompt
+self_protection.damping_off_attempt        critical  deny
 
 $ damping policy test "rm -rf ~/Documents"
-→ Would PROMPT (rule: destructive.rm_rf_protected, risk: critical)
-  Reason: recursive+force delete targeting a path under $HOME
+→ Would PROMPT (rule: destructive.rm_rf_protected, reason: Recursive+force delete targeting a protected path — if this proceeds, this will delete your entire home directory or filesystem root)
 
 $ damping policy edit     # opens $EDITOR on ~/.damping/policy.yaml
 $ damping policy validate # schema + rule sanity check, no side effects
 ```
+
+`damping policy test`'s output is a single line — `decision.Decision` has no `risk` field to print separately (only `Verdict`/`ResolvedVerdict`/`PolicyID`/`Reason`/`Degraded`), so the matched rule's reason is folded into the same parenthetical as the rule id, not shown on its own indented `Reason:` line as an earlier draft of this doc showed.
 
 `damping policy test` exits `3` when the verdict is anything other than a plain `allow` (i.e. `deny` OR `prompt` — "was this flagged at all" is the useful CI assertion, not just "was it hard-denied"), `0` when the verdict is `allow`. This is what makes it usable as a CI gate: run it over a corpus of known-dangerous commands (expect exit 3) and known-safe commands (expect exit 0), per the "must-never-block regression list" testing discipline.
 

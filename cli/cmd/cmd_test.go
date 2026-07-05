@@ -116,6 +116,13 @@ func TestInit_WritesPolicyAndRegistersClaudeHook(t *testing.T) {
 	if !strings.Contains(out, "Setup complete") {
 		t.Fatalf("expected setup-complete message, got: %s", out)
 	}
+	// A review found docs/cli-reference.md documented this demo
+	// call-to-action but the code never printed it — added for real,
+	// matching docs/architecture.md §3's "first interception demo in
+	// under 3 minutes" onboarding goal.
+	if !strings.Contains(out, "try it: ask your agent to run") {
+		t.Fatalf("expected a demo call-to-action, got: %s", out)
+	}
 
 	statusOut, _, err := run(t, "", "status")
 	if err != nil {
@@ -337,6 +344,45 @@ func TestOnOff_TogglesEnforcementState(t *testing.T) {
 	}
 	if !strings.Contains(statusOut, "Damping: ON") {
 		t.Fatalf("expected Damping: ON after re-enabling, got: %s", statusOut)
+	}
+}
+
+// TestOff_PrintsSelfDisableConfirmation is a regression test for a gap a
+// review found: docs/cli-reference.md documented a confirmation line
+// naming the self_disable audit record and its timestamp, but the real
+// `damping off` never actually printed it — the event was logged silently.
+// Since this is the project's single most security-sensitive action, this
+// is a real UX fix, not just a doc correction: a human disabling protection
+// should see, in the moment, that it was logged.
+func TestOff_PrintsSelfDisableConfirmation(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, _, err := run(t, "", "off")
+	if err != nil {
+		t.Fatalf("off: %v", err)
+	}
+	if !strings.Contains(out, "logged as self_disable at") {
+		t.Fatalf("expected a self_disable confirmation line, got: %s", out)
+	}
+}
+
+// TestOff_ForDuration_EchoesRequestedDurationBack is a regression test for
+// the analogous gap in the --for path: the doc showed the requested
+// duration ("paused for 30m") but the code only ever printed the resulting
+// clock time, never confirming what was actually asked for.
+func TestOff_ForDuration_EchoesRequestedDurationBack(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, _, err := run(t, "", "off", "--for", "30m")
+	if err != nil {
+		t.Fatalf("off --for 30m: %v", err)
+	}
+	if !strings.Contains(out, "paused for 30m") {
+		t.Fatalf("expected the requested duration echoed back, got: %s", out)
 	}
 }
 
