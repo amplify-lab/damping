@@ -1,10 +1,9 @@
 name: Release
 
 # Builds cross-platform damping binaries, publishes a GitHub Release, and
-# updates the Homebrew tap formula — see .goreleaser.yaml and
-# docs/開發計畫.md §1.4. Triggered by pushing a version tag (v1.2.3), never
-# on every push to main, since a release is a deliberate, human-initiated
-# act.
+# updates the Homebrew tap formula — see .goreleaser.yaml. Triggered by
+# pushing a version tag (v1.2.3), never on every push to main, since a
+# release is a deliberate, human-initiated act.
 on:
   push:
     tags:

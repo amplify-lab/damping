@@ -1,7 +1,5 @@
 #!/bin/sh
-# Damping install script — see docs/開發計畫.md §1.4 ("一行script：curl
-# -sSL https://rein.dev/install | sh（偵測OS/arch下載對應binary）") and
-# README.md's Quick Start, which already advertises
+# Damping install script — see README.md's Quick Start, which advertises
 # "curl -sSL https://damping.dev/install | sh". Downloads the pre-built
 # binary matching the current OS/arch from a GitHub Release (built by
 # .goreleaser.yaml at the repo root) and installs it onto $PATH.

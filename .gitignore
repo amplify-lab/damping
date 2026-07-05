@@ -14,6 +14,19 @@
 .idea/
 .vscode/
 
+# Secret/credential files — this project's whole purpose is guarding against
+# exactly this class of accidental exposure, so its own repo should too
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+id_rsa*
+id_ed25519*
+.aws/
+.ssh/
+
 # Local damping state if ever created inside the repo during manual testing
 /.damping/
 
