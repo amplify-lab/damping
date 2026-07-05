@@ -146,6 +146,19 @@ type Decision struct {
 	ResolvedVerdict Verdict `json:"resolved_verdict,omitempty"`
 	PolicyID        string  `json:"policy_id,omitempty"`
 	Reason          string  `json:"reason,omitempty"`
+	// Risk is the matched rule's own declared risk level (config.go's
+	// RuleConfig.Risk, e.g. "critical"/"high"/"medium"/"low" from
+	// cli/policies/default.yaml), carried as a plain string so this package
+	// keeps no dependency on core/event — core/event.New converts it back.
+	// Empty when no rule matched (a plain allow/always-deny/always-allow
+	// pattern) or for a hand-built Decision that never went through
+	// Engine/OPAEngine.Evaluate. core/event.New prefers this over its old
+	// verdict-only guess (deny→critical, prompt→high, allow→low), which used
+	// to silently discard the real per-rule risk for any rule whose action
+	// tier didn't match its declared risk — 5 of the 11 shipped rules
+	// diverged, including destructive.rm_rf_protected (declared critical,
+	// logged as high).
+	Risk string `json:"risk,omitempty"`
 	// Degraded marks a decision made under an internal Damping failure (parser
 	// crash, corrupt policy file, hook timeout) rather than a real policy match.
 	// See docs/00-統一開發計畫（定案版）.md §六 on fail-open vs fail-closed —

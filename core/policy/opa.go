@@ -122,6 +122,7 @@ func (e *OPAEngine) Evaluate(f Facts) decision.Decision {
 			Verdict:  rc.Action,
 			PolicyID: rc.ID,
 			Reason:   rc.Description,
+			Risk:     string(rc.Risk),
 		}
 	}
 	return decision.Decision{Verdict: decision.Allow}
