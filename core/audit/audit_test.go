@@ -57,6 +57,62 @@ func TestWriter_Append_RejectsInvalidEvent(t *testing.T) {
 	}
 }
 
+// TestWriter_Append_TruncatesOversizedRawField is a regression test/
+// hardening measure: followFrom's doc comment relies on Append emitting
+// one JSON line via a *single* os.File.Write call to guarantee a partial
+// write can only ever be missing bytes from the end of the line — but
+// that's a Go-runtime guarantee that only holds up to ~1 GiB per Write
+// call (internal/poll splits anything larger into multiple write(2)
+// syscalls), and ActionEvent.Raw is otherwise unbounded, sourced verbatim
+// from arbitrary CLI/MCP payloads. Append must cap it well below that
+// threshold rather than relying on no legitimate command ever being that
+// large.
+func TestWriter_Append_TruncatesOversizedRawField(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	w := NewWriter(path)
+
+	e := sampleEvent(event.ChannelCLI, event.RiskLow, decision.Allow)
+	e.Raw = strings.Repeat("a", maxRawFieldSize*2)
+	if err := w.Append(e); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	got, err := ReadAll(path, Filter{})
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 event, got %d", len(got))
+	}
+	if len(got[0].Raw) > maxRawFieldSize {
+		t.Fatalf("expected Raw to be capped at %d bytes, got %d", maxRawFieldSize, len(got[0].Raw))
+	}
+	if !strings.HasSuffix(got[0].Raw, "[truncated]") {
+		t.Fatalf("expected the truncated Raw to end with a visible marker, got suffix: %q", got[0].Raw[len(got[0].Raw)-20:])
+	}
+}
+
+// TestWriter_Append_DoesNotTruncateRawUnderTheCap is the false-positive
+// guard: a realistic, sizable-but-legitimate command must survive intact.
+func TestWriter_Append_DoesNotTruncateRawUnderTheCap(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	w := NewWriter(path)
+
+	e := sampleEvent(event.ChannelCLI, event.RiskLow, decision.Allow)
+	e.Raw = "echo " + strings.Repeat("a", 10_000)
+	if err := w.Append(e); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	got, err := ReadAll(path, Filter{})
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if len(got) != 1 || got[0].Raw != e.Raw {
+		t.Fatalf("expected the realistic-sized Raw to survive unchanged, got length %d (want %d)", len(got[0].Raw), len(e.Raw))
+	}
+}
+
 // TestReadAll_TolerantOfTornTrailingWrite is a regression test found via
 // adversarial review: Writer.Append is not the only thing that can leave a
 // non-newline-terminated final line on disk — a process killed mid-write

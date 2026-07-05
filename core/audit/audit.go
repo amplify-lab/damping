@@ -51,6 +51,32 @@ func NewWriter(path string) *Writer {
 // logFollowPollInterval uses for the identical reason.
 var maxAuditFileSize int64 = 10 * 1024 * 1024
 
+// maxRawFieldSize caps how much of Facts.Raw (the original command text or
+// MCP tool-call payload, carried into ActionEvent.Raw for forensics) is
+// actually persisted. Raw is unbounded — sourced verbatim from arbitrary
+// CLI command text or MCP tool-call arguments — but followFrom's own doc
+// comment relies on Append emitting one JSON line via a *single*
+// os.File.Write call to guarantee a partial write can only ever be missing
+// bytes from the end of the line, never scrambled with a premature newline
+// in the middle. That guarantee is the Go runtime's, not this package's:
+// internal/poll splits any single Write over ~1 GiB into multiple write(2)
+// syscalls, at which point a concurrent writer's own append really could
+// interleave between them — found via review. A cap several orders of
+// magnitude below that keeps every real Append call inside the
+// single-syscall guarantee with a wide safety margin, rather than relying
+// on "well, nobody would actually send a >1 GiB command." 1 MiB is already
+// far more forensic context than any legitimate shell command or MCP
+// tool-call payload needs.
+const maxRawFieldSize = 1 << 20 // 1 MiB
+
+func truncateRaw(raw string) string {
+	if len(raw) <= maxRawFieldSize {
+		return raw
+	}
+	const suffix = "...[truncated]"
+	return raw[:maxRawFieldSize-len(suffix)] + suffix
+}
+
 // Append validates and writes one ActionEvent as a single JSON line. The
 // named return lets the deferred Close below surface a late write failure
 // (e.g. a full disk or quota error that only manifests when buffered data
@@ -63,6 +89,7 @@ func (w *Writer) Append(e event.ActionEvent) (err error) {
 	if verr := e.Validate(); verr != nil {
 		return fmt.Errorf("audit: refusing to write invalid event: %w", verr)
 	}
+	e.Raw = truncateRaw(e.Raw)
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -334,6 +361,16 @@ func Follow(ctx context.Context, path string, startInfo os.FileInfo, f Filter, p
 // non-atomic over NFS. A ~/.damping directory on an NFS mount is out of
 // scope for V1; this is a known, narrow limitation, not something this
 // function tries to defend against.
+//
+// The "single Write call" premise above is the Go runtime's guarantee, not
+// this package's, and it has a real edge: internal/poll splits any single
+// os.File.Write over ~1 GiB into multiple write(2) syscalls, at which point
+// a concurrent writer's own append genuinely could interleave between them
+// — found via review, since ActionEvent.Raw is otherwise unbounded (sourced
+// verbatim from arbitrary CLI/MCP payloads). Append's maxRawFieldSize cap
+// (1 MiB, several orders of magnitude below that threshold) keeps every
+// real record inside the single-syscall guarantee, closing the gap rather
+// than relying on no legitimate command ever being that large.
 func followFrom(path string, offset int64, f Filter, fn func(event.ActionEvent) error) (int64, error) {
 	file, err := os.Open(path) // #nosec G304 -- path is the local user's own audit log (~/.damping default), not an attacker-influenced path; no cross-trust-boundary traversal risk
 	if err != nil {
