@@ -1,11 +1,14 @@
 // Package bdd — see dangerous_command_test.go's doc comment for the overall
 // approach. This file wires features/policy_config.feature. The trailing
-// Scenario Outline ("a new rule must have both a should-block and a
-// should-not-block test case") is a process/review convention about the
-// test suite's own completeness, not a product behavior — it gets thin,
-// documented pass-through steps per Example row rather than a runtime
-// check, the same precedent as this package's other non-independently-
-// checkable steps.
+// Scenario Outline ("a new rule should have both a blocks and a does-not-
+// block test case") is a process/review convention about the test suite's
+// own completeness, not a product behavior — it gets thin, documented
+// pass-through steps per Example row rather than a runtime check, the same
+// precedent as this package's other non-independently-checkable steps. A
+// review found the feature file's original wording ("must", "is not
+// permitted to merge") read as an absolute runtime guarantee despite this;
+// both the Gherkin and the step regexes below were softened to "should"
+// phrasing that doesn't overstate what godog itself enforces.
 package bdd
 
 import (
@@ -168,9 +171,9 @@ func TestFeatures_PolicyConfig(t *testing.T) {
 			// --- Scenario Outline: process convention, not product behavior ---
 
 			sc.Given(`^a new rule "([^"]*)" is proposed$`, func(string) error { return nil })
-			sc.Then(`^there must be at least one scenario asserting it blocks a real dangerous case$`, func() error { return nil })
-			sc.Then(`^there must be at least one scenario asserting it does not block a normal, safe case$`, func() error { return nil })
-			sc.Then(`^a rule without both is not permitted to merge$`, func() error { return nil })
+			sc.Then(`^reviewers should expect at least one scenario asserting it blocks a real dangerous case$`, func() error { return nil })
+			sc.Then(`^reviewers should expect at least one scenario asserting it does not block a normal, safe case$`, func() error { return nil })
+			sc.Then(`^a rule without both should not be merged$`, func() error { return nil })
 		},
 		Options: &godog.Options{
 			Format:   "pretty",
