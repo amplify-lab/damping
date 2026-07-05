@@ -222,6 +222,35 @@ func TestParseFilter_InvalidSinceErrors(t *testing.T) {
 	}
 }
 
+func TestLimitMostRecent_KeepsLastN(t *testing.T) {
+	events := make([]event.ActionEvent, 5)
+	for i := range events {
+		events[i] = sampleEvent(event.ChannelCLI, event.RiskLow, decision.Allow)
+		events[i].EventID = string(rune('a' + i))
+	}
+	got := LimitMostRecent(events, 2)
+	if len(got) != 2 || got[0].EventID != "d" || got[1].EventID != "e" {
+		t.Fatalf("expected the last 2 events (d, e), got %+v", got)
+	}
+}
+
+func TestLimitMostRecent_ZeroOrNegativeMeansUnlimited(t *testing.T) {
+	events := make([]event.ActionEvent, 3)
+	if got := LimitMostRecent(events, 0); len(got) != 3 {
+		t.Fatalf("expected limit 0 to mean unlimited, got %d events", len(got))
+	}
+	if got := LimitMostRecent(events, -1); len(got) != 3 {
+		t.Fatalf("expected a negative limit to mean unlimited, got %d events", len(got))
+	}
+}
+
+func TestLimitMostRecent_LimitLargerThanLengthIsNoOp(t *testing.T) {
+	events := make([]event.ActionEvent, 3)
+	if got := LimitMostRecent(events, 10); len(got) != 3 {
+		t.Fatalf("expected no truncation when limit exceeds length, got %d events", len(got))
+	}
+}
+
 // TestPromptResolution_OneCoherentRecord exercises the audit_log.feature
 // scenario "A prompt that the user resolves produces one coherent record".
 func TestPromptResolution_OneCoherentRecord(t *testing.T) {

@@ -134,6 +134,19 @@ func ParseFilter(channel, risk, actor, outcome, since string) (Filter, error) {
 	return f, nil
 }
 
+// LimitMostRecent keeps only the last n of events (assumed already in
+// chronological order, as ReadAll returns them), discarding older ones —
+// the shared "--limit"/"?limit=" truncation both `damping log` and the
+// local dashboard's `/api/events` apply after filtering, for the same
+// vocabulary-parity reason ParseFilter exists. n <= 0 means unlimited,
+// matching `damping log --limit 0`'s existing meaning.
+func LimitMostRecent(events []event.ActionEvent, n int) []event.ActionEvent {
+	if n > 0 && len(events) > n {
+		return events[len(events)-n:]
+	}
+	return events
+}
+
 // ReadAll reads every ActionEvent from path and returns those matching f. A
 // missing file is treated as an empty log, not an error — a brand new
 // install with no interceptions yet is a normal state, not a failure.

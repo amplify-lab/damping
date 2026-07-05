@@ -61,9 +61,7 @@ func newLogCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if limit > 0 && len(events) > limit {
-				events = events[len(events)-limit:]
-			}
+			events = audit.LimitMostRecent(events, limit)
 			if err := printEvents(cmd, events, asJSON); err != nil {
 				return err
 			}

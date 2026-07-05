@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -170,6 +171,110 @@ func TestHandleEvents_InvalidSinceReturnsBadRequest(t *testing.T) {
 	s.Handler().ServeHTTP(rec, newLocalRequest("/api/events?since=not-a-duration"))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for an unparseable since, got %d", rec.Code)
+	}
+}
+
+// TestHandleEvents_DefaultLimitCapsResults is a regression test for a gap
+// found via a deeper look at CLI/dashboard parity: `damping log --limit`
+// exists, but /api/events had no equivalent at all, so a long-lived
+// install's entire audit history got sent to the browser on every request.
+// Unlike the CLI (whose own --limit defaults to 0/unbounded, fine for a
+// terminal), this endpoint now defaults to defaultEventsLimit since its
+// response gets re-rendered as DOM rows on every filter change.
+func TestHandleEvents_DefaultLimitCapsResults(t *testing.T) {
+	s, auditPath := newTestServer(t, policies.Default)
+	w := audit.NewWriter(auditPath)
+	total := defaultEventsLimit + 5
+	for i := 0; i < total; i++ {
+		ev := sampleEvent("s", "claude-code", event.ChannelCLI, event.RiskLow, decision.Decision{Verdict: decision.Allow})
+		ev.EventID = fmt.Sprintf("evt_%03d", i)
+		if err := w.Append(ev); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, newLocalRequest("/api/events"))
+	var got []event.ActionEvent
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding events: %v", err)
+	}
+	if len(got) != defaultEventsLimit {
+		t.Fatalf("expected the default limit (%d) to cap the response, got %d events", defaultEventsLimit, len(got))
+	}
+	if got[len(got)-1].EventID != fmt.Sprintf("evt_%03d", total-1) {
+		t.Fatalf("expected the kept events to be the most recent ones, got last=%s", got[len(got)-1].EventID)
+	}
+	if rec.Header().Get("X-Damping-Truncated") != "true" {
+		t.Fatal("expected X-Damping-Truncated: true when the default cap actually dropped events — see index.html's truncated-note, and docs/ux-dashboard-spec.md §4's 'never silently drop data'")
+	}
+}
+
+func TestHandleEvents_NoTruncationHeaderWhenNothingWasDropped(t *testing.T) {
+	s, auditPath := newTestServer(t, policies.Default)
+	w := audit.NewWriter(auditPath)
+	if err := w.Append(sampleEvent("s1", "claude-code", event.ChannelCLI, event.RiskLow, decision.Decision{Verdict: decision.Allow})); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, newLocalRequest("/api/events"))
+	if rec.Header().Get("X-Damping-Truncated") == "true" {
+		t.Fatal("expected no truncation header when every event fits under the default limit")
+	}
+}
+
+func TestHandleEvents_ExplicitLimitOverridesDefault(t *testing.T) {
+	s, auditPath := newTestServer(t, policies.Default)
+	w := audit.NewWriter(auditPath)
+	for i := 0; i < 5; i++ {
+		ev := sampleEvent("s", "claude-code", event.ChannelCLI, event.RiskLow, decision.Decision{Verdict: decision.Allow})
+		ev.EventID = fmt.Sprintf("evt_%d", i)
+		if err := w.Append(ev); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, newLocalRequest("/api/events?limit=2"))
+	var got []event.ActionEvent
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding events: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected exactly 2 events for ?limit=2, got %d", len(got))
+	}
+}
+
+func TestHandleEvents_ExplicitZeroLimitMeansUnlimited(t *testing.T) {
+	s, auditPath := newTestServer(t, policies.Default)
+	w := audit.NewWriter(auditPath)
+	total := defaultEventsLimit + 5
+	for i := 0; i < total; i++ {
+		ev := sampleEvent("s", "claude-code", event.ChannelCLI, event.RiskLow, decision.Decision{Verdict: decision.Allow})
+		ev.EventID = fmt.Sprintf("evt_%03d", i)
+		if err := w.Append(ev); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, newLocalRequest("/api/events?limit=0"))
+	var got []event.ActionEvent
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding events: %v", err)
+	}
+	if len(got) != total {
+		t.Fatalf("expected ?limit=0 to mean unlimited (matching damping log's vocabulary), got %d of %d", len(got), total)
+	}
+}
+
+func TestHandleEvents_InvalidLimitReturnsBadRequest(t *testing.T) {
+	s, _ := newTestServer(t, policies.Default)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, newLocalRequest("/api/events?limit=not-a-number"))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an unparseable limit, got %d", rec.Code)
 	}
 }
 

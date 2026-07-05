@@ -47,6 +47,7 @@
           <span>Live</span>
         </label>
         <span id="stream-status" class="text-xs text-slate-500" role="status"></span>
+        <span id="truncated-note" class="text-xs text-amber-400 hidden" role="status">showing only the most recent events — narrow with Since for the rest</span>
       </form>
 
       <div id="events-region" class="rounded border border-slate-800 overflow-x-auto min-h-[8rem]">
@@ -270,6 +271,7 @@ async function loadEvents() {
   try {
     const res = await fetch("/api/events?" + currentFilterParams().toString());
     if (!res.ok) throw new Error("HTTP " + res.status);
+    document.getElementById("truncated-note").classList.toggle("hidden", res.headers.get("X-Damping-Truncated") !== "true");
     renderEvents(await res.json());
   } catch (e) {
     document.getElementById("events-body").textContent = "";
