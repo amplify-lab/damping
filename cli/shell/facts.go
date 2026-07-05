@@ -6,11 +6,26 @@ import (
 	"github.com/amplify-lab/damping/core/policy"
 )
 
-// knownAliases maps a small set of known-dangerous shell aliases to the
-// command+leading-args they resolve to. mvdan/sh's syntax package does not
-// expand aliases (only the opt-in interp interpreter does, which means
-// actually executing — unacceptable for a pre-execution check), so this is
-// a maintained, explicit lookup table instead. See docs/threat-model.md §3.
+// knownAliases resolves a shell alias name to the command+leading-args it
+// expands to. mvdan/sh's syntax package does not expand aliases (only the
+// opt-in interp interpreter does, which means actually executing —
+// unacceptable for a pre-execution check), so this is an explicit lookup
+// table instead, resolved in both factsFromCall (a lone command) and
+// collectPipelineCommands (a pipeline stage) so the two command-name
+// extraction paths stay consistent.
+//
+// A review found this described in the singular as a "maintained table of
+// common dangerous aliases," implying real-world dotfile-framework coverage
+// (thefuck's sudo-wrapper aliases, common git-alias conventions, etc.) that
+// was never actually true — the table's sole entry, "nuke," is a synthetic
+// fixture invented to exercise this resolution mechanism in tests (see
+// features/dangerous_command.feature and this package's own test suite),
+// not a real alias anyone's shell config defines. Rather than pad this list
+// with more guessed-at "common" aliases that would carry the exact same
+// unverified-claim risk, this comment now says plainly what the table is:
+// a deliberately small, extensible demonstration of the mechanism. Genuine
+// real-world dangerous-alias entries are welcome here once actually
+// observed (e.g. via an incident or user report), not invented speculatively.
 var knownAliases = map[string][]string{
 	"nuke": {"rm", "-rf"},
 }
@@ -81,6 +96,15 @@ func collectPipelineCommands(cmd syntax.Command, cmds *[]string, domain *string)
 		name, ok := staticWordValue(c.Args[0])
 		if !ok || name == "" {
 			name = policy.DynamicCommandPlaceholder
+		} else if replacement, aliased := knownAliases[name]; aliased {
+			// A pipeline stage's command name is resolved through the same
+			// alias table factsFromCall uses for a lone command — these were
+			// two independent command-name-extraction paths, and only one of
+			// them consulted knownAliases, so an alias used as a pipeline
+			// stage (e.g. "nuke | sh" if "nuke" ever mapped to something
+			// pipeline-relevant) would silently bypass resolution while the
+			// identical alias outside a pipeline would not.
+			name = replacement[0]
 		}
 		*cmds = append(*cmds, name)
 		for _, w := range c.Args[1:] {
