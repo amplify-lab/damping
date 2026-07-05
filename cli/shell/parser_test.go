@@ -211,6 +211,47 @@ func TestAnalyze_AllowsBase64EncodingWithoutAShellSink(t *testing.T) {
 	}
 }
 
+// TestAnalyze_DetectsOtherEncodedPayloadPipes is a regression test for a
+// real coverage gap: the rule's own description promises "base64-decode (or
+// similar encode/decode primitives)", but decodeCommands used to contain
+// only "base64" — so structurally identical bypasses using base32, uudecode,
+// xxd -r, or openssl's decode subcommands were completely invisible.
+func TestAnalyze_DetectsOtherEncodedPayloadPipes(t *testing.T) {
+	e := loadEngine(t)
+	cases := []string{
+		"echo cm0gLXJmIC8= | base32 -d | sh",
+		"echo cm0gLXJmIC8= | uudecode | sh",
+		"echo cm0gLXJmIC8= | xxd -r -p | sh",
+		"echo cm0gLXJmIC8= | openssl enc -d -base64 | sh",
+		"echo cm0gLXJmIC8= | openssl base64 -d | bash",
+	}
+	for _, raw := range cases {
+		d := evaluateRaw(t, e, raw)
+		if d.PolicyID != "destructive.encoded_payload_pipe" {
+			t.Errorf("evaluating %q: expected destructive.encoded_payload_pipe, got %q (verdict %v)", raw, d.PolicyID, d.Verdict)
+		}
+	}
+}
+
+// TestAnalyze_AllowsAmbiguousDecodeToolsWithoutDecodeFlags is the
+// false-positive guard for the fix above: xxd and openssl are multi-purpose
+// tools (xxd also does a plain hex dump; openssl has dozens of unrelated
+// subcommands), so only their actual decode-flag forms should be flagged —
+// bare invocations must stay allowed even when piped into a shell sink.
+func TestAnalyze_AllowsAmbiguousDecodeToolsWithoutDecodeFlags(t *testing.T) {
+	e := loadEngine(t)
+	cases := []string{
+		"echo hello | xxd | sh",
+		"echo hello | openssl base64 | sh",
+	}
+	for _, raw := range cases {
+		d := evaluateRaw(t, e, raw)
+		if d.Verdict != decision.Allow {
+			t.Errorf("evaluating %q: expected allow (no decode flag present), got %v (rule %q)", raw, d.Verdict, d.PolicyID)
+		}
+	}
+}
+
 func TestAnalyze_DetectsProcSandboxBypass(t *testing.T) {
 	e := loadEngine(t)
 	d := evaluateRaw(t, e, "/proc/self/root/usr/bin/npx rm -rf /")

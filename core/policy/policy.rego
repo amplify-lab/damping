@@ -210,14 +210,36 @@ domain_allowlisted if {
 
 # --- destructive.encoded_payload_pipe — rules_shell.go matchEncodedPayloadPipe ---
 
-decode_commands := {"base64"}
+# decode_commands are decode primitives whose bare command name is
+# unambiguous; decode_flag_patterns catches the ambiguous ones (xxd is also
+# used for plain hex dumps, openssl has dozens of unrelated subcommands) by
+# regex against the raw text, since pipeline_cmds carries no per-stage args —
+# mirrors rules_shell.go's decodeCommands/decodeFlagPatterns exactly.
+decode_commands := {"base64", "base32", "uudecode"}
 shell_or_eval_sinks := {"sh", "bash", "zsh", "eval", "source"}
+
+decode_flag_patterns := [
+	`\bxxd\s+(?:-\S+\s+)*-r\b`,
+	`\bopenssl\s+(?:enc|base64)\b.*\s-d\b`,
+]
+
+has_decode_flag_pattern if {
+	some p in decode_flag_patterns
+	regex.match(p, input.facts.raw)
+}
 
 matches contains "destructive.encoded_payload_pipe" if {
 	input.facts.is_pipeline
 	count(input.facts.pipeline_cmds) > 0
 	some c in input.facts.pipeline_cmds
 	c in decode_commands
+	input.facts.pipeline_cmds[count(input.facts.pipeline_cmds) - 1] in shell_or_eval_sinks
+}
+
+matches contains "destructive.encoded_payload_pipe" if {
+	input.facts.is_pipeline
+	count(input.facts.pipeline_cmds) > 0
+	has_decode_flag_pattern
 	input.facts.pipeline_cmds[count(input.facts.pipeline_cmds) - 1] in shell_or_eval_sinks
 }
 
