@@ -13,10 +13,14 @@ var HookCommand = "damping hook pretooluse"
 const claudeCodeMatcher = "Bash"
 
 // InstallClaudeCodeHook idempotently adds Damping's PreToolUse hook to a
-// Claude Code settings.json, preserving any other content in the file. It
-// is safe to call repeatedly — it will not duplicate an existing entry for
-// the same command+matcher unless force is true, in which case it replaces
-// the PreToolUse/Bash entry list wholesale.
+// Claude Code settings.json, preserving any other content in the file —
+// including, under force, any PreToolUse entry scoped to a matcher other
+// than Damping's own ("Bash"). It is safe to call repeatedly — it will not
+// duplicate an existing entry for the same command+matcher unless force is
+// true, in which case it replaces only the Bash-matcher entries, not the
+// whole PreToolUse array (a prior version discarded every matcher's
+// entries under force — e.g. a user's own Write/Edit hooks — found via
+// review).
 func InstallClaudeCodeHook(settingsPath string, force bool) error {
 	settings, err := readJSONObject(settingsPath)
 	if err != nil {
@@ -40,7 +44,7 @@ func InstallClaudeCodeHook(settingsPath string, force bool) error {
 		},
 	}
 	if force {
-		preToolUse = []any{entry}
+		preToolUse = append(removeMatcherEntries(preToolUse, claudeCodeMatcher), entry)
 	} else {
 		preToolUse = append(preToolUse, entry)
 	}
@@ -48,6 +52,21 @@ func InstallClaudeCodeHook(settingsPath string, force bool) error {
 	hooks["PreToolUse"] = preToolUse
 	settings["hooks"] = hooks
 	return writeJSONObject(settingsPath, settings)
+}
+
+// removeMatcherEntries drops every PreToolUse entry scoped to matcher,
+// preserving entries for any other matcher (or malformed entries — a
+// non-object element passes through untouched rather than being
+// interpreted as "no matcher, drop it") in their original order.
+func removeMatcherEntries(preToolUse []any, matcher string) []any {
+	kept := make([]any, 0, len(preToolUse))
+	for _, raw := range preToolUse {
+		if m, ok := raw.(map[string]any); ok && m["matcher"] == matcher {
+			continue
+		}
+		kept = append(kept, raw)
+	}
+	return kept
 }
 
 // HasClaudeCodeHook reports whether the settings file already registers
