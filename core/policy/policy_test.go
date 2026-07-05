@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/amplify-lab/damping/core/decision"
@@ -384,5 +385,40 @@ func TestEvaluate_AllowsHarmlessDampingSubcommands(t *testing.T) {
 		if d.Verdict != decision.Allow {
 			t.Errorf("expected 'damping %s' to be allowed, got %v (rule %q)", args[0], d.Verdict, d.PolicyID)
 		}
+	}
+}
+
+// TestEvaluate_AllowsOffAsAFlagValueRatherThanTheSubcommand is a regression
+// test for a real false positive: the matcher used to fire on the literal
+// token "off" appearing anywhere in the argument list, so a bare "off"
+// passed as an unrelated flag's *value* — not the `damping off` subcommand
+// itself — incorrectly tripped this critical/deny self-protection rule.
+func TestEvaluate_AllowsOffAsAFlagValueRatherThanTheSubcommand(t *testing.T) {
+	e := loadDefaultEngine(t)
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"log --actor filter value", []string{"log", "--actor", "off"}},
+		{"mcp wrap's own subcommand args plus a passed-through server flag", []string{"mcp", "wrap", "--", "some-mcp-server", "--telemetry", "off"}},
+	}
+	for _, tc := range cases {
+		d := e.Evaluate(Facts{Raw: "damping " + strings.Join(tc.args, " "), Command: "damping", Args: tc.args})
+		if d.Verdict != decision.Allow {
+			t.Errorf("%s: expected allow, got %v (rule %q)", tc.name, d.Verdict, d.PolicyID)
+		}
+	}
+}
+
+// TestEvaluate_DeniesDampingOffEvenWithAGlobalConfigFlagFirst is the other
+// direction of the same fix: "off" must still be recognized as the real
+// subcommand when it's preceded by damping's one global --config flag and
+// its value, not just when it's the very first argument.
+func TestEvaluate_DeniesDampingOffEvenWithAGlobalConfigFlagFirst(t *testing.T) {
+	e := loadDefaultEngine(t)
+	args := []string{"--config", "/tmp/policy.yaml", "off"}
+	d := e.Evaluate(Facts{Raw: "damping --config /tmp/policy.yaml off", Command: "damping", Args: args})
+	if d.PolicyID != "self_protection.damping_off_attempt" {
+		t.Fatalf("expected self_protection.damping_off_attempt, got %q (verdict %v)", d.PolicyID, d.Verdict)
 	}
 }

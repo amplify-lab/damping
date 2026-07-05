@@ -31,6 +31,24 @@ Feature: Damping cannot be silently disabled
     When the agent attempts to execute "damping status" via its own Bash tool call
     Then Damping should allow the command immediately
 
+  Scenario Outline: A bare "off" token elsewhere in the arguments is not mistaken for the subcommand
+    # Regression guard for a real false positive: this rule used to fire on
+    # the literal token "off" appearing anywhere in the argument list, so a
+    # value passed to an unrelated flag — not the actual `damping off`
+    # subcommand — incorrectly tripped this critical/deny rule.
+    When the agent attempts to execute "<command>" via its own Bash tool call
+    Then Damping should allow the command immediately
+
+    Examples:
+      | command                                                     |
+      | damping log --actor off                                    |
+      | damping mcp wrap -- some-mcp-server --telemetry off         |
+
+  Scenario: "damping off" is still caught even behind a global --config flag
+    When the agent attempts to execute "damping --config /tmp/policy.yaml off" via its own Bash tool call
+    Then Damping should intercept the command
+    And the matched rule should be "self_protection.damping_off_attempt"
+
   Scenario: Hook removal outside "damping off" is detected and surfaced
     Given Damping's hook entry was present in "~/.claude/settings.json" during the last "damping doctor" run
     When something other than "damping off" removes that hook entry

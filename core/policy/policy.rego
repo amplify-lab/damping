@@ -247,8 +247,33 @@ matches contains "mcp.write_tool_unscoped_identity" if {
 }
 
 # --- self_protection.damping_off_attempt — rules_selfprotection.go ---
+#
+# "off" must occupy the actual subcommand position, not just appear
+# somewhere in the argument list — otherwise a flag *value* elsewhere
+# ("damping log --actor off", or a wrapped MCP server's own flag passed
+# through "damping mcp wrap -- server --telemetry off") would be mistaken
+# for the real `damping off` subcommand. Mirrors
+# rules_selfprotection.go's dampingSubcommand exactly.
 
 matches contains "self_protection.damping_off_attempt" if {
 	input.facts.command == "damping"
-	"off" in input.facts.args
+	damping_subcommand == "off"
+}
+
+damping_subcommand := sub if {
+	non_flag_indices := [i |
+		some i, a in input.facts.args
+		not is_damping_flag_or_value(i, a)
+	]
+	count(non_flag_indices) > 0
+	sub := input.facts.args[non_flag_indices[0]]
+}
+
+is_damping_flag_or_value(i, a) if {
+	startswith(a, "-")
+}
+
+is_damping_flag_or_value(i, a) if {
+	i > 0
+	input.facts.args[i-1] == "--config"
 }
