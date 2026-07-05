@@ -136,6 +136,62 @@ func TestEvaluate_BlocksHomeDirectoryDeletion(t *testing.T) {
 	if d.PolicyID != "destructive.rm_rf_protected" {
 		t.Fatalf("expected rule destructive.rm_rf_protected, got %q", d.PolicyID)
 	}
+	// Regression guard: Decision.Risk used to not exist at all, so
+	// core/event.New derived RiskLevel purely from the Prompt verdict
+	// (→"high"), silently discarding this rule's own declared "critical"
+	// risk — the flagship rule's audit records were misclassified for
+	// every single interception. See core/event/build_test.go for the
+	// construction-side regression test.
+	if d.Risk != "critical" {
+		t.Fatalf("expected Decision.Risk to carry the rule's declared \"critical\" risk, got %q", d.Risk)
+	}
+}
+
+// TestEvaluate_DecisionRiskMatchesEveryRulesDeclaredConfig is a blanket
+// regression test for the same bug across the whole shipped rule set, not
+// just rm_rf_protected: for every rule in cli/policies/default.yaml,
+// triggering it must produce a Decision.Risk exactly equal to that rule's
+// own "risk:" field. Constructs synthetic Facts per rule id rather than
+// reusing another test's fixture, so this stays correct even if a rule's
+// matcher logic changes independently.
+func TestEvaluate_DecisionRiskMatchesEveryRulesDeclaredConfig(t *testing.T) {
+	e := loadDefaultEngine(t)
+	cases := []struct {
+		ruleID string
+		facts  Facts
+	}{
+		{"destructive.rm_rf_protected", Facts{Command: "rm", Args: []string{"-rf", "~/"}, Target: "~/"}},
+		{"destructive.git_push_force", Facts{Command: "git", Args: []string{"push", "--force"}}},
+		{"destructive.sql_drop_truncate", Facts{Command: "psql", Args: []string{"-c", "DROP TABLE users;"}}},
+		{"destructive.chmod_777_recursive", Facts{Command: "chmod", Args: []string{"-R", "777", "/var/www"}}},
+		{"destructive.curl_pipe_sh_unallowlisted", Facts{IsPipeline: true, PipelineCmds: []string{"curl", "sh"}, Domain: "totally-not-sketchy.example"}},
+		{"destructive.encoded_payload_pipe", Facts{IsPipeline: true, PipelineCmds: []string{"echo", "base64", "sh"}}},
+		{"destructive.proc_sandbox_bypass", Facts{Raw: "/proc/self/exe"}},
+		{"destructive.dynamic_command_construction", Facts{Command: DynamicCommandPlaceholder}},
+		{"destructive.write_protected_path", Facts{Command: RedirectWritePlaceholder, Target: "~/.ssh/authorized_keys"}},
+		{"self_protection.damping_off_attempt", Facts{Command: "damping", Args: []string{"off"}}},
+	}
+
+	declared := map[string]string{}
+	for _, rc := range e.cfg.Rules {
+		declared[rc.ID] = string(rc.Risk)
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.ruleID, func(t *testing.T) {
+			d := e.Evaluate(tc.facts)
+			if d.PolicyID != tc.ruleID {
+				t.Fatalf("test fixture didn't trigger the expected rule: got %q, want %q (verdict %v)", d.PolicyID, tc.ruleID, d.Verdict)
+			}
+			want, ok := declared[tc.ruleID]
+			if !ok {
+				t.Fatalf("rule %q not found in loaded config", tc.ruleID)
+			}
+			if d.Risk != want {
+				t.Fatalf("Decision.Risk %q does not match %q's declared config risk %q", d.Risk, tc.ruleID, want)
+			}
+		})
+	}
 }
 
 func TestEvaluate_BlocksRootDeletion(t *testing.T) {

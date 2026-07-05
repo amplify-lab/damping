@@ -22,6 +22,15 @@ type Decision struct {
 	ResolvedVerdict Verdict `json:"resolved_verdict,omitempty"`
 	PolicyID        string  `json:"policy_id,omitempty"`
 	Reason          string  `json:"reason,omitempty"`
+	// Risk is the matched rule's own declared risk level (config.go's
+	// RuleConfig.Risk, e.g. "critical"/"high"/"medium"/"low" from
+	// cli/policies/default.yaml), carried as a plain string rather than
+	// event.RiskLevel specifically so this package still has no dependency
+	// on core/event (see the package doc comment above) — core/event.New
+	// converts it back. Empty when no rule matched (a plain allow) or for
+	// a hand-built Decision that never went through Engine/OPAEngine.Evaluate
+	// (e.g. an always-allow/deny match, or a degraded event).
+	Risk string `json:"risk,omitempty"`
 	// Degraded marks a decision made under an internal Damping failure
 	// (parser crash, corrupt policy file, hook timeout) rather than a real
 	// policy match. See docs/threat-model.md §6.
