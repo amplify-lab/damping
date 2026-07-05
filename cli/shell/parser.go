@@ -25,6 +25,13 @@ import (
 // for/function bodies, blocks, subshells) so a destructive command hidden
 // inside a multi-line script is still discovered — see
 // features/dangerous_command.feature, "hidden inside a multi-line script".
+// It also descends into every command/process substitution wherever it
+// appears (argument, assignment value, redirect target, here-string) and
+// into any heredoc body addressed to a real shell interpreter, since both
+// execute unconditionally at word-evaluation time regardless of how their
+// output is used — see features/dangerous_command.feature, "command
+// substitution used as an argument, not the command name" and "destructive
+// command hidden inside a heredoc fed to a shell interpreter".
 func Analyze(raw string) ([]policy.Facts, error) {
 	parser := syntax.NewParser(syntax.KeepComments(true))
 	file, err := parser.Parse(strings.NewReader(raw), "")
@@ -39,6 +46,7 @@ func Analyze(raw string) ([]policy.Facts, error) {
 func walkStmts(stmts []*syntax.Stmt, raw string, out *[]policy.Facts) {
 	for _, s := range stmts {
 		collectRedirectWrites(s, raw, out)
+		collectRedirectSubstitutions(s, raw, out)
 		if s.Cmd != nil {
 			walkCmd(s.Cmd, raw, out)
 		}
@@ -77,9 +85,96 @@ func collectRedirectWrites(s *syntax.Stmt, raw string, out *[]policy.Facts) {
 	}
 }
 
+// shellReinterpretCommands are the interpreters that will actually execute a
+// heredoc body as a shell script. A heredoc body is only re-parsed and
+// walked when it's addressed to one of these — anything else (psql, python3,
+// mail, ...) treats the heredoc as inert data, and walking it there would
+// just produce false positives on ordinary non-shell payloads.
+var shellReinterpretCommands = map[string]bool{
+	"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true,
+}
+
+// collectRedirectSubstitutions finds command/process substitution hidden in
+// a redirect target (including process substitution used as a write target,
+// "echo hi > >(rm -rf ~)", and here-strings, "cat <<< \"$(rm -rf ~)\"") and
+// walks it the same way an argument would be. It also handles heredoc
+// bodies (Redir.Hdoc): any substitution embedded in an unquoted heredoc is
+// walked unconditionally, and if the receiving command is a real shell
+// interpreter, the whole heredoc body is re-parsed and walked as its own
+// script — see features/dangerous_command.feature, "destructive command
+// hidden inside a heredoc fed to a shell interpreter".
+func collectRedirectSubstitutions(s *syntax.Stmt, raw string, out *[]policy.Facts) {
+	var cmdName string
+	if c, ok := s.Cmd.(*syntax.CallExpr); ok && len(c.Args) > 0 {
+		cmdName, _ = staticWordValue(c.Args[0])
+	}
+	for _, r := range s.Redirs {
+		if r.Word != nil {
+			walkWordSubstitutions(r.Word, raw, out)
+		}
+		if r.Hdoc == nil {
+			continue
+		}
+		walkWordSubstitutions(r.Hdoc, raw, out)
+		if !shellReinterpretCommands[cmdName] {
+			continue
+		}
+		body, ok := staticWordValue(r.Hdoc)
+		if !ok || strings.TrimSpace(body) == "" {
+			continue
+		}
+		parser := syntax.NewParser(syntax.KeepComments(true))
+		file, err := parser.Parse(strings.NewReader(body), "")
+		if err != nil {
+			continue
+		}
+		walkStmts(file.Stmts, raw, out)
+	}
+}
+
+// walkWordSubstitutions descends into a word looking for embedded command or
+// process substitution — no matter where the word appears (argument,
+// assignment value, redirect target) — and walks the embedded statements as
+// if they were their own top-level script.
+func walkWordSubstitutions(w *syntax.Word, raw string, out *[]policy.Facts) {
+	if w == nil {
+		return
+	}
+	for _, part := range w.Parts {
+		walkPartSubstitutions(part, raw, out)
+	}
+}
+
+func walkPartSubstitutions(part syntax.WordPart, raw string, out *[]policy.Facts) {
+	switch p := part.(type) {
+	case *syntax.CmdSubst:
+		walkStmts(p.Stmts, raw, out)
+	case *syntax.ProcSubst:
+		walkStmts(p.Stmts, raw, out)
+	case *syntax.DblQuoted:
+		for _, inner := range p.Parts {
+			walkPartSubstitutions(inner, raw, out)
+		}
+	}
+}
+
 func walkCmd(cmd syntax.Command, raw string, out *[]policy.Facts) {
 	switch c := cmd.(type) {
 	case *syntax.CallExpr:
+		// Command/process substitution executes at word-evaluation time
+		// regardless of how its output is used — a destructive command
+		// hidden in "echo $(rm -rf ~)" or "x=$(rm -rf ~)" runs whether or
+		// not "echo"/"x" ever consumes the result. See
+		// features/dangerous_command.feature, "command substitution used as
+		// an argument, not the command name".
+		for _, a := range c.Assigns {
+			if a.Value != nil {
+				walkWordSubstitutions(a.Value, raw, out)
+			}
+		}
+		for _, a := range c.Args {
+			walkWordSubstitutions(a, raw, out)
+		}
 		if f, ok := factsFromCall(c, raw); ok {
 			*out = append(*out, f)
 		}

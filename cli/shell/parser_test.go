@@ -212,6 +212,90 @@ func TestAnalyze_FlagsDynamicallyConstructedCommand(t *testing.T) {
 	}
 }
 
+// TestAnalyze_BlocksCommandSubstitutionUsedAsArgument is a regression test
+// for a real bypass: command substitution executes unconditionally at
+// word-evaluation time, no matter where it appears or whether its output is
+// ever consumed — "echo $(rm -rf ~)" deletes the home directory just as
+// surely as a bare "rm -rf ~" would. Before this fix, only Args[0] (the
+// command *name* position) got any CmdSubst-aware handling, so every one of
+// these sailed through as a plain allow.
+func TestAnalyze_BlocksCommandSubstitutionUsedAsArgument(t *testing.T) {
+	e := loadEngine(t)
+	cases := []string{
+		"echo $(rm -rf ~)",
+		": $(rm -rf /)",
+		"x=$(rm -rf ~)",
+	}
+	for _, raw := range cases {
+		d := evaluateRaw(t, e, raw)
+		if d.PolicyID != "destructive.rm_rf_protected" {
+			t.Errorf("evaluating %q: expected destructive.rm_rf_protected, got %q (verdict %v)", raw, d.PolicyID, d.Verdict)
+		}
+	}
+}
+
+// TestAnalyze_BlocksProcessSubstitutionAndHereStrings covers the other two
+// places a command substitution can hide besides a plain argument: a process
+// substitution used as a redirect target/argument, and a here-string, both
+// of which execute their embedded command the moment the word is evaluated.
+func TestAnalyze_BlocksProcessSubstitutionAndHereStrings(t *testing.T) {
+	e := loadEngine(t)
+	cases := []string{
+		"cat <(rm -rf ~)",
+		"echo hi > >(rm -rf ~)",
+		`cat <<< "$(rm -rf ~)"`,
+	}
+	for _, raw := range cases {
+		d := evaluateRaw(t, e, raw)
+		if d.PolicyID != "destructive.rm_rf_protected" {
+			t.Errorf("evaluating %q: expected destructive.rm_rf_protected, got %q (verdict %v)", raw, d.PolicyID, d.Verdict)
+		}
+	}
+}
+
+// TestAnalyze_BlocksDestructiveCommandHiddenInHeredoc is a regression test
+// for a real bypass: a heredoc addressed to a shell interpreter is executed
+// as a script at runtime, but the parser never looked at Redir.Hdoc at all,
+// so "bash <<'EOF' ... rm -rf ~ ... EOF" was completely invisible.
+func TestAnalyze_BlocksDestructiveCommandHiddenInHeredoc(t *testing.T) {
+	e := loadEngine(t)
+	script := "bash <<'EOF'\nrm -rf ~\nEOF\n"
+	d := evaluateRaw(t, e, script)
+	if d.PolicyID != "destructive.rm_rf_protected" {
+		t.Fatalf("expected the destructive command inside the heredoc to be found, got %q (verdict %v)", d.PolicyID, d.Verdict)
+	}
+}
+
+// TestAnalyze_BlocksCommandSubstitutionInsideHeredoc covers the case where
+// the heredoc body isn't itself a dangerous literal command, but contains a
+// command substitution — that substitution runs at evaluation time even
+// when the receiving command (here, "cat", not a shell) never executes the
+// heredoc body as a script.
+func TestAnalyze_BlocksCommandSubstitutionInsideHeredoc(t *testing.T) {
+	e := loadEngine(t)
+	script := "cat <<EOF\n$(rm -rf ~)\nEOF\n"
+	d := evaluateRaw(t, e, script)
+	if d.PolicyID != "destructive.rm_rf_protected" {
+		t.Fatalf("expected the command substitution inside the heredoc to be found even though cat is not a shell interpreter, got %q (verdict %v)", d.PolicyID, d.Verdict)
+	}
+}
+
+// TestAnalyze_DoesNotReinterpretHeredocsAddressedToNonShellCommands is the
+// control for the two heredoc tests above: a heredoc body is only ever
+// re-parsed and walked as a shell script when it's addressed to a real
+// shell interpreter. Feeding the same "rm -rf ~" text to "cat" (which just
+// prints it) must stay allowed — otherwise this fix would trade a real
+// bypass for false positives on every heredoc that merely contains text
+// that looks command-shaped.
+func TestAnalyze_DoesNotReinterpretHeredocsAddressedToNonShellCommands(t *testing.T) {
+	e := loadEngine(t)
+	script := "cat <<'EOF'\nrm -rf ~\nEOF\n"
+	d := evaluateRaw(t, e, script)
+	if d.Verdict != decision.Allow {
+		t.Fatalf("expected a heredoc addressed to a non-shell command to be allowed, got %v (%q)", d.Verdict, d.PolicyID)
+	}
+}
+
 func TestAnalyze_InvalidShellSyntaxReturnsError(t *testing.T) {
 	if _, err := Analyze("if [ 1 -eq"); err == nil {
 		t.Fatal("expected a parse error for malformed shell syntax")
