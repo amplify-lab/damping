@@ -275,6 +275,7 @@ async function loadEvents() {
     renderEvents(await res.json());
   } catch (e) {
     document.getElementById("events-body").textContent = "";
+    document.getElementById("truncated-note").classList.add("hidden"); // a stale note from a previous successful load shouldn't linger through an error state — found in review
     state.textContent = "Couldn't load the audit log. ";
     const retry = document.createElement("button");
     retry.textContent = "Retry";
