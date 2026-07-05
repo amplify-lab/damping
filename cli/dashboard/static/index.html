@@ -85,7 +85,7 @@
 </div>
 
 <template id="row-template">
-  <tr class="border-b border-slate-900 last:border-0 hover:bg-slate-900/40 cursor-pointer focus:outline-none focus:ring-1 focus:ring-teal-500" tabindex="0" role="button" aria-haspopup="dialog">
+  <tr class="border-b border-slate-900 last:border-0 hover:bg-slate-900/40 cursor-pointer focus:outline-none focus:ring-1 focus:ring-teal-500" tabindex="-1" role="button" aria-haspopup="dialog">
     <td class="px-3 py-2 whitespace-nowrap text-slate-400 font-mono text-xs" data-field="time"></td>
     <td class="px-3 py-2"><span class="badge" data-field="channel"></span></td>
     <td class="px-3 py-2" data-field="actor"></td>
@@ -165,11 +165,46 @@ function renderRow(ev) {
   // prints in the terminal. `ev` is already the full object this row was
   // rendered from, so no second fetch is needed to show it.
   row.addEventListener("click", () => renderDetail(ev, row));
+  // Roving tabindex (WAI-ARIA Authoring Practices "grid"/"listbox" pattern):
+  // a known, previously-accepted limitation was that every row in a large
+  // table (up to defaultEventsLimit=200 of them) was its own individual Tab
+  // stop, making keyboard-only navigation impractical — Tab alone had to
+  // step through the whole table before reaching anything past it. Now
+  // exactly one row is a Tab stop at a time (setActiveRow, called on focus
+  // — covers a mouse click focusing a row just as much as arrow-key
+  // navigation below), and arrow/Home/End move focus between rows directly.
+  row.addEventListener("focus", () => setActiveRow(row));
   row.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); renderDetail(ev, row); }
+    switch (e.key) {
+      case "Enter":
+      case " ":
+        e.preventDefault();
+        renderDetail(ev, row);
+        break;
+      case "ArrowDown":
+        e.preventDefault();
+        if (row.nextElementSibling) row.nextElementSibling.focus();
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        if (row.previousElementSibling) row.previousElementSibling.focus();
+        break;
+      case "Home":
+        e.preventDefault();
+        if (row.parentElement.firstElementChild) row.parentElement.firstElementChild.focus();
+        break;
+      case "End":
+        e.preventDefault();
+        if (row.parentElement.lastElementChild) row.parentElement.lastElementChild.focus();
+        break;
+    }
   });
 
   return row;
+}
+
+function setActiveRow(row) {
+  for (const r of row.parentElement.children) r.setAttribute("tabindex", r === row ? "0" : "-1");
 }
 
 function addDetailField(dl, label, value) {
@@ -243,6 +278,8 @@ function renderEvents(events) {
   state.classList.add("hidden");
   // Most recent first.
   for (let i = events.length - 1; i >= 0; i--) body.appendChild(renderRow(events[i]));
+  // Exactly one row starts as the roving Tab stop — see setActiveRow.
+  if (body.firstElementChild) body.firstElementChild.setAttribute("tabindex", "0");
 }
 
 function prependEvent(ev) {
@@ -253,7 +290,13 @@ function prependEvent(ev) {
   currentEvents.push(ev);
   const body = document.getElementById("events-body");
   document.getElementById("events-state").classList.add("hidden");
-  body.insertBefore(renderRow(ev), body.firstChild);
+  const wasEmpty = body.children.length === 0;
+  const row = renderRow(ev);
+  body.insertBefore(row, body.firstChild);
+  // A live event arriving must not steal the roving Tab stop away from
+  // whatever row the user is already navigating — only claim it if the
+  // table was empty before (nothing to steal focus from yet).
+  if (wasEmpty) row.setAttribute("tabindex", "0");
 }
 
 async function loadSummary() {
