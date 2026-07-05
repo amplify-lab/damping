@@ -24,46 +24,63 @@ regenerable_dir_names := {
 	"target", "vendor", "__pycache__", ".venv", "venv",
 }
 
-matches contains "destructive.rm_rf_protected" if {
-	input.facts.command == "rm"
-	has_recursive_force
-	is_filesystem_or_home_root
-}
+# rm accepts multiple path operands in a single invocation
+# ("rm -rf /etc build"), and every one of them gets force-recursively
+# deleted — so each operand is checked independently rather than just
+# input.facts.target (the *last* word), mirroring rules_shell.go's
+# rmPathOperands/matchRmRfProtected exactly.
 
 matches contains "destructive.rm_rf_protected" if {
 	input.facts.command == "rm"
 	has_recursive_force
-	in_protected_paths
+	some target in rm_path_operands
+	is_filesystem_or_home_root(target)
 }
 
 matches contains "destructive.rm_rf_protected" if {
 	input.facts.command == "rm"
 	has_recursive_force
-	not is_filesystem_or_home_root
-	not in_protected_paths
-	not is_regenerable_target
+	some target in rm_path_operands
+	in_protected_paths(target)
 }
 
-is_filesystem_or_home_root if {
-	input.facts.target in {"/", "~", "~/", "$HOME"}
+matches contains "destructive.rm_rf_protected" if {
+	input.facts.command == "rm"
+	has_recursive_force
+	some target in rm_path_operands
+	not is_regenerable_target(target)
 }
 
-is_regenerable_target if {
-	segments := [s | some s in split(input.facts.target, "/"); s != ""]
+rm_path_operands contains a if {
+	some a in input.facts.args
+	not is_rm_flag(a)
+}
+
+is_rm_flag(a) if {
+	startswith(a, "-")
+	a != "-"
+}
+
+is_filesystem_or_home_root(target) if {
+	target in {"/", "~", "~/", "$HOME"}
+}
+
+is_regenerable_target(target) if {
+	segments := [s | some s in split(target, "/"); s != ""]
 	count(segments) > 0
 	segments[count(segments) - 1] in regenerable_dir_names
 }
 
-in_protected_paths if {
+in_protected_paths(target) if {
 	some p in input.config.protected_paths
 	trimmed := trim_suffix(p, "/")
-	input.facts.target == trimmed
+	target == trimmed
 }
 
-in_protected_paths if {
+in_protected_paths(target) if {
 	some p in input.config.protected_paths
 	trimmed := trim_suffix(p, "/")
-	startswith(input.facts.target, concat("", [trimmed, "/"]))
+	startswith(target, concat("", [trimmed, "/"]))
 }
 
 # rm's recursive+force flags: the long flags, the plain short flags, or any
@@ -111,7 +128,7 @@ is_short_flag_cluster(a) if {
 
 matches contains "destructive.write_protected_path" if {
 	input.facts.command == "<redirect-write>"
-	in_protected_paths
+	in_protected_paths(input.facts.target)
 }
 
 # --- destructive.dynamic_command_construction ---

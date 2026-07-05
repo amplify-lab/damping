@@ -83,6 +83,23 @@ Feature: Intercept destructive shell commands
       | rm -fR ~/    |
       | rm -fr ~/    |
 
+  Scenario: Allow rm -rf on a safe directory even with a trailing flag after it
+    # Regression guard: the target used to be resolved as simply the *last*
+    # word, so "rm -rf node_modules -v" resolved to the trailing "-v" flag
+    # instead of the actual operand and was incorrectly flagged.
+    When the agent attempts to execute "rm -rf node_modules -v"
+    Then Damping should allow the command immediately
+
+  Scenario: Detect rm -rf with multiple path operands, only one of which is dangerous
+    # Regression guard for a real bypass: rm accepts multiple path operands
+    # in one invocation, and every one of them gets force-recursively
+    # deleted — checking only the *last* operand let "rm -rf /etc build"
+    # through because "build" (a regenerable dir) was the last word, even
+    # though /etc was being deleted too.
+    When the agent attempts to execute "rm -rf /etc build"
+    Then Damping should intercept the command
+    And the matched rule should be "destructive.rm_rf_protected"
+
   Scenario: Detect a base64-encoded payload piped into a shell
     When the agent attempts to execute "echo cm0gLXJmIC8= | base64 -d | sh"
     Then Damping should intercept the command
