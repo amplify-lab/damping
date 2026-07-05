@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cucumber/godog"
 
@@ -28,6 +29,21 @@ import (
 	"github.com/amplify-lab/damping/core/event"
 	"github.com/amplify-lab/damping/core/policy"
 )
+
+// findUntilTimestamp parses a disabled-marker file's "until=<RFC3339>" line
+// the same way enforcement.IsDisabled itself does (cli/enforcement's own
+// parsing isn't exported), so this test can verify the real timestamp
+// value, not just that the substring "until=" appears somewhere.
+func findUntilTimestamp(markerContent string) (time.Time, bool) {
+	for _, line := range strings.Split(markerContent, "\n") {
+		if v, ok := strings.CutPrefix(line, "until="); ok {
+			if t, err := time.Parse(time.RFC3339, v); err == nil {
+				return t, true
+			}
+		}
+	}
+	return time.Time{}, false
+}
 
 func selfProtectionFeaturePath(t *testing.T) string {
 	t.Helper()
@@ -222,17 +238,48 @@ func TestFeatures_SelfProtection(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				if !strings.Contains(string(data), "until=") {
+				// A review found this only checked the literal substring
+				// "until=" appears anywhere in the file — a duration-
+				// parsing regression (e.g. "30m" mistakenly treated as 30
+				// seconds or 3 hours) would still write SOME future
+				// "until=<timestamp>" and pass this check unchanged. Now
+				// parses the real timestamp and confirms it's actually
+				// ~30 minutes out, not just present.
+				until, ok := findUntilTimestamp(string(data))
+				if !ok {
 					return fmt.Errorf("expected the disabled marker to record an auto-re-enable time, got: %s", data)
+				}
+				gotDuration := time.Until(until)
+				if gotDuration < 28*time.Minute || gotDuration > 32*time.Minute {
+					return fmt.Errorf("expected the disable window to be ~30 minutes, got %s (until=%s)", gotDuration, until)
 				}
 				return nil
 			})
 			sc.Then(`^Damping should automatically re-enable itself afterward without further input$`, func() error {
-				// The mechanism is enforcement.IsDisabled()'s own time.Now()-vs-"until"
-				// comparison (see cli/cmd/onoff.go), already exercised by the
-				// step above via the marker file it just wrote — waiting out a
-				// real 30-minute duration in a test isn't practical, and this
-				// documents that it's the same mechanism, not a separate one.
+				// A review found this was a pure no-op whose comment claimed
+				// the behavior was "already exercised by the step above" —
+				// it wasn't; the step above never compares the until
+				// timestamp against the clock a second time. Faking an
+				// already-expired until= here (the same technique
+				// cli/cmd/cmd_test.go's own direct Go test for this exact
+				// expiry comparison uses) actually exercises the real
+				// comparison in enforcement.IsDisabled() without waiting out
+				// a real 30-minute duration.
+				marker, err := paths.DisabledMarker()
+				if err != nil {
+					return err
+				}
+				expired := time.Now().Add(-1 * time.Minute).Format(time.RFC3339)
+				if err := os.WriteFile(marker, []byte("off\nuntil="+expired+"\n"), 0o600); err != nil {
+					return err
+				}
+				disabled, err := enforcement.IsDisabled()
+				if err != nil {
+					return err
+				}
+				if disabled {
+					return fmt.Errorf("expected enforcement to have automatically re-enabled once the until timestamp had passed")
+				}
 				return nil
 			})
 
