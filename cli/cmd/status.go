@@ -21,19 +21,37 @@ func newStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if disabled {
-				fmt.Fprintln(w, "Damping: OFF")
-			} else {
-				fmt.Fprintln(w, "Damping: ON")
-			}
 
 			path, err := resolvePolicyPath()
 			if err != nil {
 				return err
 			}
-			cfg, err := policy.LoadConfig(path)
-			if err != nil {
-				fmt.Fprintf(w, "Policy:  %s (error: %v)\n", path, err)
+			cfg, cfgErr := policy.LoadConfig(path)
+
+			// "Damping: ON" here only ever meant "not explicitly disabled
+			// via `damping off`" (IsDisabled just checks a marker file) —
+			// entirely independent of whether the policy file it's
+			// supposed to be enforcing can even be read. Found via a
+			// manual UX walkthrough: with an unreadable/invalid policy
+			// file, cli/cmd/hook.go's runHook logs a degraded event and
+			// returns nil (exit 0), which both this project's own hook
+			// contract and the real Claude Code/Cursor one treat as "fail
+			// open" — so every single action was silently being allowed,
+			// while status still proudly said "ON" with the actual problem
+			// buried in a secondary Policy: line a skim could miss
+			// entirely. Surfacing it on the same headline line a user is
+			// most likely to actually read.
+			switch {
+			case disabled:
+				fmt.Fprintln(w, "Damping: OFF")
+			case cfgErr != nil:
+				fmt.Fprintln(w, "Damping: ON, but NOT protecting you — the policy file failed to load, so every action fails open (see Policy line below)")
+			default:
+				fmt.Fprintln(w, "Damping: ON")
+			}
+
+			if cfgErr != nil {
+				fmt.Fprintf(w, "Policy:  %s (error: %v)\n", path, cfgErr)
 			} else {
 				fmt.Fprintf(w, "Policy:  %s (%d rules)\n", path, len(cfg.Rules))
 			}

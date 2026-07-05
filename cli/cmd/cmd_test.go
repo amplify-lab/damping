@@ -145,6 +145,29 @@ func TestStatus_NoAgentsRegisteredShowsHint(t *testing.T) {
 	}
 }
 
+// TestStatus_WarnsWhenPolicyFileFailsToLoad is a regression test for a real
+// UX gap found via a manual walkthrough of the real binary:
+// IsDisabled()'s "ON"/"OFF" line only ever reflected the `damping off`
+// marker file, entirely independent of whether the policy file it's
+// supposed to enforce could even be read — with an unreadable policy file,
+// cli/cmd/hook.go's runHook fails open on every single action (logs
+// degraded, exits 0), yet status still said a plain "Damping: ON" with the
+// actual problem buried in a secondary Policy: line a skim could miss.
+func TestStatus_WarnsWhenPolicyFileFailsToLoad(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	statusOut, _, err := run(t, "", "--config", "/nonexistent/policy.yaml", "status")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(statusOut, "Damping: ON, but NOT protecting you") {
+		t.Fatalf("expected the headline ON line to warn about the unloadable policy file, got:\n%s", statusOut)
+	}
+}
+
 func TestDoctor_PassesAfterInit(t *testing.T) {
 	setupTestEnv(t)
 	if _, _, err := run(t, "", "init"); err != nil {
