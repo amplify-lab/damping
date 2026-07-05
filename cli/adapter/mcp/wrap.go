@@ -54,7 +54,7 @@ func Wrap(ctx context.Context, serverCmd []string, engine policy.Evaluator, poli
 	if len(serverCmd) == 0 {
 		return fmt.Errorf("mcp: no server command given (usage: damping mcp wrap -- <server-command...>)")
 	}
-	subprocess := exec.CommandContext(ctx, serverCmd[0], serverCmd[1:]...)
+	subprocess := exec.CommandContext(ctx, serverCmd[0], serverCmd[1:]...) // #nosec G204 -- serverCmd is the local user's own `damping mcp wrap -- <server-command>` argument, the explicit point of this command, not attacker-influenced input
 	return wrapTransport(ctx, &gosdk.CommandTransport{Command: subprocess}, &gosdk.StdioTransport{}, engine, policyPath, writer, actor)
 }
 
@@ -69,7 +69,16 @@ func wrapTransport(ctx context.Context, upstream, downstream gosdk.Transport, en
 	if err != nil {
 		return fmt.Errorf("mcp: connecting to wrapped server: %w", err)
 	}
-	defer cs.Close()
+	defer func() {
+		// Loud, not silent, on the way out — the same convention this
+		// file's writer.Append error handling above uses. By this point
+		// wrapTransport's own return value is already determined by
+		// server.Run below, so there's nothing to propagate this into;
+		// stderr is the last resort, not a place to drop it entirely.
+		if cerr := cs.Close(); cerr != nil {
+			fmt.Fprintf(os.Stderr, "damping: closing connection to wrapped server: %v\n", cerr)
+		}
+	}()
 
 	server := gosdk.NewServer(&gosdk.Implementation{Name: implementationName, Version: implementationVersion}, nil)
 

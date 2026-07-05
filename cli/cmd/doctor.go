@@ -129,7 +129,7 @@ func cursorHooksPath() string {
 }
 
 func hashFile(path string) string {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- path is the resolved policy file path (default or the user's own --config flag), not an attacker-influenced path
 	if err != nil {
 		return ""
 	}
@@ -142,7 +142,7 @@ func loadDoctorState() (doctorState, error) {
 	if err != nil {
 		return doctorState{}, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- path is paths.DoctorState()'s fixed ~/.damping/doctor-state.json path (or $DAMPING_HOME override), not an attacker-influenced path
 	if err != nil {
 		return doctorState{}, nil // no prior state is not an error
 	}

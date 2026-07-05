@@ -1,0 +1,23 @@
+version: "2"
+
+# Shared across both core/ and cli/ modules — golangci-lint discovers this
+# by walking up from whichever module's directory a lint run's working
+# directory is set to (see .github/workflows/ci.yml), so one file covers
+# both without duplication.
+linters:
+  settings:
+    errcheck:
+      exclude-functions:
+        # Writes to a terminal/log writer (stdout, stderr, an
+        # *os.File already open for writing an audit/log line) failing is
+        # not something any call site in this codebase could meaningfully
+        # react to differently — there's no fallback narrower than "the
+        # user's terminal is broken." Checking each of the several dozen
+        # call sites individually would be pure noise, not a real
+        # reliability improvement. Genuine file-write reliability (the
+        # audit log, the policy file) is still checked explicitly — see
+        # core/audit.Writer.Append and core/policy.writeFileAtomically,
+        # neither of which is a Fprint* call.
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln

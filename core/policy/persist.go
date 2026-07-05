@@ -28,7 +28,7 @@ func AppendAlwaysPattern(path string, verdict decision.Verdict, pattern string) 
 		return err
 	}
 
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) // #nosec G304 -- path is the local user's own policy file (~/.damping default or their own --config flag), not an attacker-influenced path; no cross-trust-boundary traversal risk
 	if err != nil {
 		return fmt.Errorf("policy: reading %s: %w", path, err)
 	}
@@ -79,10 +79,10 @@ func writeFileAtomically(path string, data []byte) error {
 		return fmt.Errorf("policy: creating temp file in %s: %w", dir, err)
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath) // no-op once the rename below succeeds
+	defer func() { _ = os.Remove(tmpPath) }() // no-op once the rename below succeeds
 
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close() // already returning the real error below; best-effort cleanup
 		return fmt.Errorf("policy: writing temp file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {

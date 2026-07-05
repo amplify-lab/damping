@@ -10,6 +10,7 @@
 package bdd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -129,7 +130,10 @@ func TestFeatures_SelfProtection(t *testing.T) {
 	suite := godog.TestSuite{
 		ScenarioInitializer: func(sc *godog.ScenarioContext) {
 			w := &selfProtectionWorld{}
-			sc.BeforeScenario(func(*godog.Scenario) { *w = selfProtectionWorld{} })
+			sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
+				*w = selfProtectionWorld{}
+				return ctx, nil
+			})
 
 			sc.Given(`^Damping is running with the default policy$`, func() error {
 				dir := t.TempDir()

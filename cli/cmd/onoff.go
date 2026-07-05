@@ -102,7 +102,7 @@ func IsDisabled() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	data, err := os.ReadFile(marker)
+	data, err := os.ReadFile(marker) // #nosec G304 -- marker is paths.DisabledMarker()'s fixed ~/.damping/disabled path (or $DAMPING_HOME override), not an attacker-influenced path
 	if os.IsNotExist(err) {
 		return false, nil
 	}

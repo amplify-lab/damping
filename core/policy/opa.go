@@ -5,7 +5,14 @@ import (
 	_ "embed"
 	"fmt"
 
-	"github.com/open-policy-agent/opa/rego"
+	// v1/rego, not the older top-level rego package: the latter is
+	// soft-deprecated (still fully supported "for the lifetime of OPA
+	// v1.x", per its own doc comment, but not recommended for new code) —
+	// found via golangci-lint's staticcheck. v1/rego also makes Rego v1
+	// syntax (see policy.rego's `import rego.v1`) the actual default
+	// rather than something the old package merely tolerates via that
+	// import.
+	"github.com/open-policy-agent/opa/v1/rego"
 
 	"github.com/amplify-lab/damping/core/decision"
 )

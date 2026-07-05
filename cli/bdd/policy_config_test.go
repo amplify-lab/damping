@@ -9,6 +9,7 @@
 package bdd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -41,7 +42,10 @@ func TestFeatures_PolicyConfig(t *testing.T) {
 	suite := godog.TestSuite{
 		ScenarioInitializer: func(sc *godog.ScenarioContext) {
 			w := &policyConfigWorld{}
-			sc.BeforeScenario(func(*godog.Scenario) { *w = policyConfigWorld{} })
+			sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
+				*w = policyConfigWorld{}
+				return ctx, nil
+			})
 
 			sc.Given(`^Damping is running with the default policy$`, func() error {
 				dir := t.TempDir()

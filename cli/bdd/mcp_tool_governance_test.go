@@ -32,6 +32,7 @@
 package bdd
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"runtime"
@@ -88,7 +89,10 @@ func TestFeatures_MCPToolGovernance(t *testing.T) {
 	suite := godog.TestSuite{
 		ScenarioInitializer: func(sc *godog.ScenarioContext) {
 			w := &mcpGovernanceWorld{}
-			sc.BeforeScenario(func(*godog.Scenario) { *w = mcpGovernanceWorld{} })
+			sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
+				*w = mcpGovernanceWorld{}
+				return ctx, nil
+			})
 
 			sc.Given(`^Damping is running with the default policy$`, func() error {
 				policyPath := defaultPolicyPath(t)
