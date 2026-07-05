@@ -91,11 +91,20 @@ func newDoctorCmd() *cobra.Command {
 
 			auditPath, err := paths.Audit()
 			if err == nil {
-				degraded, _ := audit.ReadAll(auditPath, audit.Filter{Outcome: "degraded", Since: time.Now().Add(-7 * 24 * time.Hour)})
-				if len(degraded) > 0 {
+				degraded, readErr := audit.ReadAll(auditPath, audit.Filter{Outcome: "degraded", Since: time.Now().Add(-7 * 24 * time.Hour)})
+				switch {
+				case readErr != nil:
+					// A prior version discarded this error and fell through
+					// to "✓ No degraded-mode events," a false all-clear —
+					// found via review. A genuine read/parse failure here
+					// means doctor cannot actually vouch for the audit log's
+					// health, which is itself worth a warning, not silence.
+					fmt.Fprintf(w, "  ⚠ Could not read the audit log to check for degraded-mode events: %v\n", readErr)
+					warned++
+				case len(degraded) > 0:
 					fmt.Fprintf(w, "  ⚠ %d degraded-mode event(s) in the last 7 days — run `damping log --outcome degraded` for details\n", len(degraded))
 					warned++
-				} else {
+				default:
 					fmt.Fprintln(w, "  ✓ No degraded-mode events in the last 7 days")
 				}
 			}

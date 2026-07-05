@@ -273,7 +273,9 @@ async function loadSummary() {
     el.policy.className = "summary-value " + (s.policy_error ? "text-red-400" : "");
     el.policy.title = s.policy_error || s.policy_path;
     el.agents.textContent = (s.agents && s.agents.length) ? s.agents.join(", ") : "none registered";
-    el.degraded.textContent = String(s.degraded_count_7d);
+    el.degraded.textContent = s.degraded_error ? "?" : String(s.degraded_count_7d);
+    el.degraded.className = "summary-value " + (s.degraded_error ? "text-red-400" : "");
+    el.degraded.title = s.degraded_error || "";
   } catch (e) {
     for (const k in el) el[k].textContent = "?";
   }

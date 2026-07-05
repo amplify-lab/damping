@@ -29,6 +29,7 @@ type summary struct {
 	RuleCount       int      `json:"rule_count"`
 	Agents          []string `json:"agents"`
 	DegradedCount7d int      `json:"degraded_count_7d"`
+	DegradedError   string   `json:"degraded_error,omitempty"`
 }
 
 func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
@@ -52,7 +53,15 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 		out.Agents = append(out.Agents, "cursor")
 	}
 
-	if degraded, err := audit.ReadAll(s.cfg.AuditPath, audit.Filter{Outcome: "degraded", Since: time.Now().Add(-7 * 24 * time.Hour)}); err == nil {
+	// A prior version silently left DegradedCount7d at its zero value on any
+	// read error — a false all-clear, inconsistent with handleEvents below,
+	// which correctly turns the identical error into an HTTP 500. Surfaced
+	// as a field instead (like PolicyError above) rather than failing this
+	// whole request, since the rest of the summary is still valid even if
+	// this one check couldn't complete.
+	if degraded, err := audit.ReadAll(s.cfg.AuditPath, audit.Filter{Outcome: "degraded", Since: time.Now().Add(-7 * 24 * time.Hour)}); err != nil {
+		out.DegradedError = err.Error()
+	} else {
 		out.DegradedCount7d = len(degraded)
 	}
 

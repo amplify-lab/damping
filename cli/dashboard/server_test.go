@@ -127,6 +127,31 @@ func TestHandleSummary_ReportsPolicyLoadFailure(t *testing.T) {
 	}
 }
 
+// TestHandleSummary_ReportsDegradedReadFailure is a regression test for a
+// real false all-clear: handleSummary used to silently leave
+// DegradedCount7d at its zero value on any audit.ReadAll error, unlike
+// handleEvents (below), which correctly turns an identical error into an
+// HTTP 500. A corrupted audit log should surface as an error field, not a
+// healthy-looking "0 degraded events."
+func TestHandleSummary_ReportsDegradedReadFailure(t *testing.T) {
+	s, auditPath := newTestServer(t, policies.Default)
+	if err := os.WriteFile(auditPath, []byte("{not valid json}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, newLocalRequest("/api/summary"))
+	var got summary
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding summary: %v", err)
+	}
+	if got.DegradedError == "" {
+		t.Fatalf("expected a degraded_error for a corrupted audit log, got %+v", got)
+	}
+	if got.DegradedCount7d != 0 {
+		t.Fatalf("expected DegradedCount7d to stay at 0 (not a fabricated count) when the read failed, got %d", got.DegradedCount7d)
+	}
+}
+
 func TestHandleEvents_EmptyLogReturnsEmptyArrayNotNull(t *testing.T) {
 	s, _ := newTestServer(t, policies.Default)
 	rec := httptest.NewRecorder()
