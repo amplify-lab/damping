@@ -3,11 +3,11 @@ package policy
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/amplify-lab/damping/core/atomicfile"
 	"github.com/amplify-lab/damping/core/decision"
 )
 
@@ -77,43 +77,13 @@ func AppendAlwaysPattern(path string, verdict decision.Verdict, pattern string) 
 	if err != nil {
 		return fmt.Errorf("policy: encoding %s: %w", path, err)
 	}
-	return writeFileAtomically(path, out)
-}
-
-// writeFileAtomically writes to a temp file in the same directory as path
-// (so the final rename is on the same filesystem, which POSIX guarantees is
-// atomic) and renames it into place, rather than writing path directly.
-// Found via code review: a plain os.WriteFile truncates the destination
-// before writing its new content, so a crash or a concurrent reader hitting
-// the file mid-write can see a corrupt or empty policy file — the one file
-// this whole tool depends on being loadable. This does not by itself
-// serialize concurrent *writers* (two processes appending different
-// patterns at once can still race, with one update winning), but it does
-// guarantee every reader always sees either the old complete file or the
-// new complete file, never a partial one.
-func writeFileAtomically(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".damping-policy-*.tmp")
-	if err != nil {
-		return fmt.Errorf("policy: creating temp file in %s: %w", dir, err)
-	}
-	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }() // no-op once the rename below succeeds
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close() // already returning the real error below; best-effort cleanup
-		return fmt.Errorf("policy: writing temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("policy: closing temp file: %w", err)
-	}
-	if err := os.Chmod(tmpPath, 0o600); err != nil {
-		return fmt.Errorf("policy: setting permissions on temp file: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("policy: renaming temp file into place: %w", err)
-	}
-	return nil
+	// atomicfile.Write (not a plain os.WriteFile) so a crash or a concurrent
+	// reader hitting the file mid-write always sees either the old complete
+	// policy file or the new complete one, never a partial one — see its
+	// doc comment. Shared with cli/adapter/agent's hook installers, which
+	// write into an external agent's own settings file and need the exact
+	// same guarantee.
+	return atomicfile.Write(path, out, 0o600)
 }
 
 func alwaysKeyFor(v decision.Verdict) (string, error) {

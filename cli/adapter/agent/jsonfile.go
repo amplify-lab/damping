@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/amplify-lab/damping/core/atomicfile"
 )
 
 func readJSONObject(path string) (map[string]any, error) {
@@ -43,7 +45,13 @@ func writeJSONObject(path string, obj map[string]any) error {
 	if err != nil {
 		return fmt.Errorf("agent: encoding %s: %w", path, err)
 	}
-	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
+	// atomicfile.Write (not a plain os.WriteFile) since path is an external
+	// agent's own settings file (Claude Code's settings.json, all of it —
+	// not just Damping's hook entry, or Cursor's hooks.json) — a crash or
+	// disk-full mid-write must never truncate/corrupt content Damping
+	// doesn't own. Found via review after core/policy had already needed
+	// the identical fix for its own policy file.
+	if err := atomicfile.Write(path, append(data, '\n'), 0o600); err != nil {
 		return fmt.Errorf("agent: writing %s: %w", path, err)
 	}
 	return nil
