@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/amplify-lab/damping/cli/enforcement"
 	"github.com/amplify-lab/damping/cli/paths"
 	"github.com/amplify-lab/damping/cli/ui"
 	"github.com/amplify-lab/damping/core/audit"
@@ -205,7 +206,7 @@ func TestDoctor_FailsWhenHookRemovedOutsideOff(t *testing.T) {
 
 	// Simulate something other than `damping off` wiping the settings file —
 	// see features/self_protection.feature.
-	claudeSettings := claudeSettingsPath()
+	claudeSettings := paths.ClaudeSettings()
 	if err := os.WriteFile(claudeSettings, []byte("{}"), 0o644); err != nil {
 		t.Fatalf("simulating hook removal: %v", err)
 	}
@@ -446,7 +447,7 @@ func TestOff_ForFlag_AutoReEnablesAfterExpiry(t *testing.T) {
 	}
 
 	// Still disabled right after — the duration hasn't elapsed.
-	stillOff, err := IsDisabled()
+	stillOff, err := enforcement.IsDisabled()
 	if err != nil {
 		t.Fatalf("IsDisabled: %v", err)
 	}
@@ -466,7 +467,7 @@ func TestOff_ForFlag_AutoReEnablesAfterExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	disabled, err := IsDisabled()
+	disabled, err := enforcement.IsDisabled()
 	if err != nil {
 		t.Fatalf("IsDisabled: %v", err)
 	}

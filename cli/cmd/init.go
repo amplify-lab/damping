@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/amplify-lab/damping/cli/adapter/agent"
+	"github.com/amplify-lab/damping/cli/paths"
 	"github.com/amplify-lab/damping/cli/policies"
 )
 
@@ -42,16 +43,8 @@ func newInitCmd() *cobra.Command {
 				fmt.Fprintf(w, "  ✓ Policy already present at %s (use --force to overwrite)\n", policyPath)
 			}
 
-			claudePath := os.Getenv("DAMPING_CLAUDE_SETTINGS")
-			if claudePath == "" {
-				home, _ := os.UserHomeDir()
-				claudePath = filepath.Join(home, ".claude", "settings.json")
-			}
-			cursorPath := os.Getenv("DAMPING_CURSOR_HOOKS")
-			if cursorPath == "" {
-				home, _ := os.UserHomeDir()
-				cursorPath = filepath.Join(home, ".cursor", "hooks.json")
-			}
+			claudePath := paths.ClaudeSettings()
+			cursorPath := paths.CursorHooks()
 
 			if agentFlag == "all" || agentFlag == "claude-code" {
 				if _, err := os.Stat(filepath.Dir(claudePath)); err == nil { // #nosec G703 -- claudePath is $DAMPING_CLAUDE_SETTINGS or the fixed ~/.claude/settings.json default, set by the local user themselves, not attacker-influenced

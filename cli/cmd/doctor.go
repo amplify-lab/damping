@@ -59,7 +59,7 @@ func newDoctorCmd() *cobra.Command {
 				}
 			}
 
-			claudePath := claudeSettingsPath()
+			claudePath := paths.ClaudeSettings()
 			if hasClaude, err := agent.HasClaudeCodeHook(claudePath); err == nil {
 				next.ClaudeHookFound = hasClaude
 				switch {
@@ -74,7 +74,7 @@ func newDoctorCmd() *cobra.Command {
 				}
 			}
 
-			cursorPath := cursorHooksPath()
+			cursorPath := paths.CursorHooks()
 			if hasCursor, err := agent.HasCursorHook(cursorPath); err == nil {
 				next.CursorHookFound = hasCursor
 				switch {
@@ -110,22 +110,6 @@ func newDoctorCmd() *cobra.Command {
 			return nil
 		},
 	}
-}
-
-func claudeSettingsPath() string {
-	if v := os.Getenv("DAMPING_CLAUDE_SETTINGS"); v != "" {
-		return v
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".claude", "settings.json")
-}
-
-func cursorHooksPath() string {
-	if v := os.Getenv("DAMPING_CURSOR_HOOKS"); v != "" {
-		return v
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".cursor", "hooks.json")
 }
 
 func hashFile(path string) string {
