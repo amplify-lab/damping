@@ -14,7 +14,7 @@ jobs:
         working-directory: core
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.26"
       - run: gofmt -l . | tee /tmp/gofmt.out && test ! -s /tmp/gofmt.out
@@ -32,7 +32,7 @@ jobs:
         working-directory: cli
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.26"
       - run: gofmt -l . | tee /tmp/gofmt.out && test ! -s /tmp/gofmt.out
@@ -60,7 +60,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.26"
       # Validates .goreleaser.yaml and does a real cross-platform snapshot
@@ -78,7 +78,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.26"
       - name: gosec (core)
