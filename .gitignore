@@ -4,6 +4,10 @@
 *.test
 *.out
 
+# GoReleaser output (dist/) — see .goreleaser.yaml; `goreleaser release
+# --snapshot --clean --skip=publish` regenerates this locally on demand
+/dist/
+
 # Editor/OS cruft
 .DS_Store
 *.swp
