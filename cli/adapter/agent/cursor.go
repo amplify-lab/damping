@@ -1,12 +1,15 @@
 package agent
 
-// NOTE ON ACCURACY: Cursor's hooks.json schema is documented at
-// https://cursor.com/docs/hooks (verified during planning to exist and use
-// beforeShellExecution / beforeMCPExecution / etc. as event names — see
-// docs/00-統一開發計畫（定案版）.md §四修正二). The exact nested shape below
-// is a best-effort approximation based on that research and should be
-// re-verified against the live docs before this is trusted as ground truth
-// — flagging this honestly rather than presenting a guess as a fact.
+// Cursor's hooks.json schema is documented at https://cursor.com/docs/hooks.
+// The registration shape here (hooks.json's own structure — event name,
+// hook entry list, command string) was re-verified via that documentation:
+// a review found cli/cmd/hook.go's stdin-payload decoding had never
+// actually been implemented for Cursor at all despite this file installing
+// the hook correctly — every real Cursor command was silently allowed with
+// no policy evaluation. See hookInput's doc comment in cli/cmd/hook.go for
+// the confirmed beforeShellExecution stdin shape (hook_event_name,
+// conversation_id, generation_id, command, cwd, workspace_roots) and
+// response contract (exit code 2 blocks, same as {"permission":"deny"}).
 
 const cursorEvent = "beforeShellExecution"
 

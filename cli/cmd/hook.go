@@ -16,14 +16,35 @@ import (
 	"github.com/amplify-lab/damping/core/policy"
 )
 
-// claudeHookInput is the subset of Claude Code's PreToolUse stdin JSON that
-// damping needs — see docs/cli-reference.md §11 for the verified contract.
-type claudeHookInput struct {
+// hookInput is the union of both agents' `damping hook pretooluse` stdin
+// shapes — see docs/cli-reference.md §11 for the verified contract. Claude
+// Code and Cursor are wired to invoke the exact same command (see
+// cli/adapter/agent's shared HookCommand), so the payload's own shape is
+// the only signal that distinguishes them; HookEventName ("PreToolUse" vs.
+// "beforeShellExecution") is the field both agents happen to include for
+// exactly this purpose, and every real payload this project has ever seen
+// from either agent carries it, so it's used as the primary discriminator
+// rather than probing which of the two disjoint field sets got populated.
+//
+// A review found the previous version of this struct only ever decoded
+// Claude Code's shape — a real Cursor beforeShellExecution payload has no
+// tool_name at all, so it silently decoded to "" and hit the `!= "Bash"`
+// early-return below, meaning every Cursor-intercepted command was
+// evaluated by nothing and always allowed, despite `damping doctor`/
+// `status` reporting the Cursor hook as actively registered.
+type hookInput struct {
+	HookEventName string `json:"hook_event_name"` // "PreToolUse" (Claude Code) or "beforeShellExecution" (Cursor)
+
+	// Claude Code (PreToolUse) shape.
 	SessionID string `json:"session_id"`
 	ToolName  string `json:"tool_name"`
 	ToolInput struct {
 		Command string `json:"command"`
 	} `json:"tool_input"`
+
+	// Cursor (beforeShellExecution) shape.
+	ConversationID string `json:"conversation_id"`
+	Command        string `json:"command"`
 }
 
 func newHookCmd() *cobra.Command {
@@ -38,21 +59,23 @@ func newHookCmd() *cobra.Command {
 	}
 }
 
-// runHook implements the Claude Code PreToolUse contract: stdin/stdout are
-// reserved for the JSON protocol with Claude Code itself (see
-// docs/cli-reference.md §11), so the interactive confirmation prompt for a
-// Prompt-tier decision must NOT use them — it talks to the controlling
-// terminal (/dev/tty) instead via openTTYPrompter. By the time this function
-// responds to Claude Code, the decision is always fully resolved to a plain
-// allow/deny — Damping never asks Claude Code to show its own generic "ask"
-// UI, because that would bypass Damping's own branded prompt (see
-// docs/cli-reference.md §12) entirely.
+// runHook implements both Claude Code's PreToolUse and Cursor's
+// beforeShellExecution contracts (see docs/cli-reference.md §11) — the two
+// agents invoke the exact same `damping hook pretooluse` command (see
+// hookInput's doc comment for how the payload shape distinguishes them).
+// Both agents' stdin/stdout are reserved for their own JSON protocol, so
+// the interactive confirmation prompt for a Prompt-tier decision must NOT
+// use them — it talks to the controlling terminal (/dev/tty) instead via
+// openTTYPrompter. By the time this function responds, the decision is
+// always fully resolved to a plain allow/deny — Damping never asks the
+// agent to show its own generic "ask" UI, because that would bypass
+// Damping's own branded prompt (see docs/cli-reference.md §12) entirely.
 func runHook(cmd *cobra.Command, hookEvent string) error {
 	if hookEvent != "pretooluse" {
 		return fmt.Errorf("unsupported hook event %q", hookEvent)
 	}
 
-	var in claudeHookInput
+	var in hookInput
 	decodeErr := json.NewDecoder(cmd.InOrStdin()).Decode(&in)
 	writer, hasAuditSink := newAuditWriter()
 
@@ -67,8 +90,20 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 		return nil
 	}
 
-	if in.ToolName != "Bash" {
-		return nil // not a shell command; nothing for Damping's V1 CLI adapter to judge
+	var actor, sessionID, rawCommand string
+	switch in.HookEventName {
+	case "PreToolUse":
+		if in.ToolName != "Bash" {
+			return nil // not a shell command; nothing for Damping's V1 CLI adapter to judge
+		}
+		actor, sessionID, rawCommand = "claude-code", in.SessionID, in.ToolInput.Command
+	case "beforeShellExecution":
+		actor, sessionID, rawCommand = "cursor", in.ConversationID, in.Command
+	default:
+		return nil // an event type this V1 adapter doesn't judge, not a recognized-but-unhandled failure
+	}
+	if sessionID == "" {
+		sessionID = "unknown"
 	}
 
 	if disabled, _ := enforcement.IsDisabled(); disabled {
@@ -77,23 +112,23 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 
 	policyPath, err := resolvePolicyPath()
 	if err != nil {
-		logDegraded(cmd, writer, hasAuditSink, in.SessionID, "claude-code", "resolving policy path: "+err.Error())
+		logDegraded(cmd, writer, hasAuditSink, sessionID, actor, "resolving policy path: "+err.Error())
 		return nil
 	}
 	cfg, err := policy.LoadConfig(policyPath)
 	if err != nil {
-		logDegraded(cmd, writer, hasAuditSink, in.SessionID, "claude-code", "loading policy: "+err.Error())
+		logDegraded(cmd, writer, hasAuditSink, sessionID, actor, "loading policy: "+err.Error())
 		return nil
 	}
 	engine, err := policy.NewEvaluator(cmd.Context(), cfg)
 	if err != nil {
-		logDegraded(cmd, writer, hasAuditSink, in.SessionID, "claude-code", "constructing policy engine: "+err.Error())
+		logDegraded(cmd, writer, hasAuditSink, sessionID, actor, "constructing policy engine: "+err.Error())
 		return nil
 	}
 
-	d, err := hookadapter.EvaluateCommand(in.ToolInput.Command, engine)
+	d, err := hookadapter.EvaluateCommand(rawCommand, engine)
 	if err != nil {
-		logDegraded(cmd, writer, hasAuditSink, in.SessionID, "claude-code", "analyzing command: "+err.Error())
+		logDegraded(cmd, writer, hasAuditSink, sessionID, actor, "analyzing command: "+err.Error())
 		return nil
 	}
 
@@ -107,20 +142,20 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 			d.Resolve(decision.Deny)
 			d.Reason = "no controlling terminal available to ask; denied by default: " + d.Reason
 		} else {
-			resolution := prompter.Confirm(in.ToolInput.Command, d)
+			resolution := prompter.Confirm(rawCommand, d)
 			d.Resolve(resolution.Verdict)
 			closeTTY()
 
 			if resolution.Persist {
-				if err := policy.AppendAlwaysPattern(policyPath, resolution.Verdict, in.ToolInput.Command); err != nil {
-					logDegraded(cmd, writer, hasAuditSink, in.SessionID, "claude-code", "persisting always-"+string(resolution.Verdict)+" pattern: "+err.Error())
+				if err := policy.AppendAlwaysPattern(policyPath, resolution.Verdict, rawCommand); err != nil {
+					logDegraded(cmd, writer, hasAuditSink, sessionID, actor, "persisting always-"+string(resolution.Verdict)+" pattern: "+err.Error())
 				}
 			}
 		}
 	}
 
 	if hasAuditSink {
-		ev := hookadapter.BuildActionEvent(event.NewID(), in.SessionID, "claude-code", in.ToolInput.Command, d)
+		ev := hookadapter.BuildActionEvent(event.NewID(), sessionID, actor, rawCommand, d)
 		if err := writer.Append(ev); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "damping: failed to write audit record: %v\n", err)
 		}
@@ -128,11 +163,13 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 
 	if d.Outcome() == decision.Deny {
 		fmt.Fprintln(cmd.ErrOrStderr(), d.Reason)
-		// Exit code 2 is the only reliable blocking path Claude Code
-		// recognizes — see docs/cli-reference.md §11.
+		// Exit code 2 is the reliable blocking path both agents recognize —
+		// Cursor treats it the same as returning {"permission":"deny"}, so
+		// there's no need for this hook to also emit that JSON body on
+		// stdout — see docs/cli-reference.md §11.
 		return &ExitCodeError{Code: 2}
 	}
-	// Allow (directly, or resolved from a prompt): exit 0, Claude Code
+	// Allow (directly, or resolved from a prompt): exit 0, the agent
 	// proceeds through its normal permission flow.
 	return nil
 }

@@ -593,6 +593,97 @@ func TestHook_IgnoresNonBashTools(t *testing.T) {
 	}
 }
 
+// TestHook_EvaluatesCursorPayload_AllowsSafeCommand is a regression test for
+// a real security bug a review found: runHook previously only ever decoded
+// Claude Code's PreToolUse shape (session_id/tool_name/tool_input.command).
+// A genuine Cursor beforeShellExecution payload has no tool_name at all, so
+// it silently decoded to "", hit the `!= "Bash"` early-return, and every
+// Cursor-intercepted command was allowed without the policy engine ever
+// running — despite `damping doctor`/`status` reporting the Cursor hook as
+// actively registered. This uses a real Cursor-shaped payload (verified
+// against Cursor's actual hooks documentation: hook_event_name,
+// conversation_id, command, cwd — see docs/cli-reference.md §11) to prove
+// it now reaches the policy engine at all.
+func TestHook_EvaluatesCursorPayload_AllowsSafeCommand(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	stdin := `{"hook_event_name":"beforeShellExecution","conversation_id":"conv1","command":"git status","cwd":"/tmp"}`
+	if _, _, err := run(t, stdin, "hook", "pretooluse"); err != nil {
+		t.Fatalf("expected exit 0 for a safe command via the Cursor payload shape, got %v", err)
+	}
+}
+
+// TestHook_EvaluatesCursorPayload_DeniesDangerousCommand is the other half
+// of the regression: before the fix, this exact payload would have decoded
+// to an empty ToolName and been silently allowed. Now it must be denied
+// exactly like the equivalent Claude Code payload already is.
+func TestHook_EvaluatesCursorPayload_DeniesDangerousCommand(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	stdin := `{"hook_event_name":"beforeShellExecution","conversation_id":"conv1","command":"/proc/self/root/usr/bin/npx rm -rf /","cwd":"/tmp"}`
+	_, stderr, err := run(t, stdin, "hook", "pretooluse")
+	var exitErr *ExitCodeError
+	if !isExitCodeError(err, &exitErr) || exitErr.Code != 2 {
+		t.Fatalf("expected ExitCodeError{Code:2} for a known sandbox bypass via the Cursor payload shape, got %v", err)
+	}
+	if stderr == "" {
+		t.Fatal("expected a reason to be printed to stderr for a hard deny")
+	}
+}
+
+// TestHook_CursorAuditRecordUsesActorAndConversationID confirms the audit
+// trail correctly attributes a Cursor-originated event: actor "cursor" (not
+// "claude-code"), and conversation_id used as the session identifier
+// (Cursor's payload has no session_id field at all).
+func TestHook_CursorAuditRecordUsesActorAndConversationID(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	stdin := `{"hook_event_name":"beforeShellExecution","conversation_id":"conv-xyz","command":"git status","cwd":"/tmp"}`
+	if _, _, err := run(t, stdin, "hook", "pretooluse"); err != nil {
+		t.Fatalf("hook: %v", err)
+	}
+
+	auditPath, err := paths.Audit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := audit.ReadAll(auditPath, audit.Filter{})
+	if err != nil {
+		t.Fatalf("reading audit log: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected exactly 1 audit event, got %d", len(events))
+	}
+	if events[0].Actor != "cursor" {
+		t.Fatalf("expected actor %q, got %q", "cursor", events[0].Actor)
+	}
+	if events[0].SessionID != "conv-xyz" {
+		t.Fatalf("expected session_id to come from conversation_id (%q), got %q", "conv-xyz", events[0].SessionID)
+	}
+}
+
+// TestHook_UnrecognizedHookEventPassesThrough confirms an event type this
+// V1 adapter doesn't recognize at all (neither PreToolUse nor
+// beforeShellExecution) is treated the same as a non-Bash Claude Code tool
+// call — passed through untouched — rather than silently mis-parsed as one
+// of the two known shapes.
+func TestHook_UnrecognizedHookEventPassesThrough(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	stdin := `{"hook_event_name":"somethingElseEntirely","command":"rm -rf /"}`
+	if _, _, err := run(t, stdin, "hook", "pretooluse"); err != nil {
+		t.Fatalf("expected an unrecognized hook_event_name to pass through untouched, got %v", err)
+	}
+}
+
 func TestHook_MalformedInputFailsOpenButLogsDegraded(t *testing.T) {
 	setupTestEnv(t)
 	if _, _, err := run(t, "", "init"); err != nil {
