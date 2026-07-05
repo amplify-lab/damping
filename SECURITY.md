@@ -18,10 +18,12 @@ In scope:
 - Ways to disable or tamper with Damping's own enforcement outside the sanctioned `damping off` path (see `docs/threat-model.md` §4)
 - Audit log integrity issues (a record that can be silently altered or dropped)
 - Anything that causes Damping to report `allow` when the correct verdict was `deny`
+- Ways to defeat `damping dashboard`'s Host-header/DNS-rebinding protection while it's bound to its default `127.0.0.1` (see `docs/threat-model.md` §10) — reading the audit log from a webpage that shouldn't be able to is exactly the kind of report we want
 
 Out of scope (for now, until Phase 3+ ships these components):
 - MCP Gateway / OAuth 2.1 / confused-deputy issues (not yet implemented — see `docs/architecture.md` §7)
-- Team dashboard / enterprise compliance reporting (Phase 4/5, not yet built)
+- Team dashboard / enterprise compliance reporting (Phase 4/5, not yet built — not to be confused with the already-shipped local `damping dashboard`, which IS in scope above)
+- `damping dashboard` having no authentication at all, or being reachable from another local OS user on a shared machine — both are the accepted, documented threat model for this local single-user tool (`docs/threat-model.md` §10), not vulnerabilities
 
 ## Supply chain
 
