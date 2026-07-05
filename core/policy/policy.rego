@@ -158,6 +158,15 @@ matches contains "destructive.sql_drop_truncate" if {
 	regex.match(`(?i)\b(DROP\s+TABLE|TRUNCATE)\b`, a)
 }
 
+# mongosh uses JS method-call syntax, not SQL keywords, so the pattern above
+# can never match real Mongo usage despite mongosh being a listed client —
+# mirrors rules_shell.go's mongoDestructivePattern exactly.
+matches contains "destructive.sql_drop_truncate" if {
+	input.facts.command == "mongosh"
+	some a in input.facts.args
+	regex.match(`(?i)\bdb\.\w+\.drop\(\)|\bdb\.dropDatabase\(\)|\.(?:deleteMany|remove)\(\s*(?:\{\s*\})?\s*\)`, a)
+}
+
 # --- destructive.chmod_777_recursive — rules_shell.go matchChmod777Recursive ---
 
 matches contains "destructive.chmod_777_recursive" if {

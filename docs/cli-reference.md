@@ -291,7 +291,7 @@ rules:
     risk: high
     action: prompt
   - id: destructive.sql_drop_truncate
-    description: DROP TABLE / TRUNCATE issued via a shell-invoked DB client
+    description: DROP TABLE / TRUNCATE (SQL clients), or dropDatabase()/collection.drop()/an unfiltered deleteMany()/remove() (mongosh) issued via a shell-invoked DB client
     risk: high
     action: prompt
   - id: destructive.chmod_777_recursive

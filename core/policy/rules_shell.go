@@ -95,6 +95,16 @@ func matchGitPushForce(f Facts, _ Config) bool {
 
 var sqlDestructivePattern = regexp.MustCompile(`(?i)\b(DROP\s+TABLE|TRUNCATE)\b`)
 
+// mongoDestructivePattern matches destructive MongoDB shell (mongosh) JS
+// operations. sqlDestructivePattern can never match these — mongosh was
+// listed as a covered client, but it uses JS method-call syntax, not SQL
+// keywords, so "DROP TABLE"/"TRUNCATE" never appears in real Mongo usage and
+// this rule silently never fired for it in practice. dropDatabase() and
+// <collection>.drop() are unconditionally destructive; deleteMany/remove are
+// only flagged with an empty filter ({} or no argument at all), since a real
+// filter is ordinary, common, safe usage.
+var mongoDestructivePattern = regexp.MustCompile(`(?i)\bdb\.\w+\.drop\(\)|\bdb\.dropDatabase\(\)|\.(?:deleteMany|remove)\(\s*(?:\{\s*\})?\s*\)`)
+
 var sqlShellClients = map[string]bool{
 	"psql":    true,
 	"mysql":   true,
@@ -108,6 +118,9 @@ func matchSQLDropTruncate(f Facts, _ Config) bool {
 	}
 	for _, a := range f.Args {
 		if sqlDestructivePattern.MatchString(a) {
+			return true
+		}
+		if f.Command == "mongosh" && mongoDestructivePattern.MatchString(a) {
 			return true
 		}
 	}
