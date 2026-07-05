@@ -10,7 +10,7 @@ Feature: Intercept destructive shell commands
   Scenario: Block deletion of the home directory
     When the agent attempts to execute "rm -rf ~/"
     Then Damping should intercept the command
-    And the confirmation prompt should state "this will delete your entire home directory"
+    And the confirmation prompt should state "your home directory, filesystem root, or a configured protected path, this could destroy irreplaceable data"
     And the command should not execute until the user responds
 
   Scenario: Block deletion of root

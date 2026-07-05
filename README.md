@@ -9,7 +9,7 @@ Damping sits between your AI coding agent (Claude Code, Cursor, and more to come
 
   Command: rm -rf ~/
   Rule:    destructive.rm_rf_protected
-  Reason:  Recursive+force delete targeting a protected path — if this proceeds, this will delete your entire home directory or filesystem root
+  Reason:  Recursive+force delete of a path that isn't a known regenerable build/cache directory (node_modules, dist, build, ...) — for your home directory, filesystem root, or a configured protected path, this could destroy irreplaceable data
 
   [a] Allow once   [A] Always allow this exact command
   [d] Deny once    [D] Always deny this exact command

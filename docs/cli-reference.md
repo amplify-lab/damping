@@ -161,7 +161,7 @@ mcp.destructive_tool_call                  high      prompt
 self_protection.damping_off_attempt        critical  deny
 
 $ damping policy test "rm -rf ~/Documents"
-→ Would PROMPT (rule: destructive.rm_rf_protected, reason: Recursive+force delete targeting a protected path — if this proceeds, this will delete your entire home directory or filesystem root)
+→ Would PROMPT (rule: destructive.rm_rf_protected, reason: Recursive+force delete of a path that isn't a known regenerable build/cache directory (node_modules, dist, build, ...) — for your home directory, filesystem root, or a configured protected path, this could destroy irreplaceable data)
 
 $ damping policy edit     # opens $EDITOR on ~/.damping/policy.yaml
 $ damping policy validate # schema + rule sanity check, no side effects
@@ -238,7 +238,7 @@ Shell command interception:
 
   Command: rm -rf ~/
   Rule:    destructive.rm_rf_protected
-  Reason:  Recursive+force delete targeting a protected path — if this proceeds, this will delete your entire home directory or filesystem root
+  Reason:  Recursive+force delete of a path that isn't a known regenerable build/cache directory (node_modules, dist, build, ...) — for your home directory, filesystem root, or a configured protected path, this could destroy irreplaceable data
 
   [a] Allow once   [A] Always allow this exact command
   [d] Deny once    [D] Always deny this exact command
@@ -259,7 +259,11 @@ MCP tool-call interception — the exact same template and wording (still "exact
 >
 ```
 
-`[A]`/`[D]` persist the **exact command text** into `always_allow`/`always_deny` (via `core/policy.AppendAlwaysPattern`, which edits the policy YAML through `yaml.Node` surgery rather than a full round trip, so comments and formatting elsewhere in the file survive). The underlying matcher (`core/policy/rules.go`'s `matchGlobPattern`) also supports a trailing `*` as a prefix wildcard for hand-authored rules (e.g. `git status*` typed directly into the policy file) — but V1's automatic `[A]`/`[D]` persistence does not auto-generalize into a glob on its own; it remembers only the one exact command you approved. Deny always overrides allow when both a always-allow and always-deny pattern could match (defense-in-depth: an accidental broad allow can't silently swallow a narrower, more specific deny) — see `core/policy.Engine.Evaluate`, which checks `always_deny` before `always_allow`.
+**Invalid input**: typing anything other than `a`/`A`/`d`/`D` (including just pressing Enter with no input) reprints the literal line `please enter 'a', 'A', 'd', or 'D'` and re-prompts with `> ` again — it does not exit or default to any verdict.
+
+**Closed/EOF input stream**: if stdin closes before a human answers (e.g. a non-interactive or backgrounded execution context), the prompt returns Deny immediately and silently — no message is printed explaining why. This is a deliberate fail-closed default, not an oversight: it treats an ambiguous "nobody actually answered" state as a denial rather than risk silently letting a destructive command through.
+
+`[A]`/`[D]` persist the **exact command text** into `always_allow`/`always_deny` (via `core/policy.AppendAlwaysPattern`, which edits the policy YAML through `yaml.Node` surgery rather than a full round trip, so comments and formatting elsewhere in the file survive). The underlying matcher (`core/policy/rules.go`'s `matchGlobPattern`) also supports a trailing `*` as a prefix wildcard for hand-authored rules (e.g. `git status*` typed directly into the policy file) — but V1's automatic `[A]`/`[D]` persistence does not auto-generalize into a glob on its own; it remembers only the one exact command you approved. If the approved command itself happens to end in a literal `*` (a realistic shell glob, e.g. `rm -rf ./dist/*`), `AppendAlwaysPattern` refuses to persist it at all rather than silently writing something that `matchGlobPattern` would reinterpret as a broader wildcard the next time the policy file is reloaded — the prompt's `[A]`/`[D]` choice still applies to that one call, but a `Notify` message explains it couldn't be remembered for next time. Deny always overrides allow when both a always-allow and always-deny pattern could match (defense-in-depth: an accidental broad allow can't silently swallow a narrower, more specific deny) — see `core/policy.Engine.Evaluate`, which checks `always_deny` before `always_allow`.
 
 ## 13. Policy file schema (`~/.damping/policy.yaml`, installed by `damping init`)
 
@@ -283,7 +287,7 @@ allowlisted_install_domains:
 
 rules:
   - id: destructive.rm_rf_protected
-    description: Recursive+force delete targeting a protected path — if this proceeds, this will delete your entire home directory or filesystem root
+    description: Recursive+force delete of a path that isn't a known regenerable build/cache directory (node_modules, dist, build, ...) — for your home directory, filesystem root, or a configured protected path, this could destroy irreplaceable data
     risk: critical
     action: prompt
   - id: destructive.git_push_force
@@ -299,7 +303,7 @@ rules:
     risk: medium
     action: prompt
   - id: destructive.curl_pipe_sh_unallowlisted
-    description: curl|sh or wget|sh from a domain not in allowlisted_install_domains
+    description: curl|sh, curl|bash, curl|zsh, wget|sh, wget|bash, or wget|zsh from a domain not in allowlisted_install_domains
     risk: medium
     action: prompt
   - id: destructive.encoded_payload_pipe
