@@ -3,8 +3,10 @@ package audit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -298,6 +300,73 @@ func TestRotate_RotatesWhenOverSize(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("expected the rotated-away path to read as empty, got %d events", len(got))
+	}
+}
+
+// TestRotate_TwoRotationsInSameSecondDoNotCollide is a regression test for
+// a real data-loss bug: the rotated filename only had second-level
+// resolution, so a second Rotate call within the same wall-clock second
+// (entirely plausible once Append triggers rotation on every write that
+// crosses the threshold, not just as a rare manual operation) computed the
+// exact same target filename as the first — and os.Rename silently
+// replaces an existing destination, so the second rotation would overwrite
+// the first rotated file, permanently losing whatever it held.
+func TestRotate_TwoRotationsInSameSecondDoNotCollide(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	now := time.Now()
+
+	w1 := NewWriter(path)
+	first := sampleEvent(event.ChannelCLI, event.RiskLow, decision.Allow)
+	first.EventID = "evt_generation_1"
+	if err := w1.Append(first); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	rotated1, err := Rotate(path, 1 /* bytes, force rotation */, now)
+	if err != nil {
+		t.Fatalf("first Rotate: %v", err)
+	}
+	if !rotated1 {
+		t.Fatal("expected the first rotation to occur")
+	}
+
+	w2 := NewWriter(path)
+	second := sampleEvent(event.ChannelCLI, event.RiskLow, decision.Allow)
+	second.EventID = "evt_generation_2"
+	if err := w2.Append(second); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	// Same `now` as the first Rotate call — simulates two rotations
+	// completing within the same wall-clock second.
+	rotated2, err := Rotate(path, 1 /* bytes, force rotation */, now)
+	if err != nil {
+		t.Fatalf("second Rotate: %v", err)
+	}
+	if !rotated2 {
+		t.Fatal("expected the second rotation to occur")
+	}
+
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, e := range entries {
+		if e.Name() == "audit.jsonl" || !strings.HasPrefix(e.Name(), "audit.jsonl.") {
+			continue
+		}
+		got, err := ReadAll(filepath.Join(filepath.Dir(path), e.Name()), Filter{})
+		if err != nil {
+			t.Fatalf("ReadAll(%s): %v", e.Name(), err)
+		}
+		for _, ev := range got {
+			seen[ev.EventID] = true
+		}
+	}
+	if !seen["evt_generation_1"] {
+		t.Fatal("evt_generation_1 was lost — the second same-second rotation silently overwrote the first rotated file")
+	}
+	if !seen["evt_generation_2"] {
+		t.Fatal("evt_generation_2 was lost")
 	}
 }
 
@@ -640,5 +709,69 @@ func TestRotate_NoOpUnderThreshold(t *testing.T) {
 	}
 	if rotated {
 		t.Fatal("did not expect rotation under the size threshold")
+	}
+}
+
+// TestWriterAppend_RotatesWhenOverThreshold is a regression test for a real
+// gap: docs/00-統一開發計畫（定案版）.md requires basic file rotation so the
+// audit log doesn't grow unbounded, and Rotate itself was fully implemented
+// and unit-tested — but nothing in the whole program ever called it, so in
+// real usage the file grew forever. Append must now trigger rotation itself
+// once the file crosses maxAuditFileSize, with no separate caller needed.
+func TestWriterAppend_RotatesWhenOverThreshold(t *testing.T) {
+	orig := maxAuditFileSize
+	maxAuditFileSize = 500 // small enough that a handful of sample events cross it
+	t.Cleanup(func() { maxAuditFileSize = orig })
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.jsonl")
+	w := NewWriter(path)
+
+	const n = 10
+	ids := make([]string, n)
+	for i := 0; i < n; i++ {
+		e := sampleEvent(event.ChannelCLI, event.RiskLow, decision.Allow)
+		e.EventID = fmt.Sprintf("evt_%d", i)
+		ids[i] = e.EventID
+		if err := w.Append(e); err != nil {
+			t.Fatalf("append %d: %v", i, err)
+		}
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rotatedSiblingFound bool
+	for _, e := range entries {
+		if e.Name() != "audit.jsonl" && strings.HasPrefix(e.Name(), "audit.jsonl.") {
+			rotatedSiblingFound = true
+		}
+	}
+	if !rotatedSiblingFound {
+		t.Fatalf("expected at least one rotated sibling file after writing enough events to repeatedly cross the threshold, got entries: %v", entries)
+	}
+
+	// No data lost across rotation: every event written must still be
+	// readable from *somewhere* — either the live file or a rotated
+	// sibling. ReadAll only ever reads one path, so union across every
+	// audit-log-shaped file in the directory.
+	seen := map[string]bool{}
+	for _, e := range entries {
+		if e.Name() != "audit.jsonl" && !strings.HasPrefix(e.Name(), "audit.jsonl.") {
+			continue
+		}
+		got, err := ReadAll(filepath.Join(dir, e.Name()), Filter{})
+		if err != nil {
+			t.Fatalf("ReadAll(%s): %v", e.Name(), err)
+		}
+		for _, ev := range got {
+			seen[ev.EventID] = true
+		}
+	}
+	for _, id := range ids {
+		if !seen[id] {
+			t.Fatalf("expected event %q to be readable from some generation, but it's missing entirely (data loss across rotation)", id)
+		}
 	}
 }
