@@ -116,3 +116,53 @@ Feature: Intercept destructive shell commands
     When the agent attempts to execute "$(echo rm) -rf ~/"
     Then Damping should treat the dynamically-constructed command as at least "ask" tier
     And Damping should not assume the substitution is safe merely because it cannot resolve it statically
+
+  # Command/process substitution executes at word-evaluation time regardless
+  # of where it appears or whether its output is ever used — unlike the
+  # scenario above (substitution supplying the command *name*), these hide
+  # the destructive command as an argument, redirect target, or here-string.
+  Scenario Outline: Detect a destructive command hidden in a command or process substitution, not just the command name
+    When the agent attempts to execute "<command>"
+    Then Damping should intercept the command
+    And the matched rule should be "destructive.rm_rf_protected"
+
+    Examples:
+      | command                    |
+      | echo $(rm -rf ~)           |
+      | : $(rm -rf /)              |
+      | x=$(rm -rf ~)              |
+      | cat <(rm -rf ~)            |
+      | echo hi > >(rm -rf ~)      |
+
+  Scenario: Detect a destructive command hidden inside a heredoc fed to a shell interpreter
+    When the agent attempts to execute the following script:
+      """
+      bash <<'EOF'
+      rm -rf ~
+      EOF
+      """
+    Then Damping should intercept the command
+    And the matched rule should be "destructive.rm_rf_protected"
+
+  Scenario: Detect a command substitution inside a heredoc even when the receiving command isn't a shell
+    When the agent attempts to execute the following script:
+      """
+      cat <<EOF
+      $(rm -rf ~)
+      EOF
+      """
+    Then Damping should intercept the command
+    And the matched rule should be "destructive.rm_rf_protected"
+
+  Scenario: Allow a heredoc containing command-shaped text when addressed to a non-shell command (false-positive guard)
+    # The fix for the two scenarios above only re-parses a heredoc body as a
+    # shell script when the receiving command is a real shell interpreter —
+    # otherwise ordinary heredoc data that merely looks command-shaped (SQL,
+    # config, prose) would start getting flagged.
+    When the agent attempts to execute the following script:
+      """
+      cat <<'EOF'
+      rm -rf ~
+      EOF
+      """
+    Then Damping should allow the command immediately

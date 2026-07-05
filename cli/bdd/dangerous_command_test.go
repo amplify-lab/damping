@@ -104,6 +104,7 @@ func TestFeatures_DangerousCommand(t *testing.T) {
 			sc.When(`^the agent attempts to write to "([^"]*)"$`, func(target string) error {
 				return w.evaluate(fmt.Sprintf("echo data >> %s", target))
 			})
+			sc.When(`^the agent attempts to execute the following script:$`, w.evaluate)
 
 			sc.Then(`^Damping should intercept the command$`, func() error {
 				if w.decision.Verdict == decision.Allow {
