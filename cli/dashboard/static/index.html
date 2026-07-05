@@ -157,12 +157,16 @@ function renderRow(ev) {
   decisionEl.classList.add(DECISION_CLASS[outcome] || "badge-allow");
   if (ev.decision && ev.decision.degraded) decisionEl.classList.add("badge-degraded");
 
-  // docs/ux-dashboard-spec.md §2.3: "Row click -> detail drawer: full
-  // ActionEvent". `ev` is already the full object this row was rendered
-  // from, so no second fetch is needed to show it.
-  row.addEventListener("click", () => renderDetail(ev));
+  // A review caught that citing docs/ux-dashboard-spec.md §2.3 here was
+  // misleading — that section is scoped to Phase 4's team dashboard, which
+  // this local tool explicitly does NOT implement (see server.go's package
+  // doc comment). The actual justification is CLI/dashboard parity: this
+  // is the same full-event view `damping log show <event_id>` already
+  // prints in the terminal. `ev` is already the full object this row was
+  // rendered from, so no second fetch is needed to show it.
+  row.addEventListener("click", () => renderDetail(ev, row));
   row.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); renderDetail(ev); }
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); renderDetail(ev, row); }
   });
 
   return row;
@@ -179,7 +183,16 @@ function addDetailField(dl, label, value) {
   dl.appendChild(dd);
 }
 
-function renderDetail(ev) {
+let detailTrigger = null;
+
+function renderDetail(ev, triggerEl) {
+  // A review flagged that opening this dialog never moved focus into it
+  // and closing it never restored focus to whatever opened it — a real
+  // WAI-ARIA dialog-pattern gap for anyone navigating by keyboard/screen
+  // reader, who'd get no signal a panel appeared at all. Remembering the
+  // trigger here (falling back to whatever's currently focused, e.g. when
+  // called from elsewhere) is what closeDetail below restores focus to.
+  detailTrigger = triggerEl || document.activeElement;
   const dl = document.getElementById("detail-fields");
   dl.textContent = "";
   addDetailField(dl, "Event ID", ev.event_id);
@@ -197,18 +210,22 @@ function renderDetail(ev) {
   addDetailField(dl, "Risk", ev.risk_level);
   const d = ev.decision || {};
   addDetailField(dl, "Verdict", d.verdict || "");
-  if (d.resolved_verdict) addDetailField(dl, "Resolved verdict (prompt -> " + d.resolved_verdict + ")", d.resolved_verdict);
+  if (d.resolved_verdict) addDetailField(dl, "Resolved verdict", d.verdict + " → " + d.resolved_verdict);
   if (d.policy_id) addDetailField(dl, "Policy ID", d.policy_id);
   if (d.reason) addDetailField(dl, "Reason", d.reason);
   if (d.degraded) addDetailField(dl, "Degraded", "true — this decision was made under an internal failure, not a real policy match");
   document.getElementById("detail-drawer").classList.remove("hidden");
+  document.getElementById("detail-close").focus();
 }
 
-document.getElementById("detail-close").addEventListener("click", () => {
+function closeDetail() {
   document.getElementById("detail-drawer").classList.add("hidden");
-});
+  if (detailTrigger) { detailTrigger.focus(); detailTrigger = null; }
+}
+
+document.getElementById("detail-close").addEventListener("click", closeDetail);
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") document.getElementById("detail-drawer").classList.add("hidden");
+  if (e.key === "Escape" && !document.getElementById("detail-drawer").classList.contains("hidden")) closeDetail();
 });
 
 let currentEvents = [];
