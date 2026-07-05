@@ -1,6 +1,8 @@
-# Damping Infrastructure & Architecture Research Synthesis
+# Damping Infrastructure & Architecture Research Synthesis (Round 1)
 
 *Consolidating four independent research passes: Phase 3 (OAuth/Gateway), Phase 4 (Cloudflare + SSO), Phase 5 (enterprise control plane), Phase 6 (memory-poisoning defense spec). Compiled July 2026, at Tim's request, specifically asking for a neutral, evidence-based assessment rather than confirmation of his own self-hosting-leaning instinct. Not yet a final decision — a research input for Tim to decide from.*
+
+> **Superseded in part — see [`enterprise-architecture-research-round2.md`](enterprise-architecture-research-round2.md).** Tim asked for a deeper second pass (independent re-verification against primary sources + a dedicated adversarial "try to refute this" agent per topic, plus new research on Claude Code Skills as a memory-poisoning attack surface). Round 2 reverses round 1's Phase 3 and Phase 5 recommendations and materially amends Phase 4 and Phase 6 — kept here unmodified as the round-1 record, per this project's practice of layering revisions rather than overwriting history, but round 2 is the current, decisive read.
 
 ---
 
