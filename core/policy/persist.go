@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -26,6 +27,24 @@ func AppendAlwaysPattern(path string, verdict decision.Verdict, pattern string) 
 	key, err := alwaysKeyFor(verdict)
 	if err != nil {
 		return err
+	}
+
+	// matchGlobPattern (patterns.go) treats any entry ending in "*" as a
+	// prefix wildcard — the vocabulary documented for hand-authored
+	// always_allow/always_deny entries in cli/policies/default.yaml. An
+	// auto-persisted pattern is meant to mean "this exact command, nothing
+	// broader" (docs/cli-reference.md §12), so if the approved raw command
+	// itself happens to end in a literal "*" (a realistic shell glob, e.g.
+	// "rm -rf ./dist/*"), silently appending it here would have it
+	// reinterpreted as a broader wildcard match the moment the policy file
+	// is next reloaded — a real, silent scope-broadening the human never
+	// approved. Refusing outright is safer than persisting something whose
+	// on-disk meaning secretly diverges from what was actually confirmed;
+	// both call sites (cli/cmd/hook.go, cli/adapter/mcp/wrap.go's
+	// resolvePrompt) already surface this error the same way they surface
+	// any other persist failure.
+	if strings.HasSuffix(pattern, "*") {
+		return fmt.Errorf("policy: cannot persist %q as an exact always-%s pattern — it ends in \"*\", which would be reinterpreted as a wildcard on reload", pattern, key[len("always_"):])
 	}
 
 	raw, err := os.ReadFile(path) // #nosec G304 -- path is the local user's own policy file (~/.damping default or their own --config flag), not an attacker-influenced path; no cross-trust-boundary traversal risk
