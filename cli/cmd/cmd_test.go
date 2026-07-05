@@ -19,6 +19,7 @@ import (
 	"github.com/amplify-lab/damping/core/audit"
 	"github.com/amplify-lab/damping/core/decision"
 	"github.com/amplify-lab/damping/core/event"
+	"github.com/amplify-lab/damping/core/policy"
 )
 
 // setupTestEnv points every damping path at fresh temp directories so tests
@@ -681,6 +682,35 @@ func TestHook_UnrecognizedHookEventPassesThrough(t *testing.T) {
 	stdin := `{"hook_event_name":"somethingElseEntirely","command":"rm -rf /"}`
 	if _, _, err := run(t, stdin, "hook", "pretooluse"); err != nil {
 		t.Fatalf("expected an unrecognized hook_event_name to pass through untouched, got %v", err)
+	}
+}
+
+// panicEvaluator is a policy.Evaluator stub that panics on every call — used
+// to prove evaluateCommandRecovering actually recovers, since neither
+// shell.Analyze nor the real policy.Engine has a way to be made to panic on
+// demand from a test.
+type panicEvaluator struct{}
+
+func (panicEvaluator) Evaluate(policy.Facts) decision.Decision {
+	panic("simulated shell/policy engine crash")
+}
+
+// TestEvaluateCommandRecovering_RecoversFromPanic is a regression test for a
+// real gap a review found: runHook had no recover() anywhere around command
+// analysis, so a genuine panic in shell.Analyze (adversarial input is, by
+// design, the whole point of what it parses) would crash the entire
+// `damping hook pretooluse` subprocess. That happened to exit with Go's own
+// default panic status (2) — coincidentally matching Damping's own hard-
+// deny code — rather than the documented fail-open-and-degraded behavior
+// features/audit_log.feature specifies. This proves the recover() actually
+// converts a panic into a plain error instead of crashing the test binary.
+func TestEvaluateCommandRecovering_RecoversFromPanic(t *testing.T) {
+	_, err := evaluateCommandRecovering("git status", panicEvaluator{})
+	if err == nil {
+		t.Fatal("expected a panic in the evaluator to surface as an error, not be silently swallowed or crash the process")
+	}
+	if !strings.Contains(err.Error(), "simulated shell/policy engine crash") {
+		t.Fatalf("expected the recovered panic's message in the error, got: %v", err)
 	}
 }
 
