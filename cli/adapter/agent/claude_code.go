@@ -1,8 +1,9 @@
 // Package agent installs and detects Damping's hook registration inside
 // each supported AI coding agent's own settings file. See
 // docs/cli-reference.md §11 for the verified Claude Code contract this
-// targets; the Cursor schema in cursor.go is a best-effort approximation —
-// see the comment there.
+// targets; see cursor.go's own comment for the verified Cursor contract,
+// including the required top-level "version" field a prior review found
+// missing.
 package agent
 
 // HookCommand is what damping registers as the hook entrypoint. Kept as a
