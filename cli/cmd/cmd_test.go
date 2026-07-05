@@ -270,6 +270,43 @@ func TestDoctor_WarnsWhenPolicyHashChanges(t *testing.T) {
 	}
 }
 
+// TestDoctor_WarnsWhenAuditLogUnreadable is a regression test for a real
+// false all-clear: doctor's degraded-events check used to discard
+// audit.ReadAll's error entirely (`degraded, _ := audit.ReadAll(...)`) and
+// fall through to printing "No degraded-mode events" regardless — so a
+// genuinely corrupted audit log (which can happen via a torn write, a race,
+// or disk corruption) silently defeated this exact self-protection check.
+func TestDoctor_WarnsWhenAuditLogUnreadable(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	auditPath, err := paths.Audit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(auditPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	// A genuinely corrupt (but newline-terminated) record — not just a torn
+	// trailing write, which ReadAll tolerates by design.
+	if err := os.WriteFile(auditPath, []byte("{not valid json}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := run(t, "", "doctor")
+	if err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if strings.Contains(out, "No degraded-mode events") {
+		t.Fatalf("expected doctor to report it could not read the audit log, not a false all-clear, got: %s", out)
+	}
+	if !strings.Contains(out, "Could not read the audit log") {
+		t.Fatalf("expected a warning about the unreadable audit log, got: %s", out)
+	}
+}
+
 func TestPolicyList_ShowsAllRules(t *testing.T) {
 	setupTestEnv(t)
 	if _, _, err := run(t, "", "init"); err != nil {
