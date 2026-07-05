@@ -113,6 +113,32 @@ func TestAnalyze_AllowsSafeEverydayCommands(t *testing.T) {
 	}
 }
 
+// TestAnalyze_AllowsRmRfWithATrailingFlagAfterTheOperand is a regression test
+// for a real false positive: Facts.Target used to be nothing more than the
+// *last* word, so a perfectly safe "rm -rf node_modules -v" resolved Target
+// to the trailing "-v" flag — which isn't a regenerable dir name — and got
+// flagged as if it were dangerous.
+func TestAnalyze_AllowsRmRfWithATrailingFlagAfterTheOperand(t *testing.T) {
+	e := loadEngine(t)
+	d := evaluateRaw(t, e, "rm -rf node_modules -v")
+	if d.Verdict != decision.Allow {
+		t.Fatalf("expected a safe rm -rf with a trailing flag to be allowed, got %v (%q)", d.Verdict, d.PolicyID)
+	}
+}
+
+// TestAnalyze_BlocksRmRfWithMultiplePathOperands is a regression test for a
+// real bypass: rm accepts multiple path operands in one invocation, but only
+// the *last* one was ever checked, so "rm -rf /etc build" — which really
+// does force-recursively delete /etc — evaluated Target to "build" (a
+// regenerable dir name) and was silently allowed.
+func TestAnalyze_BlocksRmRfWithMultiplePathOperands(t *testing.T) {
+	e := loadEngine(t)
+	d := evaluateRaw(t, e, "rm -rf /etc build")
+	if d.PolicyID != "destructive.rm_rf_protected" {
+		t.Fatalf("expected the dangerous /etc operand to be caught even though it's not the last argument, got %q (verdict %v)", d.PolicyID, d.Verdict)
+	}
+}
+
 func TestAnalyze_BlocksWriteToProtectedPath(t *testing.T) {
 	e := loadEngine(t)
 	d := evaluateRaw(t, e, "echo key >> ~/.ssh/authorized_keys")

@@ -57,6 +57,8 @@ always_deny:
 		{"allows git push (no force)", defaultCfg, Facts{Raw: "git push", Command: "git", Args: []string{"push"}}},
 		{"allows rm -rf node_modules", defaultCfg, Facts{Raw: "rm -rf ./node_modules", Command: "rm", Args: []string{"-rf", "./node_modules"}, Target: "./node_modules"}},
 		{"allows rm -rf build", defaultCfg, Facts{Raw: "rm -rf ./build", Command: "rm", Args: []string{"-rf", "./build"}, Target: "./build"}},
+		{"allows rm -rf node_modules with a trailing flag", defaultCfg, Facts{Raw: "rm -rf node_modules -v", Command: "rm", Args: []string{"-rf", "node_modules", "-v"}, Target: "-v"}},
+		{"blocks rm -rf with a protected path among several operands", defaultCfg, Facts{Raw: "rm -rf /etc build", Command: "rm", Args: []string{"-rf", "/etc", "build"}, Target: "build"}},
 		{"allows chmod 644", defaultCfg, Facts{Raw: "chmod 644 ./README.md", Command: "chmod", Args: []string{"644", "./README.md"}, Target: "./README.md"}},
 		{"allows allowlisted install pipeline", defaultCfg, Facts{Raw: "curl -sSL https://damping.dev/install | sh", IsPipeline: true, PipelineCmds: []string{"curl", "sh"}, Domain: "damping.dev"}},
 		{"blocks write to protected path", defaultCfg, Facts{Raw: "echo key >> ~/.ssh/authorized_keys", Command: RedirectWritePlaceholder, Target: "~/.ssh/authorized_keys"}},

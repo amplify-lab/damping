@@ -30,13 +30,40 @@ func matchRmRfProtected(f Facts, cfg Config) bool {
 	if !hasRecursiveForce(f.Args) {
 		return false
 	}
-	if isFilesystemOrHomeRoot(f.Target) {
-		return true
+	// rm accepts multiple path operands in a single invocation
+	// ("rm -rf /etc build"), and every one of them gets force-recursively
+	// deleted — so each operand is checked independently rather than just
+	// Facts.Target (which used to be nothing more than the *last* word,
+	// missing a dangerous earlier operand entirely, and misfiring on a
+	// trailing flag like "-v" when there was no operand after it). See
+	// features/dangerous_command.feature, "rm -rf with multiple path
+	// operands, only one of which is dangerous".
+	for _, target := range rmPathOperands(f.Args) {
+		if isFilesystemOrHomeRoot(target) {
+			return true
+		}
+		if inProtectedPaths(target, cfg.ProtectedPaths) {
+			return true
+		}
+		if !regenerableDirNames[basename(target)] {
+			return true
+		}
 	}
-	if inProtectedPaths(f.Target, cfg.ProtectedPaths) {
-		return true
+	return false
+}
+
+// rmPathOperands returns the non-flag path operands of an rm invocation —
+// mirrored exactly in policy.rego's rm_path_operands/is_rm_flag so the two
+// engines stay behaviorally identical (core/policy/opa_equivalence_test.go).
+func rmPathOperands(args []string) []string {
+	var out []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") && a != "-" {
+			continue
+		}
+		out = append(out, a)
 	}
-	return !regenerableDirNames[basename(f.Target)]
+	return out
 }
 
 func matchWriteProtectedPath(f Facts, cfg Config) bool {
