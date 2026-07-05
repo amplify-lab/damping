@@ -109,6 +109,31 @@ func (f Filter) Matches(e event.ActionEvent) bool {
 	return true
 }
 
+// ParseFilter builds a Filter from the same string vocabulary every surface
+// that filters the audit log accepts — `damping log`'s flags and the local
+// dashboard's query parameters both parse through this one implementation,
+// per docs/ux-dashboard-spec.md §4's "CLI/dashboard vocabulary parity"
+// principle: there is exactly one place that decides what "--risk high" or
+// "?risk=high" means. since, if non-empty, is a Go duration string (e.g.
+// "24h") measured back from now; an empty since leaves Filter.Since zero
+// (matches everything).
+func ParseFilter(channel, risk, actor, outcome, since string) (Filter, error) {
+	f := Filter{
+		Channel: event.Channel(channel),
+		Risk:    event.RiskLevel(risk),
+		Actor:   actor,
+		Outcome: outcome,
+	}
+	if since != "" {
+		d, err := time.ParseDuration(since)
+		if err != nil {
+			return Filter{}, err
+		}
+		f.Since = time.Now().Add(-d)
+	}
+	return f, nil
+}
+
 // ReadAll reads every ActionEvent from path and returns those matching f. A
 // missing file is treated as an empty log, not an error — a brand new
 // install with no interceptions yet is a normal state, not a failure.

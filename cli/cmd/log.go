@@ -117,18 +117,9 @@ func newLogShowCmd() *cobra.Command {
 }
 
 func buildLogFilter(channel, risk, actor, outcome, since string) (audit.Filter, error) {
-	f := audit.Filter{
-		Channel: event.Channel(channel),
-		Risk:    event.RiskLevel(risk),
-		Actor:   actor,
-		Outcome: outcome,
-	}
-	if since != "" {
-		d, err := time.ParseDuration(since)
-		if err != nil {
-			return audit.Filter{}, fmt.Errorf("--since: %w", err)
-		}
-		f.Since = time.Now().Add(-d)
+	f, err := audit.ParseFilter(channel, risk, actor, outcome, since)
+	if err != nil {
+		return audit.Filter{}, fmt.Errorf("--since: %w", err)
 	}
 	return f, nil
 }

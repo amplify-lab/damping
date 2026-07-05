@@ -189,6 +189,39 @@ func TestFilter_Outcome_Degraded(t *testing.T) {
 	}
 }
 
+// TestParseFilter_BuildsEquivalentFilter is a regression test for the
+// extraction of this logic out of cli/cmd/log.go's buildLogFilter — moved
+// here so the local dashboard's HTTP handlers can parse the identical
+// vocabulary (?channel=, ?risk=, etc.) without importing the cmd package.
+func TestParseFilter_BuildsEquivalentFilter(t *testing.T) {
+	f, err := ParseFilter("cli", "high", "claude-code", "deny", "24h")
+	if err != nil {
+		t.Fatalf("ParseFilter: %v", err)
+	}
+	if f.Channel != event.ChannelCLI || f.Risk != event.RiskHigh || f.Actor != "claude-code" || f.Outcome != "deny" {
+		t.Fatalf("expected fields to pass through unchanged, got %+v", f)
+	}
+	if f.Since.IsZero() || time.Since(f.Since) < 23*time.Hour || time.Since(f.Since) > 25*time.Hour {
+		t.Fatalf("expected Since to resolve to ~24h ago, got %v", f.Since)
+	}
+}
+
+func TestParseFilter_EmptySinceLeavesZeroTime(t *testing.T) {
+	f, err := ParseFilter("", "", "", "", "")
+	if err != nil {
+		t.Fatalf("ParseFilter: %v", err)
+	}
+	if !f.Since.IsZero() {
+		t.Fatalf("expected a zero Since when since is unset, got %v", f.Since)
+	}
+}
+
+func TestParseFilter_InvalidSinceErrors(t *testing.T) {
+	if _, err := ParseFilter("", "", "", "", "not-a-duration"); err == nil {
+		t.Fatal("expected an error for an unparseable since duration")
+	}
+}
+
 // TestPromptResolution_OneCoherentRecord exercises the audit_log.feature
 // scenario "A prompt that the user resolves produces one coherent record".
 func TestPromptResolution_OneCoherentRecord(t *testing.T) {
