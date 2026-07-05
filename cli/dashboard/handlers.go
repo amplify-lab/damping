@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -67,17 +68,48 @@ func parseFilterQuery(r *http.Request) (audit.Filter, error) {
 	return audit.ParseFilter(q.Get("channel"), q.Get("risk"), q.Get("actor"), q.Get("outcome"), q.Get("since"))
 }
 
+// defaultEventsLimit caps /api/events when the caller doesn't pass an
+// explicit ?limit= — unlike `damping log`, whose own --limit defaults to 0
+// (unbounded) because a terminal user can scroll or pipe through `less`,
+// this response gets re-rendered as DOM rows in a live browser tab on every
+// filter change, so an install with a very large audit history shouldn't
+// silently try to hand the whole thing over by default. An explicit
+// ?limit=0 still means unlimited, matching the CLI's own vocabulary — this
+// default only fills in the gap when the caller says nothing at all.
+const defaultEventsLimit = 200
+
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	f, err := parseFilterQuery(r)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("invalid filter: %v", err), http.StatusBadRequest)
 		return
 	}
+	limit := defaultEventsLimit
+	if v := r.URL.Query().Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("invalid limit: %v", err), http.StatusBadRequest)
+			return
+		}
+		limit = n
+	}
+
 	events, err := audit.ReadAll(s.cfg.AuditPath, f)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("reading audit log: %v", err), http.StatusInternalServerError)
 		return
 	}
+	limited := audit.LimitMostRecent(events, limit)
+	if len(limited) < len(events) {
+		// docs/ux-dashboard-spec.md §4's "never silently drop data" applies
+		// here even though this truncation is a sane default rather than
+		// something the user explicitly asked for (unlike `damping log
+		// --limit N`, where the flag itself is the visible signal) — a
+		// header, not a body-shape change, so plain `curl | jq` consumers
+		// of this endpoint still get a bare JSON array.
+		w.Header().Set("X-Damping-Truncated", "true")
+	}
+	events = limited
 	if events == nil {
 		events = []event.ActionEvent{} // never render as JSON null — the client always gets a real (possibly empty) array
 	}
