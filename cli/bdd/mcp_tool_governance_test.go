@@ -95,6 +95,21 @@ func TestFeatures_MCPToolGovernance(t *testing.T) {
 			})
 
 			sc.Given(`^Damping is running with the default policy$`, func() error {
+				// A review found this step never isolated DAMPING_HOME —
+				// unlike its sibling files (audit_log_test.go,
+				// self_protection_test.go, policy_config_test.go), which all
+				// set it here. This file's appendEvent helper and its
+				// "damping log" step both resolve paths.Audit(), which
+				// without DAMPING_HOME set falls back to the real
+				// ~/.damping/audit.jsonl — so every run of this suite was
+				// permanently appending fabricated session_id:"bdd" events
+				// into whatever real audit log exists on the machine running
+				// the tests, and the scenario's own assertions weren't even
+				// scoped to just the events it created (they'd pass
+				// identically against stale leftover data from earlier runs).
+				dir := t.TempDir()
+				t.Setenv("DAMPING_HOME", filepath.Join(dir, "damping-home"))
+
 				policyPath := defaultPolicyPath(t)
 				cfg, err := policy.LoadConfig(policyPath)
 				if err != nil {
