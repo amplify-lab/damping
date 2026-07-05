@@ -99,6 +99,17 @@ func (c Config) Validate() error {
 		default:
 			return fmt.Errorf("policy: rule %q has invalid action %q", r.ID, r.Action)
 		}
+		switch r.Risk {
+		case event.RiskLow, event.RiskMedium, event.RiskHigh, event.RiskCritical:
+		default:
+			// A rule's Risk flows verbatim into Decision.Risk and then
+			// ActionEvent.RiskLevel (see event.New) — an unrecognized value
+			// here wouldn't just fail to filter/display correctly, it would
+			// silently score as the dashboard's lowest severity (riskScore's
+			// default case), the least safe fallback for what a rule author
+			// likely meant as a real risk tier. Reject at load time instead.
+			return fmt.Errorf("policy: rule %q has invalid risk %q", r.ID, r.Risk)
+		}
 	}
 	return nil
 }

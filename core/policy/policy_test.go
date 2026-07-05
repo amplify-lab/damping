@@ -120,6 +120,25 @@ rules:
 	}
 }
 
+// TestParseConfig_RejectsInvalidRisk is a regression test: Risk flows
+// verbatim into Decision.Risk and then ActionEvent.RiskLevel (see
+// event.New), and the dashboard's riskScore falls back to its lowest
+// severity for any unrecognized value — a typo'd risk in policy.yaml would
+// silently under-report a rule's real severity instead of failing to load.
+func TestParseConfig_RejectsInvalidRisk(t *testing.T) {
+	raw := []byte(`
+version: 1
+rules:
+  - id: destructive.rm_rf_protected
+    description: a
+    risk: crital
+    action: prompt
+`)
+	if _, err := ParseConfig(raw); err == nil {
+		t.Fatal("expected an error for an invalid risk value")
+	}
+}
+
 // --- features/dangerous_command.feature, translated 1:1 into Go tests ---
 
 func TestEvaluate_BlocksHomeDirectoryDeletion(t *testing.T) {
