@@ -156,7 +156,21 @@ func TestFeatures_DangerousCommand(t *testing.T) {
 				}
 				return fmt.Errorf("expected %q in protected_paths, got %v", path, w.cfg.ProtectedPaths)
 			})
-			sc.Given(`^"([^"]*)" is the only allowlisted install domain$`, func(string) error { return nil })
+			// A review found the "is the only allowlisted install domain"
+			// wording this step used to back was both a no-op (this
+			// unconditionally returned nil, ignoring the captured domain)
+			// and factually false against cli/policies/default.yaml, which
+			// lists two allowlisted domains, not one — reworded to the
+			// actually-relevant, checkable precondition for this scenario:
+			// the tested domain genuinely isn't on the list.
+			sc.Given(`^"([^"]*)" is not an allowlisted install domain$`, func(domain string) error {
+				for _, d := range w.cfg.AllowlistedInstallDomains {
+					if d == domain {
+						return fmt.Errorf("expected %q to NOT be in allowlisted_install_domains, but it is: %v", domain, w.cfg.AllowlistedInstallDomains)
+					}
+				}
+				return nil
+			})
 			sc.Given(`^"([^"]*)" is an allowlisted install domain$`, func(domain string) error {
 				for _, d := range w.cfg.AllowlistedInstallDomains {
 					if d == domain {
@@ -165,12 +179,9 @@ func TestFeatures_DangerousCommand(t *testing.T) {
 				}
 				return fmt.Errorf("expected %q in allowlisted_install_domains, got %v", domain, w.cfg.AllowlistedInstallDomains)
 			})
-			sc.Then(`^Damping does not need to decode the payload to flag it$`, func() error { return nil })
-
 			sc.Given(`^the alias table maps "([^"]*)" to "([^"]*)"$`, func(string, string) error {
 				return nil // fixture note; cli/shell's alias table is exercised directly by cli/shell's own tests
 			})
-			sc.Then(`^Damping should note this was resolved via the alias table, not AST alias expansion$`, func() error { return nil })
 
 			sc.Then(`^Damping should treat the dynamically-constructed command as at least "([^"]*)" tier$`, func(tier string) error {
 				want, ok := map[string]int{"allow": 0, "ask": 1, "prompt": 1, "deny": 2}[tier]
