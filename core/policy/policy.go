@@ -15,47 +15,64 @@ import (
 // speaks so the policy engine never needs to know about shell ASTs or MCP
 // wire formats directly — cli/shell walks a shell AST and produces Facts;
 // cli/adapter/mcp inspects a tool call and produces Facts.
+//
+// JSON tags exist so opa.go can marshal Facts as-is into the OPA `input`
+// document — the Go-native and OPA-backed evaluators consume the exact same
+// Facts value, which is what makes the OPA swap a true drop-in replacement
+// rather than a parallel reimplementation with its own input shape.
 type Facts struct {
-	Channel    event.Channel
-	ActionType event.ActionType
+	Channel    event.Channel    `json:"channel"`
+	ActionType event.ActionType `json:"action_type"`
 
 	// Raw is the original command string or tool-call payload, used for
 	// always-allow/always-deny pattern matching and for rules that need
 	// whole-string context (e.g. known /proc bypass path literals).
-	Raw string
+	Raw string `json:"raw"`
 
 	// Command is the primary command name ("rm", "git", "chmod") for shell
 	// actions, or the MCP tool name for tool calls.
-	Command string
-	Args    []string
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
 
 	// Target is the path, tool name, or URL the action operates on.
-	Target string
+	Target string `json:"target"`
 
 	// Domain is populated for network-fetching commands (curl/wget) with the
 	// source domain, so install-pipeline rules can check it against the
 	// allowlist.
-	Domain string
+	Domain string `json:"domain"`
 
 	// IsPipeline and PipelineCmds describe a shell pipeline's command names
 	// in order (e.g. ["curl", "base64", "sh"]) for pipeline-shape rules.
-	IsPipeline   bool
-	PipelineCmds []string
+	IsPipeline   bool     `json:"is_pipeline"`
+	PipelineCmds []string `json:"pipeline_cmds"`
 
 	// ToolTags carries MCP tool metadata, e.g. "write", used by identity-
 	// bound authorization rules.
-	ToolTags []string
+	ToolTags []string `json:"tool_tags"`
 
 	// HasIdentity is true once an action's actor has a bound enterprise
 	// identity (always false in the individual tier — see
 	// docs/architecture.md §3 on ActionEvent.Identity).
-	HasIdentity bool
+	HasIdentity bool `json:"has_identity"`
+}
+
+// Evaluator is anything that can judge Facts against a policy and return a
+// Decision. The Go-native Engine (this file) and the OPA-backed OPAEngine
+// (opa.go) both implement it — callers (cli/adapter/hook, cli/adapter/mcp,
+// cli/cmd) take this interface, not a concrete *Engine, so swapping which
+// evaluator backs a given deployment is a one-line change at construction
+// time, never a call-site rewrite. See docs/architecture.md §4.
+type Evaluator interface {
+	Evaluate(f Facts) decision.Decision
 }
 
 // Engine evaluates Facts against a loaded Config.
 type Engine struct {
 	cfg Config
 }
+
+var _ Evaluator = (*Engine)(nil)
 
 // New constructs an Engine from an already-loaded, already-validated Config.
 func New(cfg Config) *Engine {

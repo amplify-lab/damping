@@ -89,7 +89,10 @@ func newPolicyTestCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			engine := policy.New(cfg)
+			engine, err := policy.NewEvaluator(cmd.Context(), cfg)
+			if err != nil {
+				return err
+			}
 			d, err := hook.EvaluateCommand(args[0], engine)
 			if err != nil {
 				return err

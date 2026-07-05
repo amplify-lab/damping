@@ -67,6 +67,7 @@ Everything below is implemented and covered by passing tests — not aspirationa
 - **`damping mcp wrap -- <server-command>`** — the V1 thin MCP adapter (`cli/adapter/mcp`), a real client+server pair built on the official Go SDK: it discovers the wrapped server's tools, re-exposes them unchanged, and runs every tool call through the exact same `core/policy` engine and `core/audit` log the CLI hook uses, before forwarding an allowed call to the real subprocess. Verified end-to-end both with the SDK's in-memory test transports (`wrap_test.go`) and manually against real OS subprocesses (a real MCP client → `damping mcp wrap` → a real wrapped server, three separate processes). No OAuth, no confused-deputy defense — that's Phase 3.
 - **Shell danger detection** (`cli/shell`) — real `mvdan.cc/sh/v3` AST parsing (`parser.go`), Facts extraction (`facts.go`), and an explicit semantic layer for what AST parsing alone doesn't catch (`literal.go` + rule matchers): known aliases, base64-pipe-to-shell structural patterns, `/proc` sandbox-bypass path literals, dynamically-constructed command names, and writes redirected into protected paths. See `docs/threat-model.md` §3.
 - **BDD scenarios that actually run** — `features/dangerous_command.feature`'s 20 scenarios execute for real via `godog` (`cli/bdd`), not just as documentation. The remaining `features/*.feature` files have equivalent behavior covered as plain Go tests in `cli/cmd`, `core/policy`, `core/audit`, and `cli/adapter/mcp`.
+- **OPA/Rego policy engine (Phase 3)** — every rule above also has an embedded OPA/Rego implementation (`core/policy/policy.rego` + `opa.go`), selectable per-deployment via `policy.yaml`'s `engine: opa` field instead of the Go-native default. `core/policy/opa_equivalence_test.go` proves both engines return byte-identical decisions for every rule; `opa_bench_test.go` gates eval latency at sub-millisecond. See `docs/architecture.md` §4.
 
 ## What's designed but not yet built
 
@@ -75,7 +76,7 @@ Documented in detail (schema, CLI surface, UX copy) so implementing it is a matt
 - **Always-allow/deny persistence for MCP tool calls** — the CLI hook persists `[A]`/`[D]` choices into the policy file; `damping mcp wrap`'s prompt currently resolves each call fresh every time (see the note in `cli/adapter/mcp/wrap.go`'s `resolvePrompt`).
 - **Windows interactive prompt** — the `/dev/tty` approach is Unix-only; `cli/ui/tty_windows.go` currently falls back to deny-by-default and documents the gap rather than faking support.
 - **`damping log --follow`** — documented as a future tail-f-style live stream; `damping log` currently always reads one snapshot of the file and exits.
-- **Phase 3+**: the full MCPWarden Gateway (OAuth 2.1, confused-deputy defense, OPA/Rego), the Cloudflare-based team dashboard, and the on-prem enterprise/compliance tier. See `docs/00-統一開發計畫（定案版）.md` §五 for the phased roadmap and `docs/ux-dashboard-spec.md` for that UI's design.
+- **Phase 3+**: the full MCPWarden Gateway (OAuth 2.1, confused-deputy defense — the OPA/Rego policy engine itself is already implemented, see above), the Cloudflare-based team dashboard, and the on-prem enterprise/compliance tier. See `docs/00-統一開發計畫（定案版）.md` §五 for the phased roadmap and `docs/ux-dashboard-spec.md` for that UI's design.
 
 ## Repository map
 

@@ -84,7 +84,11 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 		logDegraded(cmd, writer, hasAuditSink, in.SessionID, "claude-code", "loading policy: "+err.Error())
 		return nil
 	}
-	engine := policy.New(cfg)
+	engine, err := policy.NewEvaluator(cmd.Context(), cfg)
+	if err != nil {
+		logDegraded(cmd, writer, hasAuditSink, in.SessionID, "claude-code", "constructing policy engine: "+err.Error())
+		return nil
+	}
 
 	d, err := hookadapter.EvaluateCommand(in.ToolInput.Command, engine)
 	if err != nil {

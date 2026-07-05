@@ -1,8 +1,16 @@
 # Damping default policy — installed to ~/.damping/policy.yaml by `damping init`.
-# Schema documented in docs/cli-reference.md §13. The matcher for each rule id
-# is hardcoded Go in core/policy/rules.go for V1 (see docs/architecture.md §4
-# on why: OPA/Rego arrives in Phase 3). This file controls which rules are
-# active and at what risk/action — not the matching grammar itself.
+# Schema documented in docs/cli-reference.md §13. This file controls which
+# rules are active and at what risk/action — not the matching grammar itself.
+#
+# The matching grammar has two interchangeable implementations, selected by
+# the optional "engine" field below (defaults to "native" when omitted):
+#   - native (default): hardcoded Go in core/policy/rules.go. Zero extra
+#     dependencies — the right choice for the individual-tier CLI.
+#   - opa: embedded OPA/Rego (core/policy/policy.rego). Real policy-as-code,
+#     suited to Phase 3's Gateway/enterprise deployments — see
+#     docs/architecture.md §4. Both produce identical decisions for every
+#     rule id below; core/policy/opa_equivalence_test.go proves it.
+# engine: native
 version: 1
 
 protected_paths:

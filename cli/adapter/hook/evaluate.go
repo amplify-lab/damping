@@ -23,7 +23,7 @@ var verdictRank = map[decision.Verdict]int{
 // line anywhere is treated as dangerous overall. This is the shared
 // evaluation path used by both `damping policy test` (dry run) and the real
 // `damping hook pretooluse` entrypoint.
-func EvaluateCommand(raw string, engine *policy.Engine) (decision.Decision, error) {
+func EvaluateCommand(raw string, engine policy.Evaluator) (decision.Decision, error) {
 	facts, err := shell.Analyze(raw)
 	if err != nil {
 		return decision.Decision{}, err
