@@ -45,6 +45,12 @@ Feature: MCP tool-call governance (V1 thin adapter)
     # the same on-disk persistence makes "always" true within this session
     # too, not only for a hypothetical future "damping mcp wrap" run.
 
+  Scenario: An "always deny" choice for an MCP tool call is honored for the rest of the session
+    Given the agent calls MCP tool "filesystem.delete_all" with args {"path":"/data"}
+    And the user chooses "Always deny this exact command" at the confirmation prompt
+    When the agent calls MCP tool "filesystem.delete_all" with args {"path":"/data"} again, in the same "damping mcp wrap" session
+    Then Damping should deny the second call immediately, without prompting again
+
   Scenario: CLI and MCP events land in the same audit log
     Given the agent has just triggered a CLI interception for "rm -rf ~/"
     And the agent has just triggered an MCP interception for "database.delete_record"

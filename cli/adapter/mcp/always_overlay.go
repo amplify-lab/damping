@@ -18,6 +18,16 @@ import (
 // what "always" means to someone answering the prompt right now. Patterns
 // are matched by exact value only (never a wildcard), matching how
 // AppendAlwaysPattern itself persists — see its doc comment.
+//
+// Caveat inherited from that same exact-match design (not introduced here):
+// the matched value is facts.Raw, the tool name plus its raw JSON argument
+// bytes (see rawCallSummary in facts.go). Two calls a human would consider
+// "the exact same call" only match if the calling MCP client serializes
+// those arguments identically byte-for-byte every time — a client that
+// varies key order, whitespace, or number formatting across otherwise
+// logically-identical calls would defeat both this overlay and the on-disk
+// pattern equally. Damping's own code introduces no such variance (it
+// passes through req.Params.Arguments, the raw wire bytes, untouched).
 type alwaysOverlay struct {
 	mu    sync.Mutex
 	allow map[string]bool

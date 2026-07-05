@@ -196,6 +196,21 @@ func resolvePrompt(policyPath string, overlay *alwaysOverlay, raw string, d deci
 	ttyPromptMu.Lock()
 	defer ttyPromptMu.Unlock()
 
+	// Re-check overlay now that this goroutine actually holds the lock: two
+	// concurrent calls for the exact same not-yet-decided raw both miss the
+	// caller's pre-lock overlay check and both reach here, serialized by
+	// ttyPromptMu — without this second check, the loser would re-prompt a
+	// human for a call the winner (just ahead of it) already just resolved,
+	// and could even persist a contradictory answer for the same raw string
+	// into both always_allow and always_deny. Found via adversarial review,
+	// not a test failure — go test -race stays clean either way, since this
+	// was a race-free but logically wrong sequencing, not a data race.
+	if v, ok := overlay.verdict(raw); ok {
+		d.Resolve(v)
+		d.Reason = "matched an always-" + string(v) + " pattern set earlier this session"
+		return d
+	}
+
 	prompter, closeTTY, err := newTTYPrompter()
 	if err != nil {
 		d.Resolve(decision.Deny)
