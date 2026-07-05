@@ -1,0 +1,92 @@
+# GoReleaser config for the `damping` binary (cli/) — see docs/開發計畫.md
+# §1.4 ("Phase 1就要做到最方便": Homebrew, a one-line install script, and
+# GitHub Releases binaries for every platform) and README.md's Quick Start,
+# which already advertises `brew install damping` and
+# `curl -sSL https://damping.dev/install | sh` as the expected UX.
+#
+# core/ is not built or released independently — it's a library dependency
+# of cli/, never installed on its own (see docs/architecture.md §1).
+#
+# github.owner/brews.repository.owner and the damping.dev URLs below use the
+# same placeholder org/domain already used throughout README.md and
+# docs/00-統一開發計畫（定案版）.md, pending Tim's own confirmation/
+# registration of both (see that doc's "立即可執行的下一步" item 1) — this
+# file is real, working release tooling ready to activate the moment those
+# are confirmed, not a guess at unconfirmed infrastructure.
+#
+# Test locally without any real GitHub token or tap repo access:
+#   goreleaser release --snapshot --clean --skip=publish
+version: 2
+
+project_name: damping
+
+before:
+  hooks:
+    - sh -c "cd cli && go mod tidy"
+
+builds:
+  - id: damping
+    dir: cli
+    main: .
+    binary: damping
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # Windows/arm64 is not a supported target yet — cli/ui's TTY prompter
+      # only has a Unix implementation plus a documented Windows stub that
+      # falls back to deny-by-default (see README.md's "designed but not
+      # yet built" list), so this isn't a real platform to ship for now.
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w -X github.com/amplify-lab/damping/cli/cmd.Version={{.Version}}
+
+archives:
+  - id: damping
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+
+release:
+  github:
+    owner: amplify-lab
+    name: damping
+
+brews:
+  - name: damping
+    repository:
+      owner: amplify-lab
+      name: homebrew-tap
+    directory: Formula
+    homepage: "https://damping.dev"
+    description: "One policy, one audit trail — across your terminal and your MCP servers."
+    license: "Apache-2.0"
+    install: |
+      bin.install "damping"
+    test: |
+      system "#{bin}/damping", "version"

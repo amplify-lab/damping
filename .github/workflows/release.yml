@@ -1,0 +1,43 @@
+name: Release
+
+# Builds cross-platform damping binaries, publishes a GitHub Release, and
+# updates the Homebrew tap formula — see .goreleaser.yaml and
+# docs/開發計畫.md §1.4. Triggered by pushing a version tag (v1.2.3), never
+# on every push to main, since a release is a deliberate, human-initiated
+# act.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # GoReleaser needs full history for the changelog
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The default GITHUB_TOKEN above is scoped only to this repo, so
+          # it can create this repo's release but cannot push a formula
+          # update to the separate amplify-lab/homebrew-tap repo the
+          # `brews:` publisher in .goreleaser.yaml targets. That needs a
+          # PAT (repo scope on the tap repo) or GitHub App token, stored as
+          # this repo secret — not yet configured (see
+          # docs/00-統一開發計畫（定案版）.md "立即可執行的下一步", which
+          # blocks the real amplify-lab org/homebrew-tap repo on Tim's own
+          # confirmation). The GitHub Release itself still succeeds without
+          # it; only the Homebrew formula update step fails.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
