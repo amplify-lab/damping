@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,9 @@ import (
 
 	"github.com/amplify-lab/damping/cli/paths"
 	"github.com/amplify-lab/damping/cli/ui"
+	"github.com/amplify-lab/damping/core/audit"
+	"github.com/amplify-lab/damping/core/decision"
+	"github.com/amplify-lab/damping/core/event"
 )
 
 // setupTestEnv points every damping path at fresh temp directories so tests
@@ -42,6 +46,23 @@ func run(t *testing.T, stdin string, args ...string) (stdout, stderr string, err
 	root.SetIn(strings.NewReader(stdin))
 	root.SetArgs(args)
 	err = root.Execute()
+	return outBuf.String(), errBuf.String(), err
+}
+
+// runWithContext is run's variant for commands that read cmd.Context() to
+// know when to stop — currently only `damping log --follow`. The returned
+// strings are only safe to read once the caller observes this function has
+// returned (e.g. via a channel), since outBuf/errBuf are written to for as
+// long as root.ExecuteContext(ctx) is still running.
+func runWithContext(t *testing.T, ctx context.Context, stdin string, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	root := NewRootCmd()
+	var outBuf, errBuf bytes.Buffer
+	root.SetOut(&outBuf)
+	root.SetErr(&errBuf)
+	root.SetIn(strings.NewReader(stdin))
+	root.SetArgs(args)
+	err = root.ExecuteContext(ctx)
 	return outBuf.String(), errBuf.String(), err
 }
 
@@ -610,6 +631,141 @@ func TestLog_LimitShowsOnlyMostRecent(t *testing.T) {
 	}
 	if !strings.Contains(out, "two") || !strings.Contains(out, "three") || strings.Contains(out, "one") {
 		t.Fatalf("expected --limit 2 to keep the 2 most recent events, got:\n%s", out)
+	}
+}
+
+// TestLog_FollowPrintsExistingThenNewEvents is the end-to-end BDD scenario
+// for `damping log --follow`: existing matching events print immediately,
+// and an event appended while --follow is still running shows up without
+// restarting the command — see features/audit_log.feature.
+func TestLog_FollowPrintsExistingThenNewEvents(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	origInterval := logFollowPollInterval
+	logFollowPollInterval = 5 * time.Millisecond
+	t.Cleanup(func() { logFollowPollInterval = origInterval })
+
+	existingStdin := `{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"/proc/self/root/existing rm -rf /"}}`
+	if _, _, err := run(t, existingStdin, "hook", "pretooluse"); !isExitCodeError(err, new(*ExitCodeError)) {
+		t.Fatalf("expected the pre-existing event's hook call to hard-deny, got %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	type followResult struct {
+		stdout, stderr string
+		err            error
+	}
+	resultCh := make(chan followResult, 1)
+	go func() {
+		stdout, stderr, err := runWithContext(t, ctx, "", "log", "--follow")
+		resultCh <- followResult{stdout, stderr, err}
+	}()
+
+	// Give --follow time to print the existing event and start polling
+	// before the new one is appended. Appended directly via audit.Writer
+	// rather than another run(t, ..., "hook", "pretooluse") call: NewRootCmd
+	// registers --config against root.go's package-level configFlag var, so
+	// a second concurrent NewRootCmd() call from this goroutine while the
+	// follow goroutine's own NewRootCmd() call is in flight is racy — a
+	// pre-existing test-harness limitation unrelated to what this test
+	// actually exercises.
+	time.Sleep(50 * time.Millisecond)
+
+	auditPath, err := paths.Audit()
+	if err != nil {
+		t.Fatalf("resolving audit path: %v", err)
+	}
+	newEvent := event.New(event.NewID(), "s1", "claude-code", event.ChannelCLI, event.ActionShellExec,
+		"/proc/self/root/newone rm -rf /", "/proc/self/root/newone rm -rf /",
+		decision.Decision{Verdict: decision.Deny, PolicyID: "destructive.proc_sandbox_bypass"})
+	if err := audit.NewWriter(auditPath).Append(newEvent); err != nil {
+		t.Fatalf("appending new event: %v", err)
+	}
+
+	// Give the poll loop time to pick up the new append before stopping.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	var res followResult
+	select {
+	case res = <-resultCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for `damping log --follow` to stop after context cancellation")
+	}
+	if res.err != nil {
+		t.Fatalf("log --follow: %v (stderr: %s)", res.err, res.stderr)
+	}
+	// On stderr, not stdout — so --json mode's stdout stays pure
+	// newline-delimited JSON, safe to pipe into jq or a script.
+	if !strings.Contains(res.stderr, "Watching for new events") {
+		t.Fatalf("expected the follow-mode notice on stderr, got:\n%s", res.stderr)
+	}
+	if !strings.Contains(res.stdout, "existing") {
+		t.Fatalf("expected the pre-existing event in the initial batch, got:\n%s", res.stdout)
+	}
+	if !strings.Contains(res.stdout, "newone") {
+		t.Fatalf("expected the newly appended event to show up via --follow, got:\n%s", res.stdout)
+	}
+}
+
+// TestLog_FollowJSONKeepsStdoutPureNDJSON is a regression test found via
+// manual UX testing of the real built binary: the "Watching for new
+// events..." notice was originally written to stdout, which — in --json
+// mode — corrupted what's supposed to be a clean newline-delimited JSON
+// stream, breaking a `damping log --follow --json | jq` pipeline. Every
+// non-empty stdout line in --json mode must parse as JSON.
+func TestLog_FollowJSONKeepsStdoutPureNDJSON(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	origInterval := logFollowPollInterval
+	logFollowPollInterval = 5 * time.Millisecond
+	t.Cleanup(func() { logFollowPollInterval = origInterval })
+
+	existingStdin := `{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"/proc/self/root/existing rm -rf /"}}`
+	if _, _, err := run(t, existingStdin, "hook", "pretooluse"); !isExitCodeError(err, new(*ExitCodeError)) {
+		t.Fatalf("expected the pre-existing event's hook call to hard-deny, got %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	type followResult struct {
+		stdout, stderr string
+		err            error
+	}
+	resultCh := make(chan followResult, 1)
+	go func() {
+		stdout, stderr, err := runWithContext(t, ctx, "", "log", "--follow", "--json")
+		resultCh <- followResult{stdout, stderr, err}
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	var res followResult
+	select {
+	case res = <-resultCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for `damping log --follow --json` to stop")
+	}
+	if res.err != nil {
+		t.Fatalf("log --follow --json: %v (stderr: %s)", res.err, res.stderr)
+	}
+	if !strings.Contains(res.stderr, "Watching for new events") {
+		t.Fatalf("expected the follow-mode notice on stderr, got:\n%s", res.stderr)
+	}
+	for _, line := range strings.Split(strings.TrimRight(res.stdout, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		var v map[string]any
+		if err := json.Unmarshal([]byte(line), &v); err != nil {
+			t.Fatalf("expected every stdout line in --json mode to be valid JSON, got invalid line %q: %v", line, err)
+		}
 	}
 }
 

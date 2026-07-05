@@ -3,6 +3,8 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -11,6 +13,13 @@ import (
 	"github.com/amplify-lab/damping/core/audit"
 	"github.com/amplify-lab/damping/core/event"
 )
+
+// logFollowPollInterval is how often `damping log --follow` checks the
+// audit file for new lines. See core/audit.Follow's doc comment for why
+// this is a poll rather than a filesystem-event API. A package-level var,
+// not a const, so tests can shorten it instead of waiting on the real
+// interval — the same pattern cli/cmd/hook.go's newTTYPrompter var uses.
+var logFollowPollInterval = 500 * time.Millisecond
 
 func newLogCmd() *cobra.Command {
 	var (
@@ -21,6 +30,7 @@ func newLogCmd() *cobra.Command {
 		since   string
 		asJSON  bool
 		limit   int
+		follow  bool
 	)
 	c := &cobra.Command{
 		Use:   "log",
@@ -30,14 +40,46 @@ func newLogCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			events, err := readFilteredEvents(f)
+
+			auditPath, err := paths.Audit()
+			if err != nil {
+				return err
+			}
+			// Captured before reading existing events (not after), so a
+			// record appended in between lands on the "already shown" side
+			// of the boundary at worst — a harmless rare duplicate — rather
+			// than falling in a gap Follow would never pick up either. See
+			// core/audit.Follow's doc comment.
+			var startOffset int64
+			if info, statErr := os.Stat(auditPath); statErr == nil {
+				startOffset = info.Size()
+			} else if !os.IsNotExist(statErr) {
+				return statErr
+			}
+
+			events, err := audit.ReadAll(auditPath, f)
 			if err != nil {
 				return err
 			}
 			if limit > 0 && len(events) > limit {
 				events = events[len(events)-limit:]
 			}
-			return printEvents(cmd, events, asJSON)
+			if err := printEvents(cmd, events, asJSON); err != nil {
+				return err
+			}
+			if !follow {
+				return nil
+			}
+
+			// Stderr, not stdout — in --json mode stdout must stay pure
+			// newline-delimited JSON so it's safe to pipe into jq or a
+			// script; a human watching the terminal still sees this on
+			// stderr, which normally shares the same terminal as stdout.
+			fmt.Fprintln(cmd.ErrOrStderr(), "Watching for new events... (Ctrl+C to stop)")
+			w := cmd.OutOrStdout()
+			return audit.Follow(cmd.Context(), auditPath, startOffset, f, logFollowPollInterval, func(e event.ActionEvent) error {
+				return printEvent(w, e, asJSON)
+			})
 		},
 	}
 	c.Flags().StringVar(&channel, "channel", "", "filter by channel (cli|mcp)")
@@ -47,6 +89,7 @@ func newLogCmd() *cobra.Command {
 	c.Flags().StringVar(&since, "since", "", "only show events newer than this duration ago (e.g. 24h)")
 	c.Flags().BoolVar(&asJSON, "json", false, "output newline-delimited JSON instead of a table")
 	c.Flags().IntVar(&limit, "limit", 0, "show at most N most-recent events (0 = no limit)")
+	c.Flags().BoolVar(&follow, "follow", false, "keep watching for new events after printing existing ones (like tail -f); Ctrl+C to stop")
 	c.AddCommand(newLogShowCmd())
 	return c
 }
@@ -105,23 +148,29 @@ func printEvents(cmd *cobra.Command, events []event.ActionEvent, asJSON bool) er
 		return nil
 	}
 
-	if asJSON {
-		enc := json.NewEncoder(w)
-		for _, e := range events {
-			if err := enc.Encode(e); err != nil {
-				return err
-			}
-		}
-		return nil
+	if !asJSON {
+		fmt.Fprintf(w, "%-20s %-7s %-14s %-30s %-8s %s\n", "TIME", "CHANNEL", "ACTOR", "TARGET", "RISK", "DECISION")
 	}
-
-	fmt.Fprintf(w, "%-20s %-7s %-14s %-30s %-8s %s\n", "TIME", "CHANNEL", "ACTOR", "TARGET", "RISK", "DECISION")
 	for _, e := range events {
-		fmt.Fprintf(w, "%-20s %-7s %-14s %-30s %-8s %s\n",
-			e.Timestamp.Format("2006-01-02 15:04:05"),
-			e.Channel, e.Actor, truncate(e.Target, 30), e.RiskLevel, e.Decision.Outcome())
+		if err := printEvent(w, e, asJSON); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// printEvent renders a single event — the shared primitive both the
+// initial batch (printEvents, one call per event, no repeated header) and
+// `damping log --follow`'s live stream (one call per newly appended event)
+// go through, so the two never render an event differently.
+func printEvent(w io.Writer, e event.ActionEvent, asJSON bool) error {
+	if asJSON {
+		return json.NewEncoder(w).Encode(e)
+	}
+	_, err := fmt.Fprintf(w, "%-20s %-7s %-14s %-30s %-8s %s\n",
+		e.Timestamp.Format("2006-01-02 15:04:05"),
+		e.Channel, e.Actor, truncate(e.Target, 30), e.RiskLevel, e.Decision.Outcome())
+	return err
 }
 
 func truncate(s string, n int) string {

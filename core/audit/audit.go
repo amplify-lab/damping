@@ -8,8 +8,11 @@ package audit
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -131,6 +134,118 @@ func ReadAll(path string, f Filter) ([]event.ActionEvent, error) {
 		return out, fmt.Errorf("audit: reading %s: %w", path, err)
 	}
 	return out, nil
+}
+
+// Follow tails path starting at startOffset (typically the file's size at
+// the moment the caller finished an initial ReadAll, so nothing already
+// shown is repeated and nothing appended in between is missed — see
+// `damping log --follow` in cli/cmd/log.go), calling fn for each new
+// ActionEvent matching f as it's appended. It blocks until ctx is
+// cancelled, returning nil, or fn returns an error, which stops the tail
+// immediately.
+//
+// Follow polls rather than using a filesystem-event API (inotify/kqueue/
+// ReadDirectoryChangesW) to stay dependency-free and portable across every
+// platform Damping ships on; pollInterval trades responsiveness against
+// wakeups. Rotate renaming the file away and a fresh, smaller-or-not file
+// appearing at the same path is treated as "start over from the top of the
+// current file" — detected via file identity (os.SameFile), not just a
+// size check, since the new file isn't guaranteed to be smaller than the
+// old offset (a later event's JSON encoding can easily be longer than an
+// earlier one's).
+func Follow(ctx context.Context, path string, startOffset int64, f Filter, pollInterval time.Duration, fn func(event.ActionEvent) error) error {
+	offset := startOffset
+	var lastInfo os.FileInfo
+	fileWasMissing := false
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+
+		info, err := os.Stat(path)
+		if os.IsNotExist(err) {
+			// The file may reappear at this path (Rotate renames it away,
+			// the next Append recreates it fresh) — remember that we've
+			// lost track of it so whatever shows up next is read from the
+			// top, never seeked into using a now-meaningless offset.
+			lastInfo = nil
+			fileWasMissing = true
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("audit: stat %s: %w", path, err)
+		}
+
+		switch {
+		case fileWasMissing:
+			offset = 0 // it just reappeared — everything in it now is new to us
+		case lastInfo != nil && !os.SameFile(lastInfo, info):
+			offset = 0 // a different file now lives at this path (e.g. Rotate)
+		case info.Size() < offset:
+			offset = 0 // same file but shrank somehow — start over defensively
+		}
+		fileWasMissing = false
+		lastInfo = info
+
+		if info.Size() == offset {
+			continue // nothing new this poll
+		}
+
+		newOffset, err := followFrom(path, offset, f, fn)
+		if err != nil {
+			return err
+		}
+		offset = newOffset
+	}
+}
+
+// followFrom reads only complete (newline-terminated) records appended
+// after offset, returning the offset just past the last complete record it
+// consumed. A trailing partial line — Append never leaves one on disk once
+// its single Write call returns, but a poll could in principle land mid-
+// write — is left unread, so the next poll picks it up once it's complete
+// rather than risking a truncated JSON parse.
+func followFrom(path string, offset int64, f Filter, fn func(event.ActionEvent) error) (int64, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return offset, fmt.Errorf("audit: opening %s: %w", path, err)
+	}
+	defer file.Close()
+
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return offset, fmt.Errorf("audit: seeking %s: %w", path, err)
+	}
+
+	pos := offset
+	reader := bufio.NewReaderSize(file, 64*1024)
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if len(line) > 0 && line[len(line)-1] == '\n' {
+			pos += int64(len(line))
+			if trimmed := bytes.TrimSpace(line); len(trimmed) > 0 {
+				var e event.ActionEvent
+				if err := json.Unmarshal(trimmed, &e); err != nil {
+					return pos, fmt.Errorf("audit: %s: malformed record while following: %w", path, err)
+				}
+				if f.Matches(e) {
+					if err := fn(e); err != nil {
+						return pos, err
+					}
+				}
+			}
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				return pos, nil
+			}
+			return pos, fmt.Errorf("audit: reading %s: %w", path, readErr)
+		}
+	}
 }
 
 // Rotate renames the audit file to a timestamped sibling once it exceeds
