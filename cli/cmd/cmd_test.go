@@ -806,6 +806,39 @@ func TestLog_JSONEmptyResultsNoticeGoesToStderr(t *testing.T) {
 	}
 }
 
+// TestLog_TableMarksDegradedEvents is a regression test for a real UX gap
+// found via manually walking through the actual built binary's first-run
+// experience: `damping doctor` clearly warns about degraded events, but a
+// degraded event's Outcome() is still a plain "allow" (Degraded is a
+// separate flag, not its own verdict), so `damping log`'s default table —
+// the more natural first place a human would look — rendered it
+// identically to a genuine policy allow, with no visual hint at all unless
+// you already knew to pass --json or --outcome degraded.
+func TestLog_TableMarksDegradedEvents(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	auditPath, err := paths.Audit()
+	if err != nil {
+		t.Fatalf("resolving audit path: %v", err)
+	}
+	degraded := event.New(event.NewID(), "s1", "claude-code", event.ChannelCLI, event.ActionShellExec,
+		"", "", decision.Decision{Verdict: decision.Allow, Degraded: true, Reason: "simulated internal failure"})
+	if err := audit.NewWriter(auditPath).Append(degraded); err != nil {
+		t.Fatalf("appending degraded event: %v", err)
+	}
+
+	out, _, err := run(t, "", "log")
+	if err != nil {
+		t.Fatalf("log: %v", err)
+	}
+	if !strings.Contains(out, "allow (degraded)") {
+		t.Fatalf("expected the degraded event's row to be visually marked in the plain-table view, got:\n%s", out)
+	}
+}
+
 func TestLog_ShowPrintsFullEvent(t *testing.T) {
 	setupTestEnv(t)
 	if _, _, err := run(t, "", "init"); err != nil {
