@@ -20,7 +20,7 @@ import (
 
 	"github.com/cucumber/godog"
 
-	"github.com/amplify-lab/damping/cli/cmd"
+	"github.com/amplify-lab/damping/cli/enforcement"
 	"github.com/amplify-lab/damping/cli/paths"
 	"github.com/amplify-lab/damping/cli/shell"
 	"github.com/amplify-lab/damping/core/audit"
@@ -165,7 +165,7 @@ func TestFeatures_SelfProtection(t *testing.T) {
 				return nil
 			})
 			sc.Given(`^Damping is enabled$`, func() error {
-				disabled, err := cmd.IsDisabled()
+				disabled, err := enforcement.IsDisabled()
 				if err != nil {
 					return err
 				}
@@ -181,7 +181,7 @@ func TestFeatures_SelfProtection(t *testing.T) {
 			sc.When(`^a human runs "damping off --for 30m"$`, func() error { return w.run("", "off", "--for", "30m") })
 
 			sc.Then(`^Damping enforcement should stop$`, func() error {
-				disabled, err := cmd.IsDisabled()
+				disabled, err := enforcement.IsDisabled()
 				if err != nil {
 					return err
 				}
@@ -207,7 +207,7 @@ func TestFeatures_SelfProtection(t *testing.T) {
 				return nil
 			})
 			sc.Then(`^Damping enforcement should stop for 30 minutes$`, func() error {
-				disabled, err := cmd.IsDisabled()
+				disabled, err := enforcement.IsDisabled()
 				if err != nil {
 					return err
 				}
@@ -228,7 +228,7 @@ func TestFeatures_SelfProtection(t *testing.T) {
 				return nil
 			})
 			sc.Then(`^Damping should automatically re-enable itself afterward without further input$`, func() error {
-				// The mechanism is cmd.IsDisabled()'s own time.Now()-vs-"until"
+				// The mechanism is enforcement.IsDisabled()'s own time.Now()-vs-"until"
 				// comparison (see cli/cmd/onoff.go), already exercised by the
 				// step above via the marker file it just wrote — waiting out a
 				// real 30-minute duration in a test isn't practical, and this

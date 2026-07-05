@@ -60,3 +60,26 @@ func DoctorState() (string, error) {
 	}
 	return filepath.Join(h, "doctor-state.json"), nil
 }
+
+// ClaudeSettings returns where Claude Code's own hook config lives —
+// $DAMPING_CLAUDE_SETTINGS if set (tests use this to point at a throwaway
+// file), else the real ~/.claude/settings.json. Unlike the paths above this
+// isn't under Home()/$DAMPING_HOME: it's a different tool's config file that
+// damping only ever reads or edits, never owns.
+func ClaudeSettings() string {
+	if v := os.Getenv("DAMPING_CLAUDE_SETTINGS"); v != "" {
+		return v
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".claude", "settings.json")
+}
+
+// CursorHooks returns where Cursor's own hook config lives — see
+// ClaudeSettings's doc comment, same reasoning with $DAMPING_CURSOR_HOOKS.
+func CursorHooks() string {
+	if v := os.Getenv("DAMPING_CURSOR_HOOKS"); v != "" {
+		return v
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".cursor", "hooks.json")
+}

@@ -7,6 +7,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/amplify-lab/damping/cli/adapter/agent"
+	"github.com/amplify-lab/damping/cli/enforcement"
+	"github.com/amplify-lab/damping/cli/paths"
 	"github.com/amplify-lab/damping/core/policy"
 )
 
@@ -17,7 +19,7 @@ func newStatusCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			w := cmd.OutOrStdout()
 
-			disabled, err := IsDisabled()
+			disabled, err := enforcement.IsDisabled()
 			if err != nil {
 				return err
 			}
@@ -64,10 +66,10 @@ func newStatusCmd() *cobra.Command {
 			// loaded — a machine that never ran `damping init` still
 			// deserves to see "no agents registered", not nothing at all.
 			var agents []string
-			if has, err := agent.HasClaudeCodeHook(claudeSettingsPath()); err == nil && has {
+			if has, err := agent.HasClaudeCodeHook(paths.ClaudeSettings()); err == nil && has {
 				agents = append(agents, "claude-code (active)")
 			}
-			if has, err := agent.HasCursorHook(cursorHooksPath()); err == nil && has {
+			if has, err := agent.HasCursorHook(paths.CursorHooks()); err == nil && has {
 				agents = append(agents, "cursor (active)")
 			}
 			if len(agents) == 0 {

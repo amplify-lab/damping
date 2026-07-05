@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -106,35 +105,4 @@ func newOnCmd() *cobra.Command {
 			return nil
 		},
 	}
-}
-
-// IsDisabled reports whether enforcement is currently off, respecting an
-// expired --for duration (auto re-enable) by treating it as already on.
-// Shared by `damping status`, `damping doctor`, and the hook entrypoint.
-func IsDisabled() (bool, error) {
-	marker, err := paths.DisabledMarker()
-	if err != nil {
-		return false, err
-	}
-	data, err := os.ReadFile(marker) // #nosec G304 -- marker is paths.DisabledMarker()'s fixed ~/.damping/disabled path (or $DAMPING_HOME override), not an attacker-influenced path
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-
-	var until time.Time
-	for _, line := range strings.Split(string(data), "\n") {
-		if v, ok := strings.CutPrefix(line, "until="); ok {
-			if t, err := time.Parse(time.RFC3339, v); err == nil {
-				until = t
-			}
-		}
-	}
-	if !until.IsZero() && time.Now().After(until) {
-		_ = os.Remove(marker)
-		return false, nil
-	}
-	return true, nil
 }

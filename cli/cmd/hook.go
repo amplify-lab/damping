@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	hookadapter "github.com/amplify-lab/damping/cli/adapter/hook"
+	"github.com/amplify-lab/damping/cli/enforcement"
 	"github.com/amplify-lab/damping/cli/paths"
 	"github.com/amplify-lab/damping/cli/ui"
 	"github.com/amplify-lab/damping/core/audit"
@@ -70,7 +71,7 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 		return nil // not a shell command; nothing for Damping's V1 CLI adapter to judge
 	}
 
-	if disabled, _ := IsDisabled(); disabled {
+	if disabled, _ := enforcement.IsDisabled(); disabled {
 		return nil // damping off — see docs/cli-reference.md §6
 	}
 
