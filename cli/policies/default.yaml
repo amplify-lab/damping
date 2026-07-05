@@ -61,10 +61,17 @@ rules:
     risk: critical
     action: prompt
 
-  - id: mcp.write_tool_unscoped_identity
-    description: Write-tagged MCP tool called with no bound identity
+  - id: mcp.destructive_tool_call
+    description: MCP tool the server itself declared destructive (ToolAnnotations.DestructiveHint)
     risk: high
     action: prompt
+
+# mcp.write_tool_unscoped_identity is implemented (core/policy/rules.go) but
+# deliberately NOT listed here: the individual tier has no identity system
+# to bind to (ActionEvent.Identity is always empty pre-Phase 5), so this
+# rule would fire on nearly every non-explicitly-read-only MCP tool call —
+# a constant nag, not a useful signal. Phase 5's enterprise policy adds it
+# back once identity binding makes "unscoped" meaningful.
 
 # Populated at runtime by the TTY prompt's "always allow/deny" choice.
 # Hand-editing is fine (that's what `damping policy edit` is for) but these

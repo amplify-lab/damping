@@ -5,13 +5,6 @@
 // see the comment there.
 package agent
 
-import (
-	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
-)
-
 // HookCommand is what damping registers as the hook entrypoint. Kept as a
 // var (not a const) so tests can point it at a build-under-test binary.
 var HookCommand = "damping hook pretooluse"
@@ -84,33 +77,4 @@ func hasClaudeHookEntry(preToolUse []any) bool {
 		}
 	}
 	return false
-}
-
-func readJSONObject(path string) (map[string]any, error) {
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return map[string]any{}, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("agent: reading %s: %w", path, err)
-	}
-	var obj map[string]any
-	if err := json.Unmarshal(data, &obj); err != nil {
-		return nil, fmt.Errorf("agent: parsing %s: %w", path, err)
-	}
-	return obj, nil
-}
-
-func writeJSONObject(path string, obj map[string]any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("agent: creating %s: %w", filepath.Dir(path), err)
-	}
-	data, err := json.MarshalIndent(obj, "", "  ")
-	if err != nil {
-		return fmt.Errorf("agent: encoding %s: %w", path, err)
-	}
-	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
-		return fmt.Errorf("agent: writing %s: %w", path, err)
-	}
-	return nil
 }

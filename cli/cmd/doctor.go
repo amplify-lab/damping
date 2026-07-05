@@ -62,24 +62,30 @@ func newDoctorCmd() *cobra.Command {
 			claudePath := claudeSettingsPath()
 			if hasClaude, err := agent.HasClaudeCodeHook(claudePath); err == nil {
 				next.ClaudeHookFound = hasClaude
-				if prev.ClaudeHookFound && !hasClaude {
+				switch {
+				case prev.ClaudeHookFound && !hasClaude:
 					fmt.Fprintln(w, "  ✗ Claude Code hook missing — was it removed outside `damping off`?")
 					fmt.Fprintln(w, "      → run `damping init --agent claude-code --force` to reinstall")
 					failed++
-				} else if hasClaude {
+				case hasClaude:
 					fmt.Fprintln(w, "  ✓ Claude Code hook registered")
+				default:
+					fmt.Fprintln(w, "  · Claude Code hook not registered — run `damping init` if you use Claude Code")
 				}
 			}
 
 			cursorPath := cursorHooksPath()
 			if hasCursor, err := agent.HasCursorHook(cursorPath); err == nil {
 				next.CursorHookFound = hasCursor
-				if prev.CursorHookFound && !hasCursor {
+				switch {
+				case prev.CursorHookFound && !hasCursor:
 					fmt.Fprintln(w, "  ✗ Cursor hook missing — was it removed outside `damping off`?")
 					fmt.Fprintln(w, "      → run `damping init --agent cursor --force` to reinstall")
 					failed++
-				} else if hasCursor {
+				case hasCursor:
 					fmt.Fprintln(w, "  ✓ Cursor hook registered")
+				default:
+					fmt.Fprintln(w, "  · Cursor hook not registered — run `damping init` if you use Cursor")
 				}
 			}
 

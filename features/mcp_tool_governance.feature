@@ -7,16 +7,32 @@ Feature: MCP tool-call governance (V1 thin adapter)
     Given Damping is running with the default policy
     And the agent's MCP server is launched via "damping mcp wrap"
 
-  Scenario: A write-tagged tool call with no bound identity is intercepted
-    Given the "database.delete_record" tool is tagged as a write tool
-    And the individual tier has no bound identity
-    When the agent calls MCP tool "database.delete_record" with args {"table":"users","id":"*"}
+  Scenario: A tool the server itself declares destructive is intercepted
+    Given the "filesystem.delete_all" tool is annotated with destructiveHint=true
+    When the agent calls MCP tool "filesystem.delete_all" with args {"path":"/data"}
     Then Damping should intercept the call
-    And the matched rule should be "mcp.write_tool_unscoped_identity"
+    And the matched rule should be "mcp.destructive_tool_call"
+    # This is the individual-tier-appropriate MCP rule: it needs no identity
+    # system, since the signal comes from the server's own tool annotation
+    # (MCP's standard ToolAnnotations.DestructiveHint), not from who is calling.
 
   Scenario: A read-only tool call is allowed without interrupting the user
     When the agent calls MCP tool "database.read_record" with args {"table":"users","id":"42"}
     Then Damping should allow the call immediately
+
+  @phase5
+  Scenario: A write-tagged tool call with no bound identity is intercepted (Phase 5 enterprise policy — not active in the V1 individual-tier default)
+    Given the "database.delete_record" tool is tagged as a write tool
+    And an enterprise identity system is bound (unlike the individual tier, which has none)
+    And the calling session has no bound identity
+    When the agent calls MCP tool "database.delete_record" with args {"table":"users","id":"*"}
+    Then Damping should intercept the call
+    And the matched rule should be "mcp.write_tool_unscoped_identity"
+    # NOTE: this rule is implemented (core/policy/rules.go) but deliberately
+    # NOT included in cli/policies/default.yaml's active rule list — with no
+    # identity system in the individual tier, ActionEvent.Identity is always
+    # empty, so this would fire on nearly every non-read-only MCP tool call.
+    # See docs/cli-reference.md §13 and docs/00-統一開發計畫（定案版）.md.
 
   Scenario: CLI and MCP events land in the same audit log
     Given the agent has just triggered a CLI interception for "rm -rf ~/"
