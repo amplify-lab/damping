@@ -1,6 +1,6 @@
 # Damping Infrastructure & Architecture Research Synthesis
 
-*Consolidating four independent research passes: Phase 3 (OAuth/Gateway), Phase 4 (Cloudflare + SSO), Phase 5 (enterprise control plane), Phase 6 (memory-poisoning defense spec). Compiled July 2026, at Tim's request, specifically asking for a neutral, evidence-based assessment rather than confirmation of his own self-hosting-leaning instinct — see [`docs/00-統一開發計畫（定案版）.md`](00-統一開發計畫（定案版）.md) §七 item 7 for how this was requested. Not yet a final decision — a research input for Tim to decide from.*
+*Consolidating four independent research passes: Phase 3 (OAuth/Gateway), Phase 4 (Cloudflare + SSO), Phase 5 (enterprise control plane), Phase 6 (memory-poisoning defense spec). Compiled July 2026, at Tim's request, specifically asking for a neutral, evidence-based assessment rather than confirmation of his own self-hosting-leaning instinct. Not yet a final decision — a research input for Tim to decide from.*
 
 ---
 

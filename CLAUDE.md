@@ -4,7 +4,6 @@ This file is for anyone (human or AI agent) working *on* this codebase. If you'r
 
 ## Read first
 
-- [`docs/00-統一開發計畫（定案版）.md`](docs/00-統一開發計畫（定案版）.md) — the authoritative current plan/roadmap (Traditional Chinese). Re-read it whenever starting a new phase of work; it resolves conflicts with any older planning notes and records what's actually decided.
 - [`docs/architecture.md`](docs/architecture.md) — module layout, the `ActionEvent`/`Decision` schema, why `core/` and `cli/` are split.
 - [`docs/threat-model.md`](docs/threat-model.md) — what Damping defends against, known bypass classes, fail-open vs. fail-closed.
 - [`docs/cli-reference.md`](docs/cli-reference.md) — full command surface, hook contract, policy file schema.
@@ -13,7 +12,6 @@ This file is for anyone (human or AI agent) working *on* this codebase. If you'r
 
 | Path | What |
 | --- | --- |
-| `docs/00-統一開發計畫（定案版）.md` | Start here — current authoritative strategy + roadmap |
 | `docs/architecture.md` | Monorepo layout, module naming, `ActionEvent`/`Decision` schema |
 | `docs/cli-reference.md` | Full `damping` command surface, hook contract, policy file schema |
 | `docs/threat-model.md` | What Damping defends against, known bypass classes, fail-open vs. fail-closed |
