@@ -118,6 +118,36 @@ Feature: Intercept destructive shell commands
     When the agent attempts to execute "echo hello | base64"
     Then Damping should allow the command immediately
 
+  Scenario Outline: Detect encode/decode-into-shell pipelines using primitives other than base64
+    # Regression guard: the rule's own description promises "base64-decode
+    # (or similar encode/decode primitives)", but only "base64" was ever
+    # actually recognized — base32, uudecode, xxd -r, and openssl's decode
+    # subcommands are structurally identical bypasses that used to be
+    # completely invisible.
+    When the agent attempts to execute "<command>"
+    Then Damping should intercept the command
+    And the matched rule should be "destructive.encoded_payload_pipe"
+
+    Examples:
+      | command                                            |
+      | echo cm0gLXJmIC8= \| base32 -d \| sh                |
+      | echo cm0gLXJmIC8= \| uudecode \| sh                 |
+      | echo cm0gLXJmIC8= \| xxd -r -p \| sh                |
+      | echo cm0gLXJmIC8= \| openssl enc -d -base64 \| sh   |
+      | echo cm0gLXJmIC8= \| openssl base64 -d \| bash      |
+
+  Scenario Outline: Allow ambiguous decode-capable tools when no decode flag is present (false-positive guard)
+    # xxd and openssl are multi-purpose (xxd also does a plain hex dump;
+    # openssl has dozens of unrelated subcommands) — only their actual
+    # decode-flag forms should be flagged.
+    When the agent attempts to execute "<command>"
+    Then Damping should allow the command immediately
+
+    Examples:
+      | command                          |
+      | echo hello \| xxd \| sh           |
+      | echo hello \| openssl base64 \| sh |
+
   Scenario: Detect a known /proc sandbox-bypass path
     When the agent attempts to execute "/proc/self/root/usr/bin/npx rm -rf /"
     Then Damping should intercept the command

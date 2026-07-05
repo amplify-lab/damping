@@ -171,8 +171,32 @@ func matchCurlPipeShUnallowlisted(f Facts, cfg Config) bool {
 	return !domainAllowlisted(f.Domain, cfg.AllowlistedInstallDomains)
 }
 
-var decodeCommands = map[string]bool{"base64": true}
+// decodeCommands are decode primitives whose bare command name is
+// unambiguous — the binary's only real-world purpose is decoding, unlike
+// xxd (also used for plain hex dumps) or openssl (dozens of unrelated
+// subcommands), which are matched separately via decodeFlagPatterns below
+// since PipelineCmds only carries command names, not their arguments.
+var decodeCommands = map[string]bool{"base64": true, "base32": true, "uudecode": true}
 var shellOrEvalSinks = map[string]bool{"sh": true, "bash": true, "zsh": true, "eval": true, "source": true}
+
+// decodeFlagPatterns catches decode primitives whose command name alone
+// doesn't tell you whether the call decodes anything — checked against the
+// raw command text directly (PipelineCmds has no per-stage args to inspect),
+// the same "AST position can't see this, so match the textual signal
+// instead" approach matchProcSandboxBypass already uses for /proc paths.
+var decodeFlagPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\bxxd\s+(?:-\S+\s+)*-r\b`),             // xxd -r / xxd -r -p (hex decode; bare xxd only hex-dumps)
+	regexp.MustCompile(`\bopenssl\s+(?:enc|base64)\b.*\s-d\b`), // openssl enc -d / openssl base64 -d
+}
+
+func hasDecodeFlagPattern(raw string) bool {
+	for _, p := range decodeFlagPatterns {
+		if p.MatchString(raw) {
+			return true
+		}
+	}
+	return false
+}
 
 // matchEncodedPayloadPipe flags a pipeline that decodes data and feeds it
 // into a shell, regardless of what the decoded payload actually contains —
@@ -182,7 +206,7 @@ func matchEncodedPayloadPipe(f Facts, _ Config) bool {
 	if !f.IsPipeline {
 		return false
 	}
-	hasDecode := false
+	hasDecode := hasDecodeFlagPattern(f.Raw)
 	for i, c := range f.PipelineCmds {
 		if decodeCommands[c] {
 			hasDecode = true
