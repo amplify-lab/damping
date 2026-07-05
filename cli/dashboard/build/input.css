@@ -1,0 +1,35 @@
+/* Compiled to ../static/dashboard.css (embedded via go:embed, checked into
+   the repo — regenerating this is a dev-time step, not part of `go build`,
+   so the shipped binary and CI never need Node or network access). To
+   regenerate after editing this file or ../static/index.html's markup:
+     curl -sL -o tailwindcss https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-x64
+     chmod +x tailwindcss
+     cd cli/dashboard && ./build/tailwindcss -i build/input.css -o static/dashboard.css --minify
+   (swap the asset name for your platform — darwin-arm64, etc.) */
+@import "tailwindcss";
+
+@layer components {
+  .summary-card { @apply rounded border border-slate-800 bg-slate-900/50 p-3; }
+  .summary-label { @apply text-xs text-slate-500 uppercase tracking-wide; }
+  .summary-value { @apply text-lg font-mono mt-1; }
+
+  .filter-field { @apply flex flex-col gap-1 text-xs text-slate-400; }
+  .filter-field select,
+  .filter-field input[type="text"] { @apply bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-200 text-sm; }
+
+  .badge { @apply inline-block px-1.5 py-0.5 rounded text-xs font-medium; }
+  .badge-low { @apply bg-teal-950 text-teal-300; }
+  .badge-medium { @apply bg-yellow-950 text-yellow-300; }
+  .badge-high { @apply bg-amber-950 text-amber-300; }
+  .badge-critical { @apply bg-red-950 text-red-300; }
+
+  .badge-allow { @apply bg-teal-950 text-teal-300; }
+  .badge-deny { @apply bg-red-950 text-red-300; }
+  .badge-prompt { @apply bg-amber-950 text-amber-300; }
+  .badge-degraded { @apply ring-1 ring-purple-500; }
+
+  .badge-cli { @apply bg-slate-800 text-slate-300; }
+  .badge-mcp { @apply bg-indigo-950 text-indigo-300; }
+
+  .settled-badge { @apply text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400; }
+}

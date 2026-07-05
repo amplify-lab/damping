@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Damping — local dashboard</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M2 8 Q6 2 10 8 T18 8' fill='none' stroke='%23f59e0b' stroke-width='2'/%3E%3Cpath d='M18 8 L30 8' fill='none' stroke='%2314b8a6' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen">
+<header class="border-b border-slate-800 px-4 py-3 flex items-center gap-3">
+  <svg width="28" height="16" viewBox="0 0 32 16" aria-hidden="true"><path d="M2 8 Q6 2 10 8 T18 8" fill="none" stroke="#f59e0b" stroke-width="2"/><path d="M18 8 L30 8" fill="none" stroke="#14b8a6" stroke-width="2"/></svg>
+  <span class="font-mono text-lg tracking-tight">damping</span>
+  <span class="text-slate-500 text-sm">local dashboard — reads ~/.damping/audit.jsonl, nothing leaves this machine</span>
+</header>
+
+<main class="p-4 flex flex-col gap-4 max-w-screen-2xl mx-auto">
+
+  <section id="summary-strip" aria-label="Enforcement summary" class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <div class="summary-card"><div class="summary-label">Enforcement</div><div id="summary-enabled" class="summary-value">…</div></div>
+    <div class="summary-card"><div class="summary-label">Policy</div><div id="summary-policy" class="summary-value">…</div></div>
+    <div class="summary-card"><div class="summary-label">Agents</div><div id="summary-agents" class="summary-value">…</div></div>
+    <div class="summary-card"><div class="summary-label">Degraded (7d)</div><div id="summary-degraded" class="summary-value">…</div></div>
+  </section>
+
+  <div class="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-4">
+
+    <section aria-label="Event stream" class="flex flex-col gap-3 min-w-0">
+      <form id="filter-form" class="flex flex-wrap items-end gap-2" aria-label="Filter events">
+        <label class="filter-field"><span>Channel</span>
+          <select name="channel"><option value="">any</option><option value="cli">cli</option><option value="mcp">mcp</option></select>
+        </label>
+        <label class="filter-field"><span>Risk</span>
+          <select name="risk"><option value="">any</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="critical">critical</option></select>
+        </label>
+        <label class="filter-field"><span>Outcome</span>
+          <select name="outcome"><option value="">any</option><option value="allow">allow</option><option value="deny">deny</option><option value="prompt">prompt</option><option value="degraded">degraded</option></select>
+        </label>
+        <label class="filter-field"><span>Actor</span>
+          <input name="actor" type="text" placeholder="e.g. claude-code" autocomplete="off">
+        </label>
+        <label class="filter-field"><span>Since</span>
+          <select name="since"><option value="">all time</option><option value="1h">1h</option><option value="24h">24h</option><option value="168h">7d</option></select>
+        </label>
+        <label class="filter-field flex-row items-center gap-1.5">
+          <input id="live-toggle" type="checkbox" checked>
+          <span>Live</span>
+        </label>
+        <span id="stream-status" class="text-xs text-slate-500" role="status"></span>
+      </form>
+
+      <div id="events-region" class="rounded border border-slate-800 overflow-x-auto min-h-[8rem]">
+        <table class="w-full text-sm" aria-describedby="events-state">
+          <thead>
+            <tr class="text-left text-slate-400 border-b border-slate-800">
+              <th class="px-3 py-2 font-medium">Time</th>
+              <th class="px-3 py-2 font-medium">Channel</th>
+              <th class="px-3 py-2 font-medium">Actor</th>
+              <th class="px-3 py-2 font-medium">Target</th>
+              <th class="px-3 py-2 font-medium">Risk</th>
+              <th class="px-3 py-2 font-medium">Decision</th>
+            </tr>
+          </thead>
+          <tbody id="events-body"></tbody>
+        </table>
+        <div id="events-state" class="p-6 text-center text-slate-500 text-sm"></div>
+      </div>
+    </section>
+
+    <aside aria-label="Recent sessions" class="flex flex-col gap-2">
+      <h2 class="text-slate-400 text-xs uppercase tracking-wide font-medium">Recent sessions</h2>
+      <div id="sessions-list" class="flex flex-col gap-2"></div>
+    </aside>
+
+  </div>
+</main>
+
+<template id="row-template">
+  <tr class="border-b border-slate-900 last:border-0 hover:bg-slate-900/40">
+    <td class="px-3 py-2 whitespace-nowrap text-slate-400 font-mono text-xs" data-field="time"></td>
+    <td class="px-3 py-2"><span class="badge" data-field="channel"></span></td>
+    <td class="px-3 py-2" data-field="actor"></td>
+    <td class="px-3 py-2 text-slate-300 max-w-xs truncate" data-field="target"></td>
+    <td class="px-3 py-2"><span class="badge" data-field="risk"></span></td>
+    <td class="px-3 py-2"><span class="badge" data-field="decision"></span></td>
+  </tr>
+</template>
+
+<template id="session-template">
+  <div class="rounded border border-slate-800 p-2">
+    <div class="flex items-center justify-between gap-2 text-xs mb-1">
+      <span class="font-mono text-slate-300 truncate" data-field="actor"></span>
+      <span class="settled-badge" data-field="settled"></span>
+    </div>
+    <svg data-field="sparkline" viewBox="0 0 100 24" preserveAspectRatio="none" class="w-full h-6"></svg>
+  </div>
+</template>
+
+<script>
+"use strict";
+
+const RISK_CLASS = { low: "badge-low", medium: "badge-medium", high: "badge-high", critical: "badge-critical" };
+const DECISION_CLASS = { allow: "badge-allow", deny: "badge-deny", prompt: "badge-prompt" };
+const RISK_LABEL = { low: "Low", medium: "Medium", high: "High", critical: "Critical" };
+
+function currentFilterParams() {
+  const form = document.getElementById("filter-form");
+  const params = new URLSearchParams();
+  for (const el of form.elements) {
+    if (!el.name) continue;
+    if (el.type === "checkbox") continue;
+    if (el.value) params.set(el.name, el.value);
+  }
+  return params;
+}
+
+function fmtTime(iso) {
+  const d = new Date(iso);
+  return isNaN(d) ? iso : d.toLocaleString(undefined, { hour12: false });
+}
+
+function decisionLabel(ev) {
+  const outcome = (ev.decision && (ev.decision.resolved_verdict || ev.decision.verdict)) || "";
+  return ev.decision && ev.decision.degraded ? outcome + " (degraded)" : outcome;
+}
+
+function renderRow(ev) {
+  const tpl = document.getElementById("row-template");
+  const row = tpl.content.firstElementChild.cloneNode(true);
+  row.querySelector('[data-field="time"]').textContent = fmtTime(ev.timestamp);
+
+  const channelEl = row.querySelector('[data-field="channel"]');
+  channelEl.textContent = ev.channel;
+  channelEl.classList.add(ev.channel === "mcp" ? "badge-mcp" : "badge-cli");
+
+  row.querySelector('[data-field="actor"]').textContent = ev.actor;
+  row.querySelector('[data-field="target"]').textContent = ev.target;
+  row.querySelector('[data-field="target"]').title = ev.target;
+
+  const risk = ev.risk_level || "low";
+  const riskEl = row.querySelector('[data-field="risk"]');
+  riskEl.textContent = RISK_LABEL[risk] || risk;
+  riskEl.classList.add(RISK_CLASS[risk] || "badge-low");
+
+  const outcome = (ev.decision && (ev.decision.resolved_verdict || ev.decision.verdict)) || "allow";
+  const decisionEl = row.querySelector('[data-field="decision"]');
+  decisionEl.textContent = decisionLabel(ev);
+  decisionEl.classList.add(DECISION_CLASS[outcome] || "badge-allow");
+  if (ev.decision && ev.decision.degraded) decisionEl.classList.add("badge-degraded");
+
+  return row;
+}
+
+let currentEvents = [];
+
+function renderEvents(events) {
+  currentEvents = events;
+  const body = document.getElementById("events-body");
+  const state = document.getElementById("events-state");
+  body.textContent = "";
+  if (events.length === 0) {
+    state.textContent = "No activity yet — nothing to dampen.";
+    state.classList.remove("hidden");
+    return;
+  }
+  state.classList.add("hidden");
+  // Most recent first.
+  for (let i = events.length - 1; i >= 0; i--) body.appendChild(renderRow(events[i]));
+}
+
+function prependEvent(ev) {
+  const f = currentFilterParams();
+  if (f.get("channel") && ev.channel !== f.get("channel")) return;
+  if (f.get("risk") && ev.risk_level !== f.get("risk")) return;
+  if (f.get("actor") && ev.actor !== f.get("actor")) return;
+  currentEvents.push(ev);
+  const body = document.getElementById("events-body");
+  document.getElementById("events-state").classList.add("hidden");
+  body.insertBefore(renderRow(ev), body.firstChild);
+}
+
+async function loadSummary() {
+  const el = {
+    enabled: document.getElementById("summary-enabled"),
+    policy: document.getElementById("summary-policy"),
+    agents: document.getElementById("summary-agents"),
+    degraded: document.getElementById("summary-degraded"),
+  };
+  try {
+    const res = await fetch("/api/summary");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const s = await res.json();
+    el.enabled.textContent = s.enabled ? "ON" : "OFF";
+    el.enabled.className = "summary-value " + (s.enabled ? "text-teal-400" : "text-slate-500");
+    el.policy.textContent = s.policy_error ? "invalid" : s.rule_count + " rules";
+    el.policy.className = "summary-value " + (s.policy_error ? "text-red-400" : "");
+    el.policy.title = s.policy_error || s.policy_path;
+    el.agents.textContent = (s.agents && s.agents.length) ? s.agents.join(", ") : "none registered";
+    el.degraded.textContent = String(s.degraded_count_7d);
+  } catch (e) {
+    for (const k in el) el[k].textContent = "?";
+  }
+}
+
+function renderSparkline(svg, points) {
+  svg.textContent = "";
+  if (points.length === 0) {
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("x1", "0"); line.setAttribute("y1", "20"); line.setAttribute("x2", "100"); line.setAttribute("y2", "20");
+    line.setAttribute("stroke", "#14b8a6"); line.setAttribute("stroke-width", "2");
+    svg.appendChild(line);
+    return;
+  }
+  const max = 4, w = 100, h = 24, pad = 3;
+  const step = points.length > 1 ? w / (points.length - 1) : 0;
+  const coords = points.map((p, i) => {
+    const x = points.length > 1 ? i * step : w / 2;
+    const y = h - pad - (p - 1) / (max - 1) * (h - 2 * pad);
+    return [x, y];
+  });
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  path.setAttribute("points", coords.map(c => c[0].toFixed(1) + "," + c[1].toFixed(1)).join(" "));
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke-width", "2");
+  // Color settles from warm (early/high risk) to cool (recent/low risk) —
+  // same redundant color+shape story as the risk badges, not relying on
+  // shape alone for anyone with a color vision deficiency either.
+  const lastRisk = points[points.length - 1];
+  path.setAttribute("stroke", lastRisk >= 3 ? "#f59e0b" : lastRisk === 2 ? "#eab308" : "#14b8a6");
+  svg.appendChild(path);
+}
+
+async function loadSessions() {
+  const list = document.getElementById("sessions-list");
+  try {
+    const res = await fetch("/api/sessions");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const sessions = await res.json();
+    list.textContent = "";
+    if (!sessions || sessions.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "text-slate-600 text-xs";
+      empty.textContent = "No sessions yet.";
+      list.appendChild(empty);
+      return;
+    }
+    const tpl = document.getElementById("session-template");
+    for (const sess of sessions) {
+      const card = tpl.content.firstElementChild.cloneNode(true);
+      card.querySelector('[data-field="actor"]').textContent = sess.actor + " · " + sess.session_id;
+      const badge = card.querySelector('[data-field="settled"]');
+      badge.textContent = sess.settled ? "settled" : "active";
+      badge.classList.add(sess.settled ? "badge-allow" : "badge-high");
+      renderSparkline(card.querySelector('[data-field="sparkline"]'), sess.points || []);
+      list.appendChild(card);
+    }
+  } catch (e) {
+    list.textContent = "";
+    const err = document.createElement("div");
+    err.className = "text-red-400 text-xs";
+    err.textContent = "Couldn't load sessions.";
+    list.appendChild(err);
+  }
+}
+
+async function loadEvents() {
+  const state = document.getElementById("events-state");
+  state.textContent = "Loading…";
+  state.classList.remove("hidden");
+  try {
+    const res = await fetch("/api/events?" + currentFilterParams().toString());
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    renderEvents(await res.json());
+  } catch (e) {
+    document.getElementById("events-body").textContent = "";
+    state.textContent = "Couldn't load the audit log. ";
+    const retry = document.createElement("button");
+    retry.textContent = "Retry";
+    retry.className = "underline text-teal-400 ml-1";
+    retry.onclick = loadEvents;
+    state.appendChild(retry);
+    state.classList.remove("hidden");
+  }
+}
+
+let stream = null;
+
+function startStream() {
+  if (stream) stream.close();
+  const statusEl = document.getElementById("stream-status");
+  stream = new EventSource("/api/events/stream?" + currentFilterParams().toString());
+  stream.onopen = () => { statusEl.textContent = "● live"; statusEl.className = "text-xs text-teal-400"; };
+  stream.onerror = () => { statusEl.textContent = "○ reconnecting…"; statusEl.className = "text-xs text-amber-400"; };
+  stream.onmessage = (e) => {
+    try { prependEvent(JSON.parse(e.data)); } catch (err) { /* ignore malformed frame */ }
+  };
+}
+
+function stopStream() {
+  if (stream) { stream.close(); stream = null; }
+  document.getElementById("stream-status").textContent = "";
+}
+
+// Debounced so typing in the Actor field doesn't fire a fetch and tear
+// down/reopen the SSE connection on every keystroke — a review flagged the
+// undebounced version as wasteful (not incorrect: each old connection did
+// close cleanly before the next opened), but an 11-character name meant 11
+// fetches and 11 SSE reconnects for one intended filter change.
+let filterDebounce = null;
+document.getElementById("filter-form").addEventListener("input", () => {
+  clearTimeout(filterDebounce);
+  filterDebounce = setTimeout(() => {
+    loadEvents();
+    if (document.getElementById("live-toggle").checked) startStream();
+  }, 250);
+});
+document.getElementById("live-toggle").addEventListener("change", (e) => {
+  if (e.target.checked) startStream(); else stopStream();
+});
+
+loadSummary();
+loadSessions();
+loadEvents();
+startStream();
+setInterval(loadSummary, 15000);
+setInterval(loadSessions, 15000);
+</script>
+</body>
+</html>

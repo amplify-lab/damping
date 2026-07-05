@@ -1,0 +1,159 @@
+package dashboard
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/amplify-lab/damping/cli/adapter/agent"
+	"github.com/amplify-lab/damping/cli/enforcement"
+	"github.com/amplify-lab/damping/cli/paths"
+	"github.com/amplify-lab/damping/core/audit"
+	"github.com/amplify-lab/damping/core/event"
+	"github.com/amplify-lab/damping/core/policy"
+)
+
+// summary is /api/summary's response shape — the same facts `damping
+// status` prints as a headline/Policy/Agents table, in JSON so the
+// dashboard's header strip can render them (docs/ux-dashboard-spec.md
+// §2.2's "top strip", scoped down from team stats to this one local
+// install's own state).
+type summary struct {
+	Enabled         bool     `json:"enabled"`
+	PolicyPath      string   `json:"policy_path"`
+	PolicyError     string   `json:"policy_error,omitempty"`
+	RuleCount       int      `json:"rule_count"`
+	Agents          []string `json:"agents"`
+	DegradedCount7d int      `json:"degraded_count_7d"`
+}
+
+func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
+	disabled, err := enforcement.IsDisabled()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("checking enforcement state: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	out := summary{Enabled: !disabled, PolicyPath: s.cfg.PolicyPath}
+	if cfg, cfgErr := policy.LoadConfig(s.cfg.PolicyPath); cfgErr != nil {
+		out.PolicyError = cfgErr.Error()
+	} else {
+		out.RuleCount = len(cfg.Rules)
+	}
+
+	if has, err := agent.HasClaudeCodeHook(paths.ClaudeSettings()); err == nil && has {
+		out.Agents = append(out.Agents, "claude-code")
+	}
+	if has, err := agent.HasCursorHook(paths.CursorHooks()); err == nil && has {
+		out.Agents = append(out.Agents, "cursor")
+	}
+
+	if degraded, err := audit.ReadAll(s.cfg.AuditPath, audit.Filter{Outcome: "degraded", Since: time.Now().Add(-7 * 24 * time.Hour)}); err == nil {
+		out.DegradedCount7d = len(degraded)
+	}
+
+	writeJSON(w, out)
+}
+
+// parseFilterQuery reads the same filter vocabulary damping log's flags use
+// (docs/ux-dashboard-spec.md §4's "CLI/dashboard vocabulary parity") off
+// URL query parameters, through the one shared core/audit.ParseFilter
+// implementation.
+func parseFilterQuery(r *http.Request) (audit.Filter, error) {
+	q := r.URL.Query()
+	return audit.ParseFilter(q.Get("channel"), q.Get("risk"), q.Get("actor"), q.Get("outcome"), q.Get("since"))
+}
+
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	f, err := parseFilterQuery(r)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("invalid filter: %v", err), http.StatusBadRequest)
+		return
+	}
+	events, err := audit.ReadAll(s.cfg.AuditPath, f)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("reading audit log: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if events == nil {
+		events = []event.ActionEvent{} // never render as JSON null — the client always gets a real (possibly empty) array
+	}
+	writeJSON(w, events)
+}
+
+// handleEventStream is the dashboard's answer to docs/ux-dashboard-spec.md
+// §2.3's "real-time table" — the team dashboard's spec calls for a
+// WebSocket via Durable Objects Hibernation, which needs the Cloudflare
+// backend this local slice deliberately has none of. Server-Sent Events
+// over core/audit.Follow gets the same "new events appear without a
+// reload" UX from a single local process with no extra dependency — the
+// same polling-based Follow `damping log --follow` already uses.
+func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
+	f, err := parseFilterQuery(r)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("invalid filter: %v", err), http.StatusBadRequest)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	// The client already has every pre-existing event from its own
+	// /api/events fetch before it opens this connection (see index.html's
+	// startStream, called right after loadEvents) — starting Follow at
+	// offset 0 here would replay the entire audit log as if every event
+	// were new, duplicating every row already on screen. Captured as the
+	// file's current size, the same way damping log --follow's own
+	// startOffset is (cli/cmd/log.go), so only events appended after this
+	// connection opens ever reach the client.
+	var startOffset int64
+	if info, statErr := os.Stat(s.cfg.AuditPath); statErr == nil {
+		startOffset = info.Size()
+	} else if !os.IsNotExist(statErr) {
+		http.Error(w, fmt.Sprintf("stat audit log: %v", statErr), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	err = audit.Follow(r.Context(), s.cfg.AuditPath, startOffset, f, 500*time.Millisecond, func(e event.ActionEvent) error {
+		data, err := json.Marshal(e)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	})
+	// A client disconnecting cancels r.Context(), which Follow treats as a
+	// normal stop (returns nil) — nothing left to report in that case.
+	if err != nil {
+		// The connection is already committed to text/event-stream with a
+		// 200 status by this point, so a plain http.Error would just get
+		// silently appended as an unparsable event — send it as a real SSE
+		// "error" event instead, so the client's onerror/addEventListener
+		// path can actually see it. Newlines are stripped because the SSE
+		// spec requires each line of a "data:" payload to carry its own
+		// "data:" prefix — left as-is, an error containing one would
+		// truncate the frame at the first line break.
+		msg := strings.ReplaceAll(err.Error(), "\n", " ")
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", msg) // #nosec G705 -- msg is Follow's own internal error text (file I/O/JSON-marshal failures), never attacker-supplied, and is never rendered as HTML by this dashboard's client-side JS (see index.html)
+		flusher.Flush()
+	}
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
+}

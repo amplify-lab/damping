@@ -24,13 +24,26 @@
 │   ├── adapter/mcp/          # V1 thin MCP adapter — protocol wiring (wrap.go), Facts extraction (facts.go) — see §7
 │   ├── adapter/agent/        # Claude Code / Cursor hook-file install & detection; shared JSON-file
 │   │                         #   read/write (jsonfile.go) so it isn't mistaken for Claude-Code-specific
-│   ├── paths/                 # ~/.damping/* path resolution ($DAMPING_HOME override for tests)
+│   ├── paths/                 # ~/.damping/* path resolution ($DAMPING_HOME override for tests), plus
+│   │                         #   ClaudeSettings()/CursorHooks() (agent hook config paths, same override pattern)
+│   ├── enforcement/           # IsDisabled() — whether `damping off` is currently in effect. Split out of
+│   │                         #   cmd/onoff.go specifically so cli/dashboard can ask the same question
+│   │                         #   without importing cli/cmd (which imports cli/dashboard to wire the command)
+│   ├── dashboard/             # `damping dashboard` — a LOCAL, single-user audit-log viewer (Go html + a
+│   │                         #   Tailwind-compiled static/dashboard.css, go:embed'd, no Node at build/run
+│   │                         #   time). NOT the same thing as the root-level dashboard/ below — this one
+│   │                         #   is fully unauthenticated, localhost-only, zero-infrastructure, and exists
+│   │                         #   today; see its own package doc comment (server.go) for how it relates to
+│   │                         #   Phase 4's team dashboard
 │   ├── policies/              # canonical default.yaml + go:embed wrapper (see note below)
 │   └── ui/                   # Prompter interface + TTYPrompter (prompt.go), /dev/tty opening split by
 │                             #   build tag (tty_unix.go, tty_windows.go) — shared by cmd/hook.go and adapter/mcp
 ├── gateway/                 # NOT YET SCAFFOLDED — Phase 3 Go module: MCPWarden Gateway (Track B)
 ├── cf/                      # NOT YET SCAFFOLDED — Phase 4 TypeScript: Cloudflare Workers (Track A)
-├── dashboard/               # NOT YET SCAFFOLDED — Phase 4 React+TS: audit/policy dashboard
+├── dashboard/               # NOT YET SCAFFOLDED — Phase 4 React+TS team dashboard (Cloudflare-backed,
+│                            #   SSO auth, team sync — see docs/ux-dashboard-spec.md). Not to be confused
+│                            #   with cli/dashboard/ above, which is a local single-user viewer that
+│                            #   already exists and needs none of Phase 4's infrastructure
 ├── features/                # Gherkin .feature files (godog), shared across the whole project
 ├── docs/                    # Planning + reference docs (this file, threat model, CLI reference, UX spec)
 └── .github/workflows/       # CI: lint, unit test, BDD, gosec, SBOM

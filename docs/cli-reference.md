@@ -11,6 +11,7 @@
 | `damping status` | 1 | One-line current state: enabled/disabled, active policy, detected integrations |
 | `damping on` / `damping off` | 1 | Enable / temporarily disable enforcement |
 | `damping log` | 1 | Replay the local audit trail |
+| `damping dashboard` | 1 (not in the original plan — see §9.1) | Serve a local, read-only web view of the same audit trail `damping log` reads |
 | `damping policy list` / `test` / `edit` / `validate` | 1 | Inspect and dry-run the policy file |
 | `damping mcp wrap -- <server-command>` | 1 | V1 thin MCP stdio wrapper (policy + audit only, no OAuth) — **implemented**, see §9 |
 | `damping hook <event>` | 1 | Internal entrypoint invoked by agent hook configs — not meant for direct interactive use |
@@ -169,6 +170,21 @@ $ damping mcp wrap -- npx @some-org/example-mcp-server
 ```
 
 Configured as the launch command in place of the real server inside Claude Code's / Cursor's MCP server config. Damping spawns the real server as a subprocess, speaks MCP over stdio to the actual client, and for every outgoing tool call: normalizes it into an `ActionEvent` (`channel: mcp`), runs it through `core/policy`, writes it to `core/audit`, then forwards the (possibly user-confirmed) call through to the real subprocess. No OAuth, no token re-issuance — that's Phase 3's `gateway/` (see architecture.md §7).
+
+## 9.1 `damping dashboard`
+
+```
+$ damping dashboard
+Dashboard running at http://127.0.0.1:4243 (Ctrl+C to stop)
+```
+
+A small local HTTP server rendering the same `~/.damping/audit.jsonl` `damping log` reads, in a browser — a dark-themed summary strip, a filterable event table, a per-session risk sparkline panel, and a live tail via Server-Sent Events, all served from `cli/dashboard` with no separate frontend build (vanilla JS, a Tailwind-compiled stylesheet checked into the repo and embedded via `go:embed`).
+
+**This is not Phase 4.** `docs/ux-dashboard-spec.md` describes a separate, not-yet-built team dashboard — React+TS, Cloudflare-hosted, SSO auth, cross-member team sync — genuinely blocked on Tim picking a Cloudflare account and an auth vendor. `damping dashboard` needs none of that: no auth, no network calls beyond serving its own page, binds to `127.0.0.1` only by default. It borrows that spec's visual language (dark theme, risk-as-temperature color, the damped-oscillation sparkline motif) and its "CLI/dashboard vocabulary parity" principle (§4 of that spec) — the same `core/audit.ParseFilter` that parses `damping log --risk critical` also parses `?risk=critical` on `/api/events`.
+
+Flags: `--port` (default `4243`), `--host` (default `127.0.0.1` — passing anything else prints an explicit warning that the audit log becomes reachable, unauthenticated, from wherever that address is reachable). Routes: `GET /` (the page), `GET /api/summary`, `GET /api/sessions`, `GET /api/events` (same filters as `damping log`: `channel`, `risk`, `actor`, `outcome`, `since`), `GET /api/events/stream` (Server-Sent Events, same filters, built on the same `core/audit.Follow` poll `damping log --follow` uses).
+
+While bound to the default `127.0.0.1`, every request's `Host` header is checked against `127.0.0.1`/`localhost` and rejected (403) otherwise — binding to localhost alone does not stop a malicious webpage from reading this unauthenticated server via DNS rebinding (resolving an attacker-controlled domain to `127.0.0.1` mid-session, then treating the connection as same-origin with that domain), and a rebound request still carries the attacker's domain as its `Host`. This check steps aside once `--host` is explicitly set to anything else, since there's no longer one correct value to allowlist — that's the moment the startup warning above already exists for.
 
 ## 10. `damping hook <event>`
 

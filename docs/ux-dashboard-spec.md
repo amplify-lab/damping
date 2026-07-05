@@ -1,6 +1,8 @@
 # Damping — Dashboard & Enterprise UI/UX Spec (Phase 4 & 5)
 
 > Scope: the React + TypeScript dashboard (`dashboard/`, not yet scaffolded — see `docs/architecture.md` §1) that Phase 4 (team tier, Cloudflare Track A) and Phase 5 (enterprise compliance, Track B) build against. This is a structural/interaction spec, not implemented UI code — Phase 4 is months out per the roadmap in `docs/00-統一開發計畫（定案版）.md`, and speculative React code written now would likely be discarded once real usage data exists. What's fixed here (visual metaphor, screen inventory, states, information hierarchy) is meant to survive that gap.
+>
+> **Already built, out of this spec's scope**: `damping dashboard` (`cli/dashboard`, see `docs/cli-reference.md` §9.1) is a local, single-user, zero-infrastructure audit-log viewer that borrows this spec's visual language (§1's dark theme/risk color/oscillation motif) and its vocabulary-parity principle (§4) — but it is not an implementation of Phase 4 §2 below. It has no auth, no team sync, no Cloudflare backend, and never will grow those under this spec; it's a separate, already-shipped local tool, not a partial Phase 4.
 
 ## 1. Visual metaphor — make "damping" visible, not just named
 
