@@ -36,7 +36,10 @@ func newMCPWrapCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			engine := policy.New(cfg)
+			engine, err := policy.NewEvaluator(cmd.Context(), cfg)
+			if err != nil {
+				return err
+			}
 			writer, _ := newAuditWriter()
 
 			return mcpadapter.Wrap(cmd.Context(), args, engine, writer, "mcp-client")

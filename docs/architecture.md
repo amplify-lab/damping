@@ -140,9 +140,16 @@ type Decision struct {
 
 `core/event` imports `core/decision` rather than redefining its own copy — `ActionEvent.Decision` is a `decision.Decision` value, so the policy engine's output and the persisted audit record are the exact same type, with no separate `DecisionRecord`/conversion step to keep in sync. `core/policy`'s `Evaluate()` returns a `decision.Decision`; `cli/adapter/hook.BuildActionEvent` embeds it into an `ActionEvent` only once — after any TTY resolution of a `Prompt` verdict has already happened — which is what makes "one coherent record per action" true in the actual audit log, not just an aspiration (see `core/audit`'s tests and `features/audit_log.feature`).
 
-## 4. `core/policy` (V1: Go-native rules; Phase 3: OPA/Rego)
+## 4. `core/policy` — Evaluator interface: Go-native rules + OPA/Rego (Phase 3, **implemented**)
 
-V1 loads `cli/policies/default.yaml` into in-process Go rules (pattern match against parsed shell AST + MCP tool/argument tuples). The `Evaluate(event ActionEvent) (decision.Decision, error)` function signature is deliberately identical to what an OPA-backed implementation would expose, so Phase 3's swap to `open-policy-agent/opa/rego` (embedded, no network hop) is a drop-in replacement behind the same interface — not a rewrite of call sites.
+`policy.Evaluator` (`Evaluate(f Facts) decision.Decision`) is the one interface every adapter (`cli/adapter/hook`, `cli/adapter/mcp`) depends on — never a concrete engine type. Two implementations satisfy it:
+
+- **`Engine`** (V1, default): hardcoded Go matchers in `rules_shell.go`/`rules_mcp.go`/`rules_selfprotection.go`, registered by rule id in `rules.go`. Zero extra dependencies, sub-100ns per `Evaluate` call — the right choice for the individual-tier CLI's one-shot hook subprocess.
+- **`OPAEngine`** (Phase 3): the same 12 rules translated into Rego (`policy.rego`, embedded via `go:embed`), evaluated through `open-policy-agent/opa/rego` in-process (no network hop, no server). Real policy-as-code for Gateway/enterprise deployments that need to audit or extend rules without a Go recompile.
+
+`Config.Engine` (`native` | `opa`, default `native`) selects which one `policy.NewEvaluator(ctx, cfg)` constructs — every call site goes through that one function, so switching backends is a `policy.yaml` edit, never a rewrite of call sites. `OPAEngine.Evaluate` compiles down to: reuse the exact same Go `matchesAnyPattern` (from `patterns.go`) for the `always_allow`/`always_deny` override tier — that's simple user-authored glob matching, not policy-as-code logic, so duplicating it in Rego would just be a second implementation to keep in sync — then ask Rego's `data.damping.policy.matches` for the *set* of every rule id that matches, then walk `cfg.Rules` in order to pick the first match, mirroring `Engine.Evaluate`'s sequential first-match semantics exactly (Rego's set-based rules are naturally unordered, so "which one wins when several match" stays a thin, order-dependent Go post-processing step rather than something forced into Rego).
+
+`core/policy/opa_equivalence_test.go` is the "keep Phase 1's tests green when swapping to OPA" contract: every `Facts`/`Config` case the Go-native `Engine` is tested against also runs through `OPAEngine`, asserting byte-identical `Decision` output. `core/policy/opa_bench_test.go` gates eval latency at sub-millisecond per call (`OPAEngine.Evaluate` benchmarks in the tens of microseconds — comfortably inside budget; `Engine.Evaluate` stays in the tens of nanoseconds, since native has no interpreter overhead at all).
 
 ## 5. `cli/shell` — AST parsing + semantic bypass detection
 

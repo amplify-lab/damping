@@ -16,13 +16,27 @@ import (
 // registry in rules.go for V1, and swaps to OPA/Rego in Phase 3 behind the
 // same Evaluate() call site (see docs/architecture.md §4).
 type Config struct {
-	Version                   int          `yaml:"version"`
+	Version int `yaml:"version"`
+
+	// Engine selects which Evaluator implementation NewEvaluator constructs
+	// for this Config: EngineNative (the default when empty — zero extra
+	// dependencies, the right choice for the individual-tier CLI) or
+	// EngineOPA (embedded OPA/Rego — see docs/architecture.md §4 for when
+	// Phase 3's Gateway/enterprise deployments should prefer it instead).
+	Engine string `yaml:"engine,omitempty"`
+
 	ProtectedPaths            []string     `yaml:"protected_paths"`
 	AllowlistedInstallDomains []string     `yaml:"allowlisted_install_domains"`
 	Rules                     []RuleConfig `yaml:"rules"`
 	AlwaysAllow               []string     `yaml:"always_allow"`
 	AlwaysDeny                []string     `yaml:"always_deny"`
 }
+
+// EngineNative and EngineOPA are the recognized values for Config.Engine.
+const (
+	EngineNative = "native"
+	EngineOPA    = "opa"
+)
 
 // RuleConfig describes one policy rule's identity and default disposition.
 type RuleConfig struct {
@@ -62,6 +76,11 @@ func ParseConfig(raw []byte) (Config, error) {
 func (c Config) Validate() error {
 	if c.Version == 0 {
 		return fmt.Errorf("policy: missing or zero \"version\" field")
+	}
+	switch c.Engine {
+	case "", EngineNative, EngineOPA:
+	default:
+		return fmt.Errorf("policy: unknown engine %q (want %q or %q)", c.Engine, EngineNative, EngineOPA)
 	}
 	seen := make(map[string]bool, len(c.Rules))
 	for _, r := range c.Rules {

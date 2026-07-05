@@ -47,7 +47,7 @@ const (
 // running every outgoing tool call through engine and writer before
 // forwarding it to the real subprocess. Wrap blocks until the outer client
 // disconnects or ctx is cancelled.
-func Wrap(ctx context.Context, serverCmd []string, engine *policy.Engine, writer *audit.Writer, actor string) error {
+func Wrap(ctx context.Context, serverCmd []string, engine policy.Evaluator, writer *audit.Writer, actor string) error {
 	if len(serverCmd) == 0 {
 		return fmt.Errorf("mcp: no server command given (usage: damping mcp wrap -- <server-command...>)")
 	}
@@ -60,7 +60,7 @@ func Wrap(ctx context.Context, serverCmd []string, engine *policy.Engine, writer
 // (to the outer client). Split out from Wrap so tests can substitute
 // mcp.NewInMemoryTransports() pairs instead of a real subprocess + this
 // process's own stdio — see wrap_test.go.
-func wrapTransport(ctx context.Context, upstream, downstream gosdk.Transport, engine *policy.Engine, writer *audit.Writer, actor string) error {
+func wrapTransport(ctx context.Context, upstream, downstream gosdk.Transport, engine policy.Evaluator, writer *audit.Writer, actor string) error {
 	client := gosdk.NewClient(&gosdk.Implementation{Name: implementationName, Version: implementationVersion}, nil)
 	cs, err := client.Connect(ctx, upstream, nil)
 	if err != nil {
@@ -83,7 +83,7 @@ func wrapTransport(ctx context.Context, upstream, downstream gosdk.Transport, en
 // registerForwardingTool re-exposes one discovered tool on server, gating
 // every call through engine/writer before forwarding it to cs (the client
 // session connected to the real wrapped server).
-func registerForwardingTool(server *gosdk.Server, cs *gosdk.ClientSession, tool *gosdk.Tool, engine *policy.Engine, writer *audit.Writer, actor string) {
+func registerForwardingTool(server *gosdk.Server, cs *gosdk.ClientSession, tool *gosdk.Tool, engine policy.Evaluator, writer *audit.Writer, actor string) {
 	inputSchema := tool.InputSchema
 	if inputSchema == nil {
 		// Server.AddTool panics if InputSchema is nil or not type "object" —

@@ -219,7 +219,10 @@ MCP tool-call interception:
 
 The block below is kept identical to the actual shipped file at `cli/policies/default.yaml` (embedded into the binary via `go:embed` — see `docs/architecture.md` §1 for why the canonical copy lives under `cli/` rather than a repo-root `policies/`). `protected_paths` and `always_allow`/`always_deny` are matched by exact value or `/`-prefix only in V1 (see `core/policy/rules.go`'s `inProtectedPaths` and `matchGlobPattern`, which supports a single trailing `*` as a prefix wildcard) — no `**` or mid-string glob syntax is implemented yet, so don't rely on it in a hand-edited policy file.
 
+An optional top-level `engine` field (`native` — the default, if omitted — or `opa`) selects which `policy.Evaluator` implementation evaluates every rule below: `native` is the hardcoded Go matcher registry, `opa` is the embedded OPA/Rego engine introduced in Phase 3. Both produce identical decisions for every rule id here — see `docs/architecture.md` §4.
+
 ```yaml
+# engine: native
 version: 1
 
 protected_paths:

@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"context"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -14,7 +15,7 @@ import (
 // The canonical file lives under cli/ (not a repo-root policies/) because
 // cli/cmd embeds it via go:embed, which requires the file to live inside the
 // embedding module's own tree — see cli/policies/policies.go.
-func defaultPolicyPath(t *testing.T) string {
+func defaultPolicyPath(t testing.TB) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -69,6 +70,38 @@ rules:
 `)
 	if _, err := ParseConfig(raw); err == nil {
 		t.Fatal("expected an error for a duplicate rule id")
+	}
+}
+
+func TestParseConfig_RejectsUnknownEngine(t *testing.T) {
+	raw := []byte(`
+version: 1
+engine: quantum
+`)
+	if _, err := ParseConfig(raw); err == nil {
+		t.Fatal("expected an error for an unrecognized engine value")
+	}
+}
+
+func TestNewEvaluator_DispatchesOnConfigEngine(t *testing.T) {
+	native, err := NewEvaluator(context.Background(), Config{Version: 1})
+	if err != nil {
+		t.Fatalf("engine \"\": %v", err)
+	}
+	if _, ok := native.(*Engine); !ok {
+		t.Fatalf("empty Engine field: expected *Engine, got %T", native)
+	}
+
+	opa, err := NewEvaluator(context.Background(), Config{Version: 1, Engine: EngineOPA})
+	if err != nil {
+		t.Fatalf("engine %q: %v", EngineOPA, err)
+	}
+	if _, ok := opa.(*OPAEngine); !ok {
+		t.Fatalf("engine %q: expected *OPAEngine, got %T", EngineOPA, opa)
+	}
+
+	if _, err := NewEvaluator(context.Background(), Config{Version: 1, Engine: "quantum"}); err == nil {
+		t.Fatal("expected an error for an unrecognized engine value")
 	}
 }
 
