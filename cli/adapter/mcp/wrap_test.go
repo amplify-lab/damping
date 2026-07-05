@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -56,7 +57,7 @@ func startFakeRealServer(t *testing.T, ctx context.Context, transport gosdk.Tran
 // setupWrap wires: fake real server <-in-memory-> damping (wrapTransport,
 // running in a goroutine) <-in-memory-> a test client. It returns the test
 // client's session, ready to call tools through the whole real pipeline.
-func setupWrap(t *testing.T, engine *policy.Engine, writer *audit.Writer) *gosdk.ClientSession {
+func setupWrap(t *testing.T, engine *policy.Engine, policyPath string, writer *audit.Writer) *gosdk.ClientSession {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -67,7 +68,7 @@ func setupWrap(t *testing.T, engine *policy.Engine, writer *audit.Writer) *gosdk
 	startFakeRealServer(t, ctx, upstreamServerSide)
 
 	go func() {
-		_ = wrapTransport(ctx, upstreamDampingSide, downstreamDampingSide, engine, writer, "test-client")
+		_ = wrapTransport(ctx, upstreamDampingSide, downstreamDampingSide, engine, policyPath, writer, "test-client")
 	}()
 
 	client := gosdk.NewClient(&gosdk.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
@@ -81,18 +82,35 @@ func setupWrap(t *testing.T, engine *policy.Engine, writer *audit.Writer) *gosdk
 
 func loadTestEngine(t *testing.T) *policy.Engine {
 	t.Helper()
-	path := filepath.Join("..", "..", "policies", "default.yaml")
-	cfg, err := policy.LoadConfig(path)
+	cfg, err := policy.LoadConfig(testPolicyPath(t))
 	if err != nil {
 		t.Fatalf("loading default policy: %v", err)
 	}
 	return policy.New(cfg)
 }
 
+// testPolicyPath returns a fresh per-test copy of cli/policies/default.yaml
+// so tests that persist an always-allow/deny pattern (policy.AppendAlwaysPattern
+// requires a real file with always_allow/always_deny sequences to append to)
+// never mutate the actual shipped default policy.
+func testPolicyPath(t *testing.T) string {
+	t.Helper()
+	src := filepath.Join("..", "..", "policies", "default.yaml")
+	raw, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("reading default policy: %v", err)
+	}
+	dst := filepath.Join(t.TempDir(), "policy.yaml")
+	if err := os.WriteFile(dst, raw, 0o600); err != nil {
+		t.Fatalf("writing test policy copy: %v", err)
+	}
+	return dst
+}
+
 func TestWrap_ForwardsReadOnlyToolCallAndAllows(t *testing.T) {
 	engine := loadTestEngine(t)
 	writer := audit.NewWriter(filepath.Join(t.TempDir(), "audit.jsonl"))
-	cs := setupWrap(t, engine, writer)
+	cs := setupWrap(t, engine, testPolicyPath(t), writer)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -117,7 +135,7 @@ func TestWrap_DeniesDestructiveToolCall(t *testing.T) {
 	engine := loadTestEngine(t)
 	auditPath := filepath.Join(t.TempDir(), "audit.jsonl")
 	writer := audit.NewWriter(auditPath)
-	cs := setupWrap(t, engine, writer)
+	cs := setupWrap(t, engine, testPolicyPath(t), writer)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -145,14 +163,14 @@ func TestWrap_DeniesDestructiveToolCall(t *testing.T) {
 	}
 }
 
-// TestResolvePrompt_NotifiesWhenPersistIsRequestedButUnsupported is a
-// regression test for a real honesty gap found via code review: the shared
-// TTY prompt advertises "[A] Always allow"/"[D] Always deny" to MCP callers
-// too (it's the same Prompter used for CLI), but MCP tool-call persistence
-// isn't implemented in V1 — before this fix, choosing "A" silently behaved
-// like "allow once" with no indication the user's actual choice was
-// discarded.
-func TestResolvePrompt_NotifiesWhenPersistIsRequestedButUnsupported(t *testing.T) {
+// TestResolvePrompt_PersistsAlwaysAllowChoice is the regression test for a
+// real honesty gap found via code review: the shared TTY prompt advertises
+// "[A] Always allow"/"[D] Always deny" to MCP callers too (it's the same
+// Prompter used for CLI), but MCP tool-call persistence wasn't implemented
+// in V1 — choosing "A" silently behaved like "allow once" with no
+// indication the user's actual choice was discarded. Now an "A" choice must
+// both write the pattern to policyPath AND record it in overlay.
+func TestResolvePrompt_PersistsAlwaysAllowChoice(t *testing.T) {
 	orig := newTTYPrompter
 	defer func() { newTTYPrompter = orig }()
 
@@ -161,14 +179,61 @@ func TestResolvePrompt_NotifiesWhenPersistIsRequestedButUnsupported(t *testing.T
 		return ui.TTYPrompter{In: strings.NewReader("A\n"), Out: &out}, func() {}, nil
 	}
 
+	policyPath := testPolicyPath(t)
+	overlay := &alwaysOverlay{}
 	d := decision.Decision{Verdict: decision.Prompt, PolicyID: "mcp.destructive_tool_call"}
-	resolved := resolvePrompt("delete_all {}", d)
+	resolved := resolvePrompt(policyPath, overlay, "delete_all {}", d)
 
 	if resolved.Outcome() != decision.Allow {
 		t.Fatalf("expected the resolved verdict to be Allow, got %v", resolved.Outcome())
 	}
-	if !strings.Contains(out.String(), "isn't remembered for MCP tool calls") {
-		t.Fatalf("expected a notice that the always-allow choice wasn't persisted, got output:\n%s", out.String())
+	if strings.Contains(out.String(), "couldn't save") {
+		t.Fatalf("expected no failure notice for a successful persist, got:\n%s", out.String())
+	}
+
+	cfg, err := policy.LoadConfig(policyPath)
+	if err != nil {
+		t.Fatalf("reloading policy file: %v", err)
+	}
+	found := false
+	for _, p := range cfg.AlwaysAllow {
+		if p == "delete_all {}" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected \"delete_all {}\" to be persisted into always_allow, got %v", cfg.AlwaysAllow)
+	}
+
+	if v, ok := overlay.verdict("delete_all {}"); !ok || v != decision.Allow {
+		t.Fatalf("expected the overlay to also remember this choice for the rest of the session, got %v, %v", v, ok)
+	}
+}
+
+// TestResolvePrompt_FailedPersistNotifiesAndLeavesOverlayUntouched proves the
+// failure path stays loud rather than silently pretending the choice was
+// remembered when it wasn't actually saved to disk.
+func TestResolvePrompt_FailedPersistNotifiesAndLeavesOverlayUntouched(t *testing.T) {
+	orig := newTTYPrompter
+	defer func() { newTTYPrompter = orig }()
+
+	var out bytes.Buffer
+	newTTYPrompter = func() (ui.Prompter, func(), error) {
+		return ui.TTYPrompter{In: strings.NewReader("A\n"), Out: &out}, func() {}, nil
+	}
+
+	overlay := &alwaysOverlay{}
+	d := decision.Decision{Verdict: decision.Prompt}
+	resolved := resolvePrompt(filepath.Join(t.TempDir(), "does-not-exist.yaml"), overlay, "delete_all {}", d)
+
+	if resolved.Outcome() != decision.Allow {
+		t.Fatalf("expected the resolved verdict to still be Allow even though persisting failed, got %v", resolved.Outcome())
+	}
+	if !strings.Contains(out.String(), "couldn't save this as an always-allow pattern") {
+		t.Fatalf("expected a failure notice, got output:\n%s", out.String())
+	}
+	if _, ok := overlay.verdict("delete_all {}"); ok {
+		t.Fatal("did not expect the overlay to remember a choice that failed to persist to disk")
 	}
 }
 
@@ -182,10 +247,10 @@ func TestResolvePrompt_NoNoticeForOnceChoices(t *testing.T) {
 	}
 
 	d := decision.Decision{Verdict: decision.Prompt}
-	resolvePrompt("read_thing {}", d)
+	resolvePrompt(testPolicyPath(t), &alwaysOverlay{}, "read_thing {}", d)
 
-	if strings.Contains(out.String(), "isn't remembered") {
-		t.Fatalf("did not expect a persistence notice for a plain 'allow once' choice, got:\n%s", out.String())
+	if strings.Contains(out.String(), "couldn't save") || strings.Contains(out.String(), "isn't remembered") {
+		t.Fatalf("did not expect any persistence notice for a plain 'allow once' choice, got:\n%s", out.String())
 	}
 }
 
@@ -197,9 +262,54 @@ func TestResolvePrompt_NoTTYDefaultsToDeny(t *testing.T) {
 	}
 
 	d := decision.Decision{Verdict: decision.Prompt}
-	resolved := resolvePrompt("delete_all {}", d)
+	resolved := resolvePrompt(testPolicyPath(t), &alwaysOverlay{}, "delete_all {}", d)
 	if resolved.Outcome() != decision.Deny {
 		t.Fatalf("expected deny-by-default when no controlling terminal is available, got %v", resolved.Outcome())
+	}
+}
+
+// TestWrap_PersistsAlwaysAllowChoiceForRestOfSession is the end-to-end BDD
+// scenario in features/mcp_tool_governance.feature: choosing "Always allow"
+// for one MCP tool call must make every subsequent identical call in the
+// *same* `damping mcp wrap` session succeed without prompting again — not
+// just on a hypothetical future run. See alwaysOverlay's doc comment for why
+// this requires more than writing the pattern to policyPath alone.
+func TestWrap_PersistsAlwaysAllowChoiceForRestOfSession(t *testing.T) {
+	engine := loadTestEngine(t)
+	auditPath := filepath.Join(t.TempDir(), "audit.jsonl")
+	writer := audit.NewWriter(auditPath)
+	cs := setupWrap(t, engine, testPolicyPath(t), writer)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	orig := newTTYPrompter
+	defer func() { newTTYPrompter = orig }()
+	newTTYPrompter = func() (ui.Prompter, func(), error) {
+		return ui.TTYPrompter{In: strings.NewReader("A\n"), Out: io.Discard}, func() {}, nil
+	}
+
+	result, err := cs.CallTool(ctx, &gosdk.CallToolParams{Name: "delete_all"})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected the always-allow resolution to permit the first call, got error result: %+v", result)
+	}
+
+	// A second, independent call for the exact same tool+args must now be
+	// silently allowed via the in-memory overlay — proven by never invoking
+	// the prompter again.
+	newTTYPrompter = func() (ui.Prompter, func(), error) {
+		t.Fatal("prompter must not be invoked once the exact call is in the always-allow overlay")
+		return ui.TTYPrompter{}, func() {}, nil
+	}
+	result, err = cs.CallTool(ctx, &gosdk.CallToolParams{Name: "delete_all"})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected the second identical call to be silently allowed via the overlay, got error result: %+v", result)
 	}
 }
 
@@ -220,7 +330,7 @@ func TestWrap_CrossChannelAuditWithCLI(t *testing.T) {
 		t.Fatalf("appending cli event: %v", err)
 	}
 
-	cs := setupWrap(t, engine, writer)
+	cs := setupWrap(t, engine, testPolicyPath(t), writer)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := cs.CallTool(ctx, &gosdk.CallToolParams{Name: "delete_all"}); err != nil {

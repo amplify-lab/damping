@@ -42,7 +42,7 @@ func newMCPWrapCmd() *cobra.Command {
 			}
 			writer, _ := newAuditWriter()
 
-			return mcpadapter.Wrap(cmd.Context(), args, engine, writer, "mcp-client")
+			return mcpadapter.Wrap(cmd.Context(), args, engine, policyPath, writer, "mcp-client")
 		},
 	}
 }

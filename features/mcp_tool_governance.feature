@@ -34,6 +34,17 @@ Feature: MCP tool-call governance (V1 thin adapter)
     # empty, so this would fire on nearly every non-read-only MCP tool call.
     # See docs/cli-reference.md §13 and docs/00-統一開發計畫（定案版）.md.
 
+  Scenario: An "always allow" choice for an MCP tool call is honored for the rest of the session
+    Given the agent calls MCP tool "filesystem.delete_all" with args {"path":"/data"}
+    And the user chooses "Always allow this exact command" at the confirmation prompt
+    When the agent calls MCP tool "filesystem.delete_all" with args {"path":"/data"} again, in the same "damping mcp wrap" session
+    Then Damping should allow the second call immediately, without prompting again
+    # damping mcp wrap is one long-lived process for the whole MCP session,
+    # unlike the one-shot CLI hook subprocess, which simply re-reads
+    # policy.yaml on its next invocation — an in-memory overlay on top of
+    # the same on-disk persistence makes "always" true within this session
+    # too, not only for a hypothetical future "damping mcp wrap" run.
+
   Scenario: CLI and MCP events land in the same audit log
     Given the agent has just triggered a CLI interception for "rm -rf ~/"
     And the agent has just triggered an MCP interception for "database.delete_record"
