@@ -34,18 +34,22 @@ func newStatusCmd() *cobra.Command {
 			// supposed to be enforcing can even be read. Found via a
 			// manual UX walkthrough: with an unreadable/invalid policy
 			// file, cli/cmd/hook.go's runHook logs a degraded event and
-			// returns nil (exit 0), which both this project's own hook
-			// contract and the real Claude Code/Cursor one treat as "fail
-			// open" — so every single action was silently being allowed,
-			// while status still proudly said "ON" with the actual problem
-			// buried in a secondary Policy: line a skim could miss
-			// entirely. Surfacing it on the same headline line a user is
-			// most likely to actually read.
+			// returns nil (exit 0) on every CLI shell-command action, which
+			// both this project's own hook contract and the real Claude
+			// Code/Cursor one treat as "fail open" — while status still
+			// proudly said "ON" with the actual problem buried in a
+			// secondary Policy: line a skim could miss entirely. Surfacing
+			// it on the same headline line a user is most likely to
+			// actually read. Scoped to "CLI shell-command", not a blanket
+			// "every action": on this identical LoadConfig error,
+			// cli/cmd/mcp.go's `mcp wrap` returns the error immediately and
+			// never starts wrapping at all — an MCP tool call fails closed
+			// (the wrapped server never launches), not open.
 			switch {
 			case disabled:
 				fmt.Fprintln(w, "Damping: OFF")
 			case cfgErr != nil:
-				fmt.Fprintln(w, "Damping: ON, but NOT protecting you — the policy file failed to load, so every action fails open (see Policy line below)")
+				fmt.Fprintln(w, "Damping: ON, but NOT protecting you — the policy file failed to load, so every CLI shell-command action fails open (see Policy line below; `damping mcp wrap` instead refuses to start at all on this same error)")
 			default:
 				fmt.Fprintln(w, "Damping: ON")
 			}
@@ -73,6 +77,17 @@ func newStatusCmd() *cobra.Command {
 			// Team sync (Phase 4) doesn't exist yet — this line is
 			// unconditionally true in V1, not aspirational.
 			fmt.Fprintln(w, "Sync:    disabled (individual tier)")
+
+			// A review found this RunE always returned nil even when the
+			// headline just said "NOT protecting you" — `damping doctor`
+			// already treats this identical policy.LoadConfig failure as
+			// Code:4 (see doctor.go), so a script doing
+			// `damping status && deploy` deserves the same non-zero signal,
+			// not a silent exit 0 paired with a loud warning nobody's
+			// parsing stdout for.
+			if !disabled && cfgErr != nil {
+				return &ExitCodeError{Code: 4}
+			}
 			return nil
 		},
 	}

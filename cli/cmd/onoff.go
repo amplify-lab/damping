@@ -12,6 +12,7 @@ import (
 	"github.com/amplify-lab/damping/cli/paths"
 	"github.com/amplify-lab/damping/core/decision"
 	"github.com/amplify-lab/damping/core/event"
+	"github.com/amplify-lab/damping/core/policy"
 )
 
 func newOffCmd() *cobra.Command {
@@ -88,7 +89,20 @@ func newOnCmd() *cobra.Command {
 			if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "✓ Damping enforcement is back ON.")
+			w := cmd.OutOrStdout()
+			fmt.Fprintln(w, "✓ Damping enforcement is back ON.")
+
+			// A review found this command never checked whether the
+			// policy it just re-enabled can actually load — the exact
+			// same underlying failure `damping status` now warns loudly
+			// about (see status.go) was silently invisible right here, at
+			// the one moment a user is most likely to trust "back ON"
+			// means "protected" without re-checking status separately.
+			if policyPath, perr := resolvePolicyPath(); perr == nil {
+				if _, cerr := policy.LoadConfig(policyPath); cerr != nil {
+					fmt.Fprintf(w, "⚠  But NOT protecting you — the policy file failed to load: %v\n", cerr)
+				}
+			}
 			return nil
 		},
 	}

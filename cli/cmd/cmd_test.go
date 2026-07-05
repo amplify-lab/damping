@@ -135,10 +135,16 @@ func TestInit_WritesPolicyAndRegistersClaudeHook(t *testing.T) {
 
 func TestStatus_NoAgentsRegisteredShowsHint(t *testing.T) {
 	setupTestEnv(t)
-	// Deliberately skip `init` — no hooks have ever been registered.
+	// Deliberately skip `init` — no hooks have ever been registered, and no
+	// policy file exists yet either. `damping doctor` already treats a
+	// pre-init, nonexistent policy file as Code:4 ("Policy file invalid");
+	// status now matches that same convention for the identical state, so
+	// this exercises both behaviors in one pass rather than requiring a
+	// separate exit-code assertion.
 	statusOut, _, err := run(t, "", "status")
-	if err != nil {
-		t.Fatalf("status: %v", err)
+	var exitErr *ExitCodeError
+	if !isExitCodeError(err, &exitErr) || exitErr.Code != 4 {
+		t.Fatalf("expected ExitCodeError{Code:4} pre-init (no policy file yet), got %v", err)
 	}
 	if !strings.Contains(statusOut, "damping init") {
 		t.Fatalf("expected a hint to run `damping init` when no agent is registered, got: %s", statusOut)
@@ -160,8 +166,13 @@ func TestStatus_WarnsWhenPolicyFileFailsToLoad(t *testing.T) {
 	}
 
 	statusOut, _, err := run(t, "", "--config", "/nonexistent/policy.yaml", "status")
-	if err != nil {
-		t.Fatalf("status: %v", err)
+	// A follow-up review noted `damping doctor` already treats this same
+	// policy.LoadConfig failure as Code:4 — status now matches, so a script
+	// chaining `damping status && deploy` gets a real non-zero signal
+	// instead of silently continuing on exit 0 next to a loud warning.
+	var exitErr *ExitCodeError
+	if !isExitCodeError(err, &exitErr) || exitErr.Code != 4 {
+		t.Fatalf("expected ExitCodeError{Code:4} when the policy file fails to load, got %v", err)
 	}
 	if !strings.Contains(statusOut, "Damping: ON, but NOT protecting you") {
 		t.Fatalf("expected the headline ON line to warn about the unloadable policy file, got:\n%s", statusOut)
@@ -324,6 +335,53 @@ func TestOnOff_TogglesEnforcementState(t *testing.T) {
 	}
 	if !strings.Contains(statusOut, "Damping: ON") {
 		t.Fatalf("expected Damping: ON after re-enabling, got: %s", statusOut)
+	}
+}
+
+// TestOn_WarnsWhenPolicyFileFailsToLoad is a regression test for a gap a
+// review found: `damping on` used to silently re-enable enforcement without
+// ever checking whether the policy it just turned back on could actually
+// load — the exact moment a user is most likely to trust "back ON" means
+// "protected" without separately re-checking `damping status`.
+func TestOn_WarnsWhenPolicyFileFailsToLoad(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := run(t, "", "off"); err != nil {
+		t.Fatalf("off: %v", err)
+	}
+
+	out, _, err := run(t, "", "--config", "/nonexistent/policy.yaml", "on")
+	if err != nil {
+		t.Fatalf("on: %v", err)
+	}
+	if !strings.Contains(out, "back ON") {
+		t.Fatalf("expected the usual back-ON confirmation, got: %s", out)
+	}
+	if !strings.Contains(out, "NOT protecting you") {
+		t.Fatalf("expected a warning that the policy file failed to load, got: %s", out)
+	}
+}
+
+// TestOn_NoWarningWhenPolicyFileLoadsFine guards against the warning added
+// for TestOn_WarnsWhenPolicyFileFailsToLoad firing unconditionally — the
+// common case (policy loads fine) must stay quiet.
+func TestOn_NoWarningWhenPolicyFileLoadsFine(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := run(t, "", "off"); err != nil {
+		t.Fatalf("off: %v", err)
+	}
+
+	out, _, err := run(t, "", "on")
+	if err != nil {
+		t.Fatalf("on: %v", err)
+	}
+	if strings.Contains(out, "NOT protecting you") {
+		t.Fatalf("expected no policy-load warning when the policy is fine, got: %s", out)
 	}
 }
 
@@ -847,10 +905,20 @@ func TestLog_TableMarksDegradedEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolving audit path: %v", err)
 	}
+	// Distinct actors so each event's row can be picked out individually —
+	// a review noted the original version of this test only ever appended
+	// one degraded event, so a regression that marked *every* row
+	// "(degraded)" regardless of the flag (e.g. hardcoding the suffix,
+	// or reading the wrong field) would have slipped through undetected.
 	degraded := event.New(event.NewID(), "s1", "claude-code", event.ChannelCLI, event.ActionShellExec,
 		"", "", decision.Decision{Verdict: decision.Allow, Degraded: true, Reason: "simulated internal failure"})
 	if err := audit.NewWriter(auditPath).Append(degraded); err != nil {
 		t.Fatalf("appending degraded event: %v", err)
+	}
+	plain := event.New(event.NewID(), "s2", "cursor", event.ChannelCLI, event.ActionShellExec,
+		"", "", decision.Decision{Verdict: decision.Allow, Reason: "genuine policy allow"})
+	if err := audit.NewWriter(auditPath).Append(plain); err != nil {
+		t.Fatalf("appending plain event: %v", err)
 	}
 
 	out, _, err := run(t, "", "log")
@@ -859,6 +927,11 @@ func TestLog_TableMarksDegradedEvents(t *testing.T) {
 	}
 	if !strings.Contains(out, "allow (degraded)") {
 		t.Fatalf("expected the degraded event's row to be visually marked in the plain-table view, got:\n%s", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "cursor") && strings.Contains(line, "(degraded)") {
+			t.Fatalf("expected the genuinely non-degraded event's row to NOT be marked (degraded), got:\n%s", out)
+		}
 	}
 }
 
