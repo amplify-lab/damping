@@ -46,13 +46,16 @@ const (
 // via tools/list, and re-exposes them over this process's own stdin/stdout —
 // running every outgoing tool call through engine and writer before
 // forwarding it to the real subprocess. Wrap blocks until the outer client
-// disconnects or ctx is cancelled.
-func Wrap(ctx context.Context, serverCmd []string, engine policy.Evaluator, writer *audit.Writer, actor string) error {
+// disconnects or ctx is cancelled. policyPath is the same policy.yaml engine
+// was already loaded from — resolvePrompt needs it directly to persist an
+// "always allow/deny" choice back into the file (see alwaysOverlay's doc
+// comment for why an in-memory overlay is layered on top of that).
+func Wrap(ctx context.Context, serverCmd []string, engine policy.Evaluator, policyPath string, writer *audit.Writer, actor string) error {
 	if len(serverCmd) == 0 {
 		return fmt.Errorf("mcp: no server command given (usage: damping mcp wrap -- <server-command...>)")
 	}
 	subprocess := exec.CommandContext(ctx, serverCmd[0], serverCmd[1:]...)
-	return wrapTransport(ctx, &gosdk.CommandTransport{Command: subprocess}, &gosdk.StdioTransport{}, engine, writer, actor)
+	return wrapTransport(ctx, &gosdk.CommandTransport{Command: subprocess}, &gosdk.StdioTransport{}, engine, policyPath, writer, actor)
 }
 
 // wrapTransport is Wrap's transport-agnostic core: connect upstream (to the
@@ -60,7 +63,7 @@ func Wrap(ctx context.Context, serverCmd []string, engine policy.Evaluator, writ
 // (to the outer client). Split out from Wrap so tests can substitute
 // mcp.NewInMemoryTransports() pairs instead of a real subprocess + this
 // process's own stdio — see wrap_test.go.
-func wrapTransport(ctx context.Context, upstream, downstream gosdk.Transport, engine policy.Evaluator, writer *audit.Writer, actor string) error {
+func wrapTransport(ctx context.Context, upstream, downstream gosdk.Transport, engine policy.Evaluator, policyPath string, writer *audit.Writer, actor string) error {
 	client := gosdk.NewClient(&gosdk.Implementation{Name: implementationName, Version: implementationVersion}, nil)
 	cs, err := client.Connect(ctx, upstream, nil)
 	if err != nil {
@@ -70,11 +73,16 @@ func wrapTransport(ctx context.Context, upstream, downstream gosdk.Transport, en
 
 	server := gosdk.NewServer(&gosdk.Implementation{Name: implementationName, Version: implementationVersion}, nil)
 
+	// One overlay per wrapped session, shared across every tool this loop
+	// registers below, so an "always" choice made on one tool call is
+	// honored immediately by any other tool call in the same session too.
+	overlay := &alwaysOverlay{}
+
 	for tool, err := range cs.Tools(ctx, nil) {
 		if err != nil {
 			return fmt.Errorf("mcp: listing tools from wrapped server: %w", err)
 		}
-		registerForwardingTool(server, cs, tool, engine, writer, actor)
+		registerForwardingTool(server, cs, tool, engine, policyPath, overlay, writer, actor)
 	}
 
 	return server.Run(ctx, downstream)
@@ -83,7 +91,7 @@ func wrapTransport(ctx context.Context, upstream, downstream gosdk.Transport, en
 // registerForwardingTool re-exposes one discovered tool on server, gating
 // every call through engine/writer before forwarding it to cs (the client
 // session connected to the real wrapped server).
-func registerForwardingTool(server *gosdk.Server, cs *gosdk.ClientSession, tool *gosdk.Tool, engine policy.Evaluator, writer *audit.Writer, actor string) {
+func registerForwardingTool(server *gosdk.Server, cs *gosdk.ClientSession, tool *gosdk.Tool, engine policy.Evaluator, policyPath string, overlay *alwaysOverlay, writer *audit.Writer, actor string) {
 	inputSchema := tool.InputSchema
 	if inputSchema == nil {
 		// Server.AddTool panics if InputSchema is nil or not type "object" —
@@ -100,10 +108,15 @@ func registerForwardingTool(server *gosdk.Server, cs *gosdk.ClientSession, tool 
 
 	server.AddTool(forwarded, func(ctx context.Context, req *gosdk.CallToolRequest) (*gosdk.CallToolResult, error) {
 		facts := factsFromCall(tool, req)
-		d := engine.Evaluate(facts)
 
-		if d.Verdict == decision.Prompt {
-			d = resolvePrompt(facts.Raw, d)
+		var d decision.Decision
+		if v, ok := overlay.verdict(facts.Raw); ok {
+			d = decision.Decision{Verdict: v, Reason: "matched an always-" + string(v) + " pattern set earlier this session"}
+		} else {
+			d = engine.Evaluate(facts)
+			if d.Verdict == decision.Prompt {
+				d = resolvePrompt(policyPath, overlay, facts.Raw, d)
+			}
 		}
 
 		if writer != nil {
@@ -155,13 +168,12 @@ func sessionIDOf(session *gosdk.ServerSession) string {
 // docs/architecture.md §6 for why this must be /dev/tty, not this
 // process's own stdin/stdout (those are reserved for the MCP JSON-RPC
 // stream with the outer client, exactly the same reasoning as the CLI hook
-// entrypoint). Persisting an "always allow/deny" resolution for MCP tool
-// calls is not yet implemented in V1 — see docs/architecture.md §7's note
-// on scope — a Prompt decision is resolved once, per call, every time. If
-// the human chose [A]/[D] anyway, they're told explicitly that it wasn't
-// remembered — the prompt itself advertises "always", so silently treating
-// it as "once" would be a real, if small, dishonesty (found via code
-// review: the resolution.Persist flag was read nowhere at all before this).
+// entrypoint). An [A]/[D] "always" choice is persisted exactly like the CLI
+// hook does — policy.AppendAlwaysPattern writes it into policyPath — and is
+// also recorded in overlay so the rest of *this* long-lived `mcp wrap`
+// session honors it immediately, without waiting for a future invocation to
+// reload the policy file (see alwaysOverlay's doc comment for why that
+// second step is necessary here but not for the one-shot CLI hook).
 // newTTYPrompter is a package-level var (not a direct call to
 // ui.OpenTTYPrompter) so tests can substitute a scripted fake reader
 // instead of a real controlling terminal — the same pattern
@@ -180,7 +192,7 @@ var newTTYPrompter = ui.OpenTTYPrompter
 // that cross-process race is a documented, lower-priority known limitation.
 var ttyPromptMu sync.Mutex
 
-func resolvePrompt(raw string, d decision.Decision) decision.Decision {
+func resolvePrompt(policyPath string, overlay *alwaysOverlay, raw string, d decision.Decision) decision.Decision {
 	ttyPromptMu.Lock()
 	defer ttyPromptMu.Unlock()
 
@@ -194,7 +206,15 @@ func resolvePrompt(raw string, d decision.Decision) decision.Decision {
 	resolution := prompter.Confirm(raw, d)
 	d.Resolve(resolution.Verdict)
 	if resolution.Persist {
-		prompter.Notify("Note: \"always\" isn't remembered for MCP tool calls yet in this version — this choice applies to this call only.")
+		if err := policy.AppendAlwaysPattern(policyPath, resolution.Verdict, raw); err != nil {
+			// Loud, not silent — the same principle as this file's other
+			// no-deeper-fallback failure paths (see registerForwardingTool's
+			// writer.Append error handling above).
+			fmt.Fprintf(os.Stderr, "damping: failed to save always-%s pattern: %v\n", resolution.Verdict, err)
+			prompter.Notify(fmt.Sprintf("Note: couldn't save this as an always-%s pattern (%v) — this choice applies to this call only.", resolution.Verdict, err))
+		} else {
+			overlay.record(resolution.Verdict, raw)
+		}
 	}
 	return d
 }

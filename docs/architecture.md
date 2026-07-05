@@ -10,10 +10,11 @@
 ├── core/                    # Go module: transport-agnostic policy engine + event schema
 │   ├── event/               # ActionEvent, Channel/ActionType/RiskLevel (action_event.go), New()+NewID() constructors (build.go)
 │   ├── decision/            # Verdict, Decision
-│   ├── policy/              # Facts + Engine.Evaluate (policy.go), Config load/validate (config.go),
+│   ├── policy/              # Facts + Evaluator interface + Engine.Evaluate (policy.go), Config load/validate (config.go),
 │   │                         #   always-allow/deny persistence (persist.go), always-pattern matching (patterns.go),
 │   │                         #   rule registry (rules.go) + matchers split by transport (rules_shell.go, rules_mcp.go —
-│   │                         #   each transport's rule family grows independently, see §4)
+│   │                         #   each transport's rule family grows independently, see §4), OPAEngine + embedded
+│   │                         #   Rego module (opa.go, policy.rego) — Phase 3, see §4
 │   └── audit/                # Append-only JSONL sink + reader/filter
 ├── cli/                     # Go module: `damping` binary (product line A)
 │   ├── cmd/                 # Cobra command tree — one file per command (init.go, doctor.go, log.go, ...)
@@ -35,7 +36,7 @@
 └── .github/workflows/       # CI: lint, unit test, BDD, gosec, SBOM
 ```
 
-**Note on `policies/`**: the canonical `default.yaml` lives at `cli/policies/default.yaml`, not a repo-root `policies/` directory as earlier planning drafts assumed. `go:embed` requires an embedded file to live inside the embedding package's own module tree (no `..` in embed patterns), and the shipped binary must embed its default policy rather than read a repo-relative path that won't exist after `go install`/`brew install`. `core/policy`'s own tests load this exact same file by relative path, so the shipped default and the tested default can never drift apart. Phase 3's Rego policy templates can still live in a root-level `policies/` directory when that work starts — OPA loads Rego at runtime, not via `go:embed`, so it isn't bound by the same constraint.
+**Note on `policies/`**: the canonical `default.yaml` lives at `cli/policies/default.yaml`, not a repo-root `policies/` directory as earlier planning drafts assumed. `go:embed` requires an embedded file to live inside the embedding package's own module tree (no `..` in embed patterns), and the shipped binary must embed its default policy rather than read a repo-relative path that won't exist after `go install`/`brew install`. `core/policy`'s own tests load this exact same file by relative path, so the shipped default and the tested default can never drift apart. Phase 3's Rego module (`core/policy/policy.rego`) follows the identical constraint and lives inside `core/policy/` itself, embedded via its own `//go:embed policy.rego` directive (see §4) — not loaded at runtime from a separate directory as an earlier draft of this note assumed.
 
 `gateway/`, `cf/`, and `dashboard/` are intentionally **not scaffolded yet** — they belong to Phase 3+ per `docs/00-統一開發計畫（定案版）.md` §5. Creating empty module skeletons for phases that are months away would be premature structure with no code to anchor it; scaffold them when their phase starts, following the same module-naming convention below.
 
@@ -175,6 +176,8 @@ See `docs/cli-reference.md` §11 for the exact wire format. Summary: both agents
 ## 7. `cli/adapter/mcp` — V1 thin adapter (not a gateway) — **implemented**
 
 The official `github.com/modelcontextprotocol/go-sdk` has no built-in interceptor/middleware hook point — it's a "register tools" SDK, not a "wrap existing calls" SDK. So `damping mcp wrap -- <server-command>` is a real client+server pair (`wrap.go`'s `wrapTransport`): it connects to the real server as an `mcp.Client` (over a `CommandTransport` subprocess), discovers its tools via `ClientSession.Tools` (auto-paginating), and re-exposes each one, unmodified, on an `mcp.Server` running over this process's own stdin/stdout (`StdioTransport`). Every forwarded tool's handler (`registerForwardingTool`) normalizes the call into `policy.Facts` (`facts.go`), runs it through the exact same `core/policy` engine and `core/audit` sink the CLI hook uses, and — only on `allow` (directly or resolved from a `Prompt` via the same `/dev/tty` mechanism as §6) — forwards the call to the real server via `ClientSession.CallTool`, returning its result unmodified. A `deny` never reaches the real server at all; it comes back as a normal `CallToolResult{IsError:true}` so the calling LLM sees a legible refusal rather than a protocol-level error.
+
+An `[A]`/`[D]` "always" choice at the prompt persists exactly like the CLI hook's (`policy.AppendAlwaysPattern` writes it into the same policy file), but `damping mcp wrap` is one long-lived process for an entire MCP session rather than a fresh subprocess per action — so writing to disk alone wouldn't make "always" true for the *rest of this session*, only for a hypothetical future run that reloads the file. `always_overlay.go`'s `alwaysOverlay` closes that gap: a small in-memory, mutex-guarded mirror of what was just persisted, checked before `engine.Evaluate` on every subsequent call in the same session, one instance shared across every tool `wrapTransport` registers.
 
 No OAuth, no token inspection or re-issuance, no confused-deputy defense — that's Phase 3's `gateway/`, an actual standalone reverse-proxy MCP server, not this in-process pair.
 
