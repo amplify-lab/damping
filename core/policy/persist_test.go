@@ -108,51 +108,10 @@ func TestAppendAlwaysPattern_IsIdempotent(t *testing.T) {
 	}
 }
 
-// TestWriteFileAtomically_NoTempFileLeftBehindOnSuccess is a permanent
-// regression test for a real issue found via code review: an earlier
-// version wrote directly to the destination path with os.WriteFile, which
-// truncates the file before writing the new content — a crash mid-write (or
-// a concurrent reader) could see a corrupt or empty policy file. The fix
-// writes to a temp file and renames it into place; this test asserts no
-// leftover temp file remains and the directory ends up with exactly the
-// expected content.
-func TestWriteFileAtomically_NoTempFileLeftBehindOnSuccess(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "policy.yaml")
-	if err := writeFileAtomically(path, []byte("hello")); err != nil {
-		t.Fatalf("writeFileAtomically: %v", err)
-	}
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 1 || entries[0].Name() != "policy.yaml" {
-		t.Fatalf("expected exactly one file (policy.yaml, no leftover temp file), got %v", entries)
-	}
-
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "hello" {
-		t.Fatalf("expected file content %q, got %q", "hello", got)
-	}
-}
-
-func TestWriteFileAtomically_SetsRestrictivePermissions(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "policy.yaml")
-	if err := writeFileAtomically(path, []byte("hello")); err != nil {
-		t.Fatalf("writeFileAtomically: %v", err)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("expected mode 0600, got %v", info.Mode().Perm())
-	}
-}
+// The atomic-write behavior itself (temp file + rename, no leftover temp
+// file, requested permissions applied, original content survives a failed
+// partial write) is tested directly in core/atomicfile, which this file now
+// delegates to — see atomicfile_test.go / atomicfile_unix_test.go.
 
 func TestAppendAlwaysPattern_RejectsPromptVerdict(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "policy.yaml")
