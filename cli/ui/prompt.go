@@ -26,11 +26,17 @@ type Resolution struct {
 type Prompter interface {
 	Confirm(raw string, d decision.Decision) Resolution
 	// Notify tells the human something outside the allow/deny question
-	// itself — e.g. cli/adapter/mcp uses this to say a requested "always"
-	// choice wasn't actually persisted, since MCP tool-call persistence
-	// isn't implemented in V1 (see wrap.go's resolvePrompt). Silently
-	// discarding an unsupported "always" choice would contradict what the
-	// prompt itself just told the user it would do.
+	// itself — e.g. cli/adapter/mcp's resolvePrompt calls this when an
+	// "always" choice was requested but couldn't actually be persisted (the
+	// policy.AppendAlwaysPattern write itself failed, such as a disk-write
+	// error), so the resolved verdict silently degrades to "this call only"
+	// instead of contradicting what the prompt just told the user it would
+	// do. MCP tool-call persistence is otherwise implemented the same way
+	// the CLI hook's is: it writes to the policy file AND records into an
+	// in-memory overlay so the rest of the same long-lived `mcp wrap`
+	// session honors it immediately (see wrap.go's resolvePrompt and
+	// always_overlay.go's doc comment for why that second step is needed
+	// there but not for the CLI hook's one-shot subprocess).
 	Notify(msg string)
 }
 

@@ -25,7 +25,7 @@ allowlisted_install_domains:
 
 rules:
   - id: destructive.rm_rf_protected
-    description: Recursive+force delete targeting a protected path — if this proceeds, this will delete your entire home directory or filesystem root
+    description: Recursive+force delete of a path that isn't a known regenerable build/cache directory (node_modules, dist, build, ...) — for your home directory, filesystem root, or a configured protected path, this could destroy irreplaceable data
     risk: critical
     action: prompt
 
@@ -45,7 +45,7 @@ rules:
     action: prompt
 
   - id: destructive.curl_pipe_sh_unallowlisted
-    description: curl|sh or wget|sh from a domain not in allowlisted_install_domains
+    description: curl|sh, curl|bash, curl|zsh, wget|sh, wget|bash, or wget|zsh from a domain not in allowlisted_install_domains
     risk: medium
     action: prompt
 
