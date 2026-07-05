@@ -177,40 +177,39 @@ Both agents fail open on anything other than the documented deny path — this i
 
 ## 12. Confirmation prompt — exact UX copy
 
+**Note on this section's history**: an earlier draft of this doc specced a richer prompt (separate `Agent:`/`Channel:`/`Risk:` lines, a distinct MCP-specific template with `Server:`/`Tool:`/`Args:`, and `[v]`/`[?]` drill-down options). The actual shipped implementation (`cli/ui/prompt.go`'s `TTYPrompter.Confirm`) is simpler and — found via a manual UX walkthrough of the real binary — was never updated to match back into this doc. This section now documents what's actually implemented, not the original aspiration:
+
+- **One shared template** for both channels, not two — the same `Confirm` call renders a CLI shell command and an MCP tool call identically; `Command:` shows whatever raw text the caller passed in (the shell command text for a hook interception, or `<tool name> <json args>` for an MCP call — see `cli/adapter/mcp/facts.go`'s `rawCallSummary`).
+- **No separate `Agent:`/`Channel:`/`Risk:` lines** — `Confirm(raw string, d decision.Decision) Resolution` doesn't receive that context at all today.
+- **`Reason:` instead of a `[?] Why is this flagged?` drill-down** — the matched rule's description is shown inline unconditionally, which is what the original `[?]` option would have surfaced on request anyway.
+- **No `[v] View full command` option** — the full `Command:` text is already shown inline, unredacted, with no truncation, so there's nothing left to drill into.
+
 Shell command interception:
 
 ```
 ⚠  Damping intercepted a destructive command
 
-  Agent:   claude-code (session 8f3a21)
-  Channel: cli
   Command: rm -rf ~/
-  Risk:    critical — this will delete your entire home directory
   Rule:    destructive.rm_rf_protected
+  Reason:  Recursive+force delete targeting a protected path — if this proceeds, this will delete your entire home directory or filesystem root
 
   [a] Allow once   [A] Always allow this exact command
   [d] Deny once    [D] Always deny this exact command
-  [v] View full command   [?] Why is this flagged?
 
 >
 ```
 
-MCP tool-call interception:
+MCP tool-call interception — the exact same template and wording (still "exact command", not "exact call" — the prompt has no channel-specific branching):
 
 ```
-⚠  Damping intercepted an MCP tool call
+⚠  Damping intercepted a destructive command
 
-  Agent:   claude-code (session 8f3a21)
-  Channel: mcp
-  Server:  filesystem-mcp
-  Tool:    filesystem.delete_all
-  Args:    {"path":"/data"}
-  Risk:    high — the server itself declares this tool destructive (destructiveHint)
+  Command: filesystem.delete_all {"path":"/data"}
   Rule:    mcp.destructive_tool_call
+  Reason:  MCP tool the server itself declared destructive (ToolAnnotations.DestructiveHint)
 
-  [a] Allow once   [A] Always allow this exact call
-  [d] Deny once    [D] Always deny this exact call
-  [v] View raw call   [?] Why is this flagged?
+  [a] Allow once   [A] Always allow this exact command
+  [d] Deny once    [D] Always deny this exact command
 
 >
 ```
