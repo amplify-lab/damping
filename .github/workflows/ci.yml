@@ -45,6 +45,15 @@ jobs:
       # policy_config) — see docs/00-統一開發計畫（定案版）.md: a scenario
       # only counts as done once it passes, so this is not optional coverage.
       - run: go test ./... -race -cover
+      # cli/shell's Analyze runs on fully untrusted, adversarially-crafted
+      # input by design (docs/threat-model.md §3) — 開發計畫.md mandates
+      # fuzzing it explicitly and repeatedly ("shell解析器一定要fuzz，惡意
+      # 輸入是常態"). A short, time-boxed run per PR catches regressions
+      # against the seed corpus's mutations without materially slowing CI;
+      # any crash a longer local run turns up gets its input committed
+      # under cli/shell/testdata/fuzz/FuzzAnalyze/ as a permanent, always-run
+      # regression case (go test picks those up even without -fuzz).
+      - run: go test ./shell/... -run=^$ -fuzz=FuzzAnalyze -fuzztime=30s
 
   security:
     name: gosec + SBOM

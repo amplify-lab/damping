@@ -162,7 +162,7 @@ Built on `mvdan.cc/sh/v3/syntax`. Two layers, not one:
    - a structural rule flagging `... | base64 -d | sh` (or `bash`/`zsh`/`eval`) pipelines regardless of the payload content,
    - a maintained string-match list of known sandbox-bypass paths (`/proc/self/root/...`, `/proc/self/exe`, etc).
 
-Every rule in both layers ships with a fuzz corpus and a "must never trigger" regression list — see `docs/00-統一開發計畫（定案版）.md` §六 and the test strategy in the original `開發計畫.md`.
+`Analyze` — not each rule individually, which would just fragment the same coverage — has real Go native fuzz coverage (`cli/shell/fuzz_test.go`'s `FuzzAnalyze`), seeded from every real bypass this package's tests assert on and run through the full `Analyze` → `Engine.Evaluate` pipeline every seed and mutation, on every rule at once; CI runs it for 30s per PR, longer locally. "Must never trigger" regressions live as ordinary Go tests (e.g. `TestAnalyze_AllowsSafeEverydayCommands`) — see `docs/00-統一開發計畫（定案版）.md` §六 and the test strategy in the original `開發計畫.md`.
 
 ## 6. `cli/cmd` hook entrypoint — Claude Code / Cursor integration contract
 
