@@ -16,7 +16,7 @@ This file is for anyone (human or AI agent) working *on* this codebase. If you'r
 | `docs/cli-reference.md` | Full `damping` command surface, hook contract, policy file schema |
 | `docs/threat-model.md` | What Damping defends against, known bypass classes, fail-open vs. fail-closed |
 | `docs/ux-dashboard-spec.md` | Phase 4/5 team dashboard & enterprise compliance UI spec |
-| `docs/enterprise-architecture-research.md` | Research on Phase 3/4/5 infra choices (self-hosted vs. vendor) and a Phase 6 spec draft |
+| `docs/調查資料/` | Enterprise infra research (Phase 3/4/5 self-hosted vs. vendor choices, Phase 6 spec) — three rounds, each verifying and adversarially stress-testing the last against primary sources |
 | `features/` | Gherkin BDD scenarios — the acceptance criteria for every phase |
 | `core/` | Transport-agnostic policy engine, schema, audit log — no dependency on any specific agent/transport |
 | `cli/` | The `damping` binary: hook entrypoint, `mcp wrap`, `log`/`status`/`doctor`/`dashboard` subcommands |
@@ -88,7 +88,7 @@ High-level status lives in README.md; this is the deeper per-package picture.
 - **OPA/Rego policy engine (Phase 3, partial)** — every rule above also has an embedded OPA/Rego implementation (`core/policy/policy.rego` + `opa.go`), selectable per-deployment via `policy.yaml`'s `engine: opa` field. `core/policy/opa_equivalence_test.go` proves both engines return byte-identical decisions for every rule; `opa_bench_test.go` gates eval latency at sub-millisecond.
 - **`damping dashboard`** — a local, single-user web view of the audit log (`cli/dashboard`): summary strip, filterable event table, per-session risk sparklines, live tail via Server-Sent Events, no separate frontend build (vanilla JS + a Tailwind-compiled stylesheet checked into the repo, embedded via `go:embed`). Not Phase 4's team dashboard (`docs/ux-dashboard-spec.md`) — that's a separate, not-yet-built React+TS app.
 - **Release engineering** (`.goreleaser.yaml`, `install.sh`, `.github/workflows/release.yml`) — cross-platform builds, a Homebrew cask, a one-line install script, all verified end-to-end locally.
-- **Not yet built**: Phase 3's full Gateway (OAuth 2.1, confused-deputy defense), Phase 4's Cloudflare-based team dashboard, Phase 5's enterprise/compliance tier, Phase 6's memory-poisoning defense. See `docs/enterprise-architecture-research.md` for infra research already done on Phases 3-6 (self-hosted vs. vendor tradeoffs, a concrete Phase 6 spec draft).
+- **Not yet built**: Phase 3's full Gateway (OAuth 2.1, confused-deputy defense), Phase 4's Cloudflare-based team dashboard, Phase 5's enterprise/compliance tier, Phase 6's memory-poisoning defense. See `docs/調查資料/` for infra research already done on Phases 3-6 (self-hosted vs. vendor tradeoffs, a concrete Phase 6 spec draft) — read round 3 first, it supersedes rounds 1-2's reversed calls.
 - **Windows** — the `/dev/tty` interactive-prompt approach is Unix-only; `cli/ui/tty_windows.go` currently falls back to deny-by-default and documents the gap rather than faking support.
 
 ## CSS
