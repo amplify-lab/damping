@@ -70,9 +70,11 @@ Cryptocurrency/wallet operations specifically: the credential-exfiltration path 
 ### 1. Install and set up
 
 ```
-brew install damping        # or: curl -sSL https://damping.dev/install | sh
+curl -fsSL https://raw.githubusercontent.com/amplify-lab/damping/main/install.sh | sh
 damping init                # detects Claude Code / Cursor / Codex, installs the default policy, registers hooks
 ```
+
+The shorter `brew install damping` / `curl -sSL https://damping.dev/install | sh` forms are the intended long-term install UX, but aren't live yet — see "Deploying Damping" below for exactly what's still missing. The command above installs the same real, checksum-verified binary from the same GitHub Release; only the shortcut hasn't shipped.
 
 `damping init` prints a confirmation for every agent it found and wired up, and closes with a one-line demo suggestion (`ask your agent to run rm -rf /tmp/test`) — that's step 2 below.
 
@@ -137,6 +139,30 @@ damping off --for 30m               # pause enforcement (the only sanctioned way
 
 Full command reference: [`docs/cli-reference.md`](docs/cli-reference.md).
 
+## Deploying Damping
+
+**Install methods and their current real status** — checked directly against the live `v0.1.0` release, not assumed:
+
+| Method | Status |
+| --- | --- |
+| `curl -fsSL https://raw.githubusercontent.com/amplify-lab/damping/main/install.sh \| sh` | **Works today** — downloads the matching platform archive from the latest GitHub Release, verifies its SHA-256 checksum, installs to `/usr/local/bin` (override with `DAMPING_INSTALL_DIR`; pin a version with `DAMPING_VERSION=vX.Y.Z`) |
+| Manual download from [GitHub Releases](https://github.com/amplify-lab/damping/releases) | **Works today** — 5 platform archives (linux/darwin × amd64/arm64, windows/amd64) plus `checksums.txt` per release |
+| `brew install damping` | **Not live yet** — the `amplify-lab/homebrew-tap` repo exists but is still empty; see "Releasing a new version" below for the exact blocker |
+| `curl -sSL https://damping.dev/install \| sh` | **Not live yet** — `damping.dev` is registered but not yet configured to serve `install.sh`'s content at that path |
+
+**Deploying to a team, not just yourself**: V1 has no centralized fleet-management or push-based rollout mechanism — each developer runs `damping init` on their own machine, and each machine's `~/.damping/policy.yaml` is independent of every other. If you want the same policy across a whole team today, the practical approach is distributing your own `policy.yaml` (e.g. via your dotfiles repo, or a wrapper script that copies it into place right after `damping init`) rather than anything Damping ships out of the box — centralized policy distribution and fleet management is Phase 5 scope, not built yet.
+
+**Verifying a deployment actually worked**, on any single machine:
+
+```
+damping doctor      # hook registration, policy validity, degraded-mode history — exit code 4 if anything's wrong
+damping status      # is it ON, which policy file, which agents are actually wired up
+```
+
+Both are read-only and safe to run repeatedly — `damping doctor` is the one to script into an onboarding checklist or a health check, since it's the only command here with a non-zero exit code on failure. Beyond "is it installed," the real proof it's *working* is the demo in step 2 above: ask the agent to run `rm -rf /tmp/test` and confirm you actually see the interception prompt, not just that the binary exists on `$PATH`.
+
+**Pausing or removing it**: `damping off` (optionally `--for 30m`) is the sanctioned way to pause enforcement temporarily — see `docs/threat-model.md` §4 for why this, not deleting the binary, is the supported path. To fully remove Damping: delete the installed binary, delete `~/.damping/`, and remove the hook entries `damping init` added to `~/.claude/settings.json` / `~/.cursor/hooks.json` / `~/.codex/hooks.json` (`damping doctor` will report a hook as missing once it's gone, confirming the removal took).
+
 ## What's real right now (V1 / Phase 1)
 
 Everything below is implemented and covered by passing tests — not aspirational:
@@ -154,6 +180,40 @@ Not yet built: Phase 3's full enterprise Gateway (OAuth 2.1, confused-deputy def
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to contribute, or [`CLAUDE.md`](CLAUDE.md) for the full engineering conventions and repository map. The single most valuable contribution is a false positive report — a normal command Damping wrongly flagged — or a genuine bypass of a default rule. Both become permanent regression scenarios, never one-off fixes.
+
+## Releasing a new version
+
+Cutting a release is a deliberate, human-initiated act — pushing a `v*` tag is the only thing that triggers `.github/workflows/release.yml`; nothing runs on an ordinary push to `main`.
+
+```
+git tag -a vX.Y.Z -m "..."
+git push origin main         # if main itself hasn't been pushed yet
+git push origin vX.Y.Z
+```
+
+This runs `goreleaser release --clean` (`.goreleaser.yaml`): cross-compiles all 5 platform targets, publishes a GitHub Release with the archives plus `checksums.txt`, and pushes an updated Homebrew cask to `amplify-lab/homebrew-tap`.
+
+**Before tagging**, sanity-check the release build locally without publishing anything real:
+
+```
+goreleaser release --snapshot --clean --skip=publish
+```
+
+**After tagging**, verify the release actually shipped — don't just glance at the workflow's pass/fail badge (see the known gap below for why that specifically isn't reliable right now):
+
+```
+gh run list --repo amplify-lab/damping --limit 1                        # did the Release workflow even run
+gh release view vX.Y.Z --repo amplify-lab/damping --json assets,isDraft # are all 5 archives + checksums.txt really there, and it's not a draft
+curl -fsSL https://raw.githubusercontent.com/amplify-lab/damping/main/install.sh | DAMPING_VERSION=vX.Y.Z DAMPING_INSTALL_DIR=/tmp/damping-verify sh && /tmp/damping-verify/damping version
+```
+
+That last line is the real proof — it exercises the actual published archive plus checksum verification, not just the GitHub API metadata.
+
+**Known outstanding gaps, first hit shipping `v0.1.0` (2026-07-06)** — the GitHub Release itself succeeded (all 5 archives + checksums uploaded, install.sh verified working end-to-end) and these are the only two pieces not live yet:
+- The Homebrew cask push to `amplify-lab/homebrew-tap` fails with `403 Resource not accessible by personal access token`. The `HOMEBREW_TAP_GITHUB_TOKEN` repo secret exists but the token behind it doesn't currently have write access to that repo's contents — it needs to be regenerated (fine-grained PAT scoped to `amplify-lab/homebrew-tap` with Contents: Read and write, or a classic PAT with `repo` scope) and re-saved as that same secret. This is a credential action for whoever holds that GitHub account to do directly — never generate or paste a token through an AI assistant.
+- `https://damping.dev/install` still serves the domain registrar's default parking redirect (to `/lander`), not `install.sh`'s content — the domain is registered but nothing is deployed to serve this path yet. Needs DNS/hosting configuration outside this repo (e.g. a Cloudflare redirect rule or Pages deployment pointing that path at the raw `install.sh` content).
+
+Because of the first gap, the "Release" GitHub Actions run's own pass/fail badge reflects the Homebrew step's exit code — it will show red even on a release that otherwise shipped completely correctly. Don't read a failed workflow run as "the release didn't go out"; check the actual GitHub Release page and run the install-path verification above instead.
 
 ## Security
 
