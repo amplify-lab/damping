@@ -22,6 +22,7 @@ jobs:
       - uses: golangci/golangci-lint-action@v6
         with:
           working-directory: core
+          version: "~> v2"
       - run: go test ./... -race -cover
 
   cli:
@@ -40,6 +41,7 @@ jobs:
       - uses: golangci/golangci-lint-action@v6
         with:
           working-directory: cli
+          version: "~> v2"
       # cli/bdd runs every V1-scope features/*.feature file through godog
       # (dangerous_command, self_protection, mcp_tool_governance, audit_log,
       # policy_config) — see docs/00-統一開發計畫（定案版）.md: a scenario
