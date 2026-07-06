@@ -30,6 +30,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newOnCmd())
 	root.AddCommand(newOffCmd())
 	root.AddCommand(newLogCmd())
+	root.AddCommand(newComplianceReportCmd())
 	root.AddCommand(newDashboardCmd())
 	root.AddCommand(newPolicyCmd())
 	root.AddCommand(newHookCmd())

@@ -143,6 +143,22 @@ Filters: `--channel cli|mcp`, `--risk low|medium|high|critical`, `--since <durat
 
 Filtering by `--channel` is also the concrete, in-product demonstration of the cross-channel unification claim in the master plan — this is where a skeptical reviewer sees "one log, two channels" for themselves.
 
+## 7.1 `damping compliance-report` (early demo — not the Phase 5 enterprise feature)
+
+```
+$ damping compliance-report demo                    # synthetic 30-day dataset, no real audit history needed
+$ damping compliance-report demo --format text       # plain-terminal rendering
+$ damping compliance-report demo --format json
+$ damping compliance-report export                   # real report from ~/.damping/audit.jsonl
+$ damping compliance-report export --since 720h      # real report, last 30 days only
+```
+
+`core/compliance` (new package) formats a set of `ActionEvent`s into a report listing every high-risk/critical action with its actor, bound identity (if any), channel, timestamp, matched rule, decision, and outcome — the field set `features/compliance_report.feature` itself asks for. **This is deliberately not that feature** — the full Phase 5 enterprise compliance report requires an on-prem deployment, AD/LDAP-bound identity, and append-only PostgreSQL history, none of which exist yet (see `docs/00-統一開發計畫（定案版）.md` §七 item 15, milestone M1). `compliance-report demo` exists specifically to be demoable to a prospective customer before any of that is built — it runs against a fictional but internally-consistent 30-day "bank dev team" dataset (`core/compliance.SyntheticDemoDataset`) built entirely from real, shipped rule ids, and the rendered output says so explicitly, on every render, in every format.
+
+`compliance-report export` reads the real local audit log the same way `damping log` does (same `--since` duration syntax), so it's a genuine (if lighter-weight) report over whatever history actually exists on the machine it runs on — no separate demo/real code path for the report logic itself, only the event source differs.
+
+**Honest scope disclosure baked into the report itself, not just this doc**: every render states plainly that it is not an official regulator-issued template — Taiwan's FSC had not published a fixed compliance-report format as of this command's writing (see `docs/調查資料/phase5-enterprise-controlplane-design.md` §4's regulatory research) — and that it is not the Phase 5 enterprise feature. `--format markdown` (the default) is the form meant to actually be handed to a prospect or their compliance officer; `--format text` is for a quick terminal look; `--format json` is for future scripting/integration.
+
 ## 8. `damping policy`
 
 ```

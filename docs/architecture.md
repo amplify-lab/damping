@@ -19,8 +19,13 @@
 │   ├── atomicfile/            # Write() — temp-file+rename crash-safe write, shared by policy's
 │   │                         #   AppendAlwaysPattern and cli/adapter/agent's hook installers (both
 │   │                         #   overwrite an existing file in place and needed the identical fix)
-│   └── audit/                # Append-only JSONL sink + reader/filter; Writer.Append also rotates
-│                             #   via Rotate() once the file crosses a size threshold
+│   ├── audit/                # Append-only JSONL sink + reader/filter; Writer.Append also rotates
+│   │                         #   via Rotate() once the file crosses a size threshold
+│   └── compliance/           # Report/Entry + Generate() — formats ActionEvents into a compliance-
+│                             #   report view (report.go) + SyntheticDemoDataset (demo.go) for
+│                             #   `damping compliance-report demo` — the Phase 4/5 dev-sequencing
+│                             #   M1 milestone (§七 item 15), explicitly NOT the full Phase 5
+│                             #   enterprise feature (features/compliance_report.feature)
 ├── cli/                     # Go module: `damping` binary (product line A)
 │   ├── cmd/                 # Cobra command tree — one file per command (init.go, doctor.go, log.go, ...)
 │   ├── shell/                # AST traversal (parser.go), Facts extraction (facts.go), static-value

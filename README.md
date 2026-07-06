@@ -172,7 +172,8 @@ Everything below is implemented and covered by passing tests — not aspirationa
 - `damping mcp wrap` — the same policy engine and audit log, for MCP tool calls too, not just your terminal.
 - A local `damping dashboard` (screenshot above) and `damping log` for replaying the full audit trail across both channels.
 - An embedded OPA/Rego policy engine as a selectable alternative to the default Go-native one.
-- 162 BDD (Gherkin) scenarios, all wired to real code and passing, not just documentation.
+- `damping compliance-report demo` / `export` — an early, honestly-scoped preview of the eventual enterprise compliance report: `demo` needs no real deployment (a synthetic 30-day dataset built entirely from real, shipped rules), `export` runs the same report over your actual local audit log. Explicitly not the full Phase 5 enterprise feature (no on-prem deployment, no AD/LDAP identity binding, no PostgreSQL) — see [`docs/cli-reference.md`](docs/cli-reference.md) §7.1.
+- 169 BDD (Gherkin) scenarios, all wired to real code and passing, not just documentation.
 - Cross-platform release engineering (Homebrew, one-line install script, GitHub Releases for linux/darwin × amd64/arm64).
 
 Not yet built: Phase 3's full enterprise Gateway (OAuth 2.1, confused-deputy defense), Phase 4's Cloudflare-based team dashboard, Phase 5's enterprise/compliance tier. Engineering-level detail on everything above lives in [`CLAUDE.md`](CLAUDE.md), not here.
