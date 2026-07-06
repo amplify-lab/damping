@@ -2,6 +2,8 @@
 
 *Prepared for Tim (founder, Damping). This is the decisive second pass on [`enterprise-architecture-research.md`](enterprise-architecture-research.md): a dedicated verify agent and a dedicated adversarial (try-to-refute) agent ran independently per topic against primary sources, plus a new research thread on Claude Code Skills as a memory-poisoning attack surface. Each topic below ends in a committed recommendation, not a list of caveats.*
 
+> **Superseded in part — see [`enterprise-architecture-research-round3.md`](enterprise-architecture-research-round3.md).** A third round applied the same verify+adversarial rigor to round 2's own NEW claims (Authlete, Ory Polis, the Phase 5 sequencing precedents) plus a dedicated CodeIntegrity competitive deep-dive. Round 3 reverses round 2's Phase 3 (Authlete) and Phase 5 (SaaS-first) calls, and refines Phase 4/6. Round 3's own verdict: three rounds is enough — remaining questions need a vendor call, a spike, or a business decision, not more research.
+
 ---
 
 ## 1. Executive Summary
