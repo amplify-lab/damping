@@ -100,7 +100,15 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 	case "beforeShellExecution":
 		actor, sessionID, rawCommand = "cursor", in.ConversationID, in.Command
 	default:
-		return nil // an event type this V1 adapter doesn't judge, not a recognized-but-unhandled failure
+		// An unrecognized hook_event_name means a third agent (or a future,
+		// unrecognized event from Claude Code/Cursor themselves) is calling
+		// this hook — not "nothing to judge here." Treating it as a silent
+		// no-op let the command run completely unchecked with zero trace,
+		// quieter even than the malformed-JSON path above. Log it the same
+		// way instead, so an unrecognized agent shows up in `damping doctor`
+		// rather than vanishing.
+		logDegraded(cmd, writer, hasAuditSink, "unknown", "unknown", fmt.Sprintf("unrecognized hook_event_name %q: no policy evaluation performed", in.HookEventName))
+		return nil
 	}
 	if sessionID == "" {
 		sessionID = "unknown"

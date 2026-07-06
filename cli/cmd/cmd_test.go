@@ -752,19 +752,33 @@ func TestHook_CursorAuditRecordUsesActorAndConversationID(t *testing.T) {
 	}
 }
 
-// TestHook_UnrecognizedHookEventPassesThrough confirms an event type this
-// V1 adapter doesn't recognize at all (neither PreToolUse nor
-// beforeShellExecution) is treated the same as a non-Bash Claude Code tool
-// call — passed through untouched — rather than silently mis-parsed as one
-// of the two known shapes.
-func TestHook_UnrecognizedHookEventPassesThrough(t *testing.T) {
+// TestHook_UnrecognizedHookEventPassesThroughButLogsDegraded is a regression
+// test for a real bug the cross-tool-positioning-verification research
+// found: an event type this V1 adapter doesn't recognize at all (neither
+// PreToolUse nor beforeShellExecution — e.g. a third agent Damping doesn't
+// yet parse) used to hit a bare `default: return nil`, running the command
+// completely unchecked with zero audit trail — quieter even than the
+// malformed-JSON path, which at least logs degraded. It's still correct to
+// fail open here (Damping can't force a fail-closed outcome once an
+// unrecognized agent's own hook contract takes over), but it must not be
+// silent — see TestHook_MalformedInputFailsOpenButLogsDegraded for the
+// parallel case this now matches.
+func TestHook_UnrecognizedHookEventPassesThroughButLogsDegraded(t *testing.T) {
 	setupTestEnv(t)
 	if _, _, err := run(t, "", "init"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 	stdin := `{"hook_event_name":"somethingElseEntirely","command":"rm -rf /"}`
 	if _, _, err := run(t, stdin, "hook", "pretooluse"); err != nil {
-		t.Fatalf("expected an unrecognized hook_event_name to pass through untouched, got %v", err)
+		t.Fatalf("expected an unrecognized hook_event_name to still pass through (fail open), got %v", err)
+	}
+
+	logOut, _, err := run(t, "", "log", "--outcome", "degraded")
+	if err != nil {
+		t.Fatalf("log: %v", err)
+	}
+	if strings.Contains(logOut, "No audit events") {
+		t.Fatal("expected a degraded audit record for an unrecognized hook_event_name, got none")
 	}
 }
 
