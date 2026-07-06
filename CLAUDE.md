@@ -2,24 +2,6 @@
 
 This file is for anyone (human or AI agent) working *on* this codebase. If you're looking for how to *use* Damping, see [`README.md`](README.md) instead.
 
-## README.md is public-facing only — what never goes there
-
-`README.md` is written for the general public: anyone deciding whether to install and use Damping. Keep it to usage, the quick-start tutorial, the demo screenshot, and the feature comparison table — nothing else. Specifically, **never add to `README.md`** (or any other file destined for this public repo):
-
-- Internal development plans, roadmap reasoning, phase-sequencing rationale, or anything that reads like a decision log for the team rather than documentation for a user. That belongs in `CLAUDE.md` (engineering conventions) or a dedicated research doc under `docs/`, not the README.
-- Business-sensitive content of any kind: pricing/negotiation strategy, named prospect/customer lists, financial projections, competitor commentary that isn't measured and fact-checked (a fair, sourced comparison table is fine — an uncited jab is not), or anything that reads as internal strategy rather than public product information.
-- Credentials, tokens, API keys, or any other secret — obviously, but this repo's own history has a real incident to learn from (see below).
-
-This project already learned this lesson the expensive way once: on first publishing this repo, a pre-push audit caught a real leaked access token and 5 internal business-planning documents (market research, business plan, brand naming, competitive positioning/messaging strategy) that had been sitting in `docs/` since early commits. All were removed via `git-filter-repo` from full git history (not just deleted in a new commit — that would leave them recoverable in old commits), and one round of that removal happened *after* the repo had already gone public, requiring a force-push to overwrite exposed history. Full backups of the removed content exist outside this repo for Tim's own reference, not in git. See the commit history around 2026-07-06 (`chore: remove internal-only planning docs before first public push` and the docs/00 follow-up) for the specifics, and treat any future "should this go in the public repo" question the same way: if you're unsure whether something is public-safe, it isn't — ask first, don't publish and fix later.
-
-## Repo status
-
-`github.com/amplify-lab/damping` is **public**, live, and this is the *only* public-facing artifact for this project — there is no separate private mirror repo. Everything under version control here (code, docs, commit history) is visible to anyone.
-
-This repo is one product living inside a larger private project root Tim maintains (`~/projects/amplify-lab/` on his own machine — not a git repository itself; this `damping` repo is a subdirectory of it, alongside future sibling repos for the team/enterprise tier or other future Amplify Lab products). That root's own `docs/` folder (not gitignored-inside anything — fully outside every git repo, which is a harder guarantee than gitignore against an accidental `git add -f` or a gitignore misconfiguration) is not just an archive of removed files — it is the **active, ongoing home for this whole project's planning and discussion**, the same role `docs/00-統一開發計畫（定案版）.md` used to serve before it was removed from this repo. It currently holds: the five internal planning documents and the old master plan doc removed per the section above, the enterprise-infrastructure research (three rounds — self-hosted-vs-vendor tradeoffs for the OAuth/Cloudflare/control-plane/memory-poisoning decisions, moved out of this repo's `docs/` for the same reason as the other business/competitive-reasoning content above), and going forward, any new planning, roadmap discussion, or internal research should be drafted there by default — only promote something into this actual repo once it's deliberately decided to be public product documentation. If you're an AI agent working in this repo and need that context, ask Tim directly for it — do not attempt to reconstruct any of it here from memory or old conversation context, and do not assume it's absent or that planning has stalled just because you don't see a roadmap doc in this repo.
-
-The billing/licensing/enterprise-control-plane code for Phase 5 does not exist yet and, per the agreed open-core model, will live in a **separate, private repository** when it's built — never in this one. This repo (`core/` + `cli/`) is and stays the permissively-licensed, publicly-inspectable half of the product on purpose; that inspectability is a stated part of Damping's trust story, not an oversight to fix later.
-
 ## Read first
 
 - [`docs/architecture.md`](docs/architecture.md) — module layout, the `ActionEvent`/`Decision` schema, why `core/` and `cli/` are split.
@@ -105,7 +87,7 @@ High-level status lives in README.md; this is the deeper per-package picture.
 - **OPA/Rego policy engine (Phase 3, partial)** — every rule above also has an embedded OPA/Rego implementation (`core/policy/policy.rego` + `opa.go`), selectable per-deployment via `policy.yaml`'s `engine: opa` field. `core/policy/opa_equivalence_test.go` proves both engines return byte-identical decisions for every rule; `opa_bench_test.go` gates eval latency at sub-millisecond.
 - **`damping dashboard`** — a local, single-user web view of the audit log (`cli/dashboard`): summary strip, filterable event table, per-session risk sparklines, live tail via Server-Sent Events, no separate frontend build (vanilla JS + a Tailwind-compiled stylesheet checked into the repo, embedded via `go:embed`). Not Phase 4's team dashboard (`docs/ux-dashboard-spec.md`) — that's a separate, not-yet-built React+TS app.
 - **Release engineering** (`.goreleaser.yaml`, `install.sh`, `.github/workflows/release.yml`) — cross-platform builds, a Homebrew cask, a one-line install script, all verified end-to-end locally.
-- **Not yet built**: Phase 3's full Gateway (OAuth 2.1, confused-deputy defense), Phase 4's Cloudflare-based team dashboard, Phase 5's enterprise/compliance tier, Phase 6's memory-poisoning defense. Infra research on these (self-hosted vs. vendor tradeoffs, a concrete Phase 6 spec draft) exists but lives outside this repo — see "Repo status" above; ask Tim for it.
+- **Not yet built**: Phase 3's full Gateway (OAuth 2.1, confused-deputy defense), Phase 4's Cloudflare-based team dashboard, Phase 5's enterprise/compliance tier, Phase 6's memory-poisoning defense.
 - **Windows** — the `/dev/tty` interactive-prompt approach is Unix-only; `cli/ui/tty_windows.go` currently falls back to deny-by-default and documents the gap rather than faking support.
 
 ## CSS
