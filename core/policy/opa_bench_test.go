@@ -19,6 +19,9 @@ func TestOPAEngine_EvalStaysSubMillisecond(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing-sensitive; skipped in -short")
 	}
+	if raceModeEnabled {
+		t.Skip("timing-sensitive; skipped under -race, whose own instrumentation overhead alone can blow a sub-millisecond budget regardless of real eval cost")
+	}
 	cfg, err := LoadConfig(defaultPolicyPath(t))
 	if err != nil {
 		t.Fatalf("loading default policy: %v", err)

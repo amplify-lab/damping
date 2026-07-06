@@ -83,14 +83,20 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
+      # Installed as a native binary (like cyclonedx-gomod below) rather
+      # than run via securego/gosec's Docker-based action: that action
+      # silently killed this job mid-scan on core/policy with no error
+      # message (no "process failed with exit code" line either — the
+      # signature of the container being killed externally, not gosec
+      # itself failing), most likely nested-Docker resource pressure
+      # scanning a package this size; reproducing the identical scan
+      # natively (no Docker layer) completed in ~1s with 0 issues.
+      - name: install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.27.1
       - name: gosec (core)
-        uses: securego/gosec@v2.27.1
-        with:
-          args: "-fmt sarif -out core-gosec.sarif ./core/..."
+        run: gosec -fmt sarif -out core-gosec.sarif ./core/...
       - name: gosec (cli)
-        uses: securego/gosec@v2.27.1
-        with:
-          args: "-fmt sarif -out cli-gosec.sarif ./cli/..."
+        run: gosec -fmt sarif -out cli-gosec.sarif ./cli/...
       - name: SBOM (core)
         run: |
           go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
