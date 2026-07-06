@@ -36,6 +36,24 @@ Here's the honest breakdown against the closest tools in this space — we'd rat
 
 Nobody else in this space unifies CLI and MCP under one engine and one audit trail at individual-developer scale — that's the actual differentiator, not the shell-blocking demo alone.
 
+## Real incidents this defends against
+
+Every rule below exists because of a real, documented incident — not a hypothetical. Damping's rules are sourced, tested against the actual command shape each incident involved, and re-verified before being cited here.
+
+| What happened | Rule that catches it |
+| --- | --- |
+| A Claude Code session ran `rm -rf` and wiped a user's entire home directory. | `destructive.rm_rf_protected` |
+| A Cursor agent deleted 70 files after being told explicitly not to execute anything. | `destructive.rm_rf_protected` |
+| A Replit agent deleted a production database affecting 1,200+ executives at a customer company. | `destructive.sql_drop_truncate` (now also covers unscoped `UPDATE`/`DELETE` with no `WHERE` clause, and `redis-cli FLUSHALL`/`FLUSHDB`) |
+| A sandboxed agent bypassed a blacklist via `/proc/self/root/usr/bin/npx`, then disabled the sandbox entirely once caught. | `destructive.proc_sandbox_bypass` |
+| A Claude Code session ran `terraform destroy` against DataTalks.Club's real production AWS account (a stale Terraform state file after switching machines), wiping the VPC/RDS/ECS stack — 2.5 years of course data, ~1.94M database rows, restored only because AWS kept a snapshot invisible in its own console ([Tom's Hardware](https://www.tomshardware.com/tech-industry/artificial-intelligence/claude-code-deletes-developers-production-setup-including-its-database-and-snapshots-2-5-years-of-records-were-nuked-in-an-instant), recorded as [incidentdatabase.ai](https://incidentdatabase.ai/cite/1424) Incident #1424). | `destructive.iac_destroy` / `destructive.iac_apply_unreviewed` (also catches `pulumi destroy`/`up --yes`, `cdk destroy`, and any `terraform apply`/`pulumi up` that skips the tool's own human-review step) |
+| The TrapDoor campaign (May 2026, [verified via socket.dev](https://socket.dev/blog/trapdoor-crypto-stealer-npm-pypi-crates)) planted hidden instructions in `CLAUDE.md`/`.cursorrules` files to manipulate Claude Code and Cursor into running a fake "security scan" that read and exfiltrated SSH keys, AWS credentials, and Solana/Sui/Aptos crypto wallet keystores. | `destructive.secret_exfiltration` — a general credential-exfiltration rule (any protected path read and sent to a non-allowlisted network destination), not a crypto-specific one; wallet keystore paths are just additional entries in the same list |
+| Anthropic's own Claude Code natively blocks `git reset --hard`/`clean -fd`/`stash drop`/`checkout -- .` and `terraform`/`pulumi`/`cdk destroy` as of a recent CHANGELOG entry — but only in Claude Code's own "auto" mode, only for that one vendor, and via the model's own judgment rather than a deterministic rule. | `destructive.git_history_destructive`, `destructive.iac_destroy` — tool-agnostic and deterministic, so the same protection applies regardless of which agent or mode you're using |
+
+Cryptocurrency/wallet operations specifically: the credential-exfiltration path above is real and directly targets Claude Code/Cursor today (TrapDoor). Directly intercepting a wallet-transfer command itself (`cast send`, `solana transfer`, ...) is a narrower, Web3-specific scenario with thinner evidence on this exact product surface — tracked as a possible future addition, not shipped today, and deliberately not oversold here.
+
+**Honestly out of scope today, not silently assumed solved:** two real 2025-2026 supply-chain campaigns worth naming precisely rather than folding into the table above, because Damping does **not** yet catch either — the Nx/s1ngularity attack (2,349 credentials leaked via a weaponized AI coding agent that pushed stolen secrets to a newly-public `gh repo create`d GitHub repo) and a 2026-05 node-ipc backdoor (credential theft via DNS TXT-query tunneling). Neither `gh repo create` nor DNS-based exfiltration is in `destructive.secret_exfiltration`'s detection surface yet — both are real, scoped candidates for a future rule, not something already covered.
+
 ## Physics, briefly
 
 *Damping* (阻尼), in physics, is the force that suppresses runaway oscillation and brings a system back to a stable range — it doesn't stop the system, it stabilizes it. That's the whole product philosophy: **governance isn't about blocking your AI agent. It's about damping its failure modes so it runs stably.** (Part of Amplify Lab's physics-themed product family.)
@@ -116,11 +134,11 @@ Full command reference: [`docs/cli-reference.md`](docs/cli-reference.md).
 
 Everything below is implemented and covered by passing tests — not aspirational:
 
-- CLI shell-command interception, with real AST parsing (not regex), across 11 default rules (destructive deletes, force pushes, destructive SQL, recursive permission changes, unvetted install pipelines, encoded payloads, sandbox-bypass paths, and more) — see `docs/threat-model.md` for the full list and known bypass classes.
+- CLI shell-command interception, with real AST parsing (not regex), across 15 default rules (destructive deletes, force pushes, destructive SQL/Mongo/Redis, recursive permission changes, unvetted install pipelines, encoded payloads, sandbox-bypass paths, infra-as-code destroy/unreviewed-apply, destructive git history operations, secret exfiltration, and more) — see [`docs/threat-model.md`](docs/threat-model.md) and the "Real incidents this defends against" section below for the full list and the real-world incidents behind each one.
 - `damping mcp wrap` — the same policy engine and audit log, for MCP tool calls too, not just your terminal.
 - A local `damping dashboard` (screenshot above) and `damping log` for replaying the full audit trail across both channels.
 - An embedded OPA/Rego policy engine as a selectable alternative to the default Go-native one.
-- 90 BDD (Gherkin) scenarios, all wired to real code and passing, not just documentation.
+- 110 BDD (Gherkin) scenarios, all wired to real code and passing, not just documentation.
 - Cross-platform release engineering (Homebrew, one-line install script, GitHub Releases for linux/darwin × amd64/arm64).
 
 Not yet built: Phase 3's full enterprise Gateway (OAuth 2.1, confused-deputy defense), Phase 4's Cloudflare-based team dashboard, Phase 5's enterprise/compliance tier. Engineering-level detail on everything above lives in [`CLAUDE.md`](CLAUDE.md), not here.

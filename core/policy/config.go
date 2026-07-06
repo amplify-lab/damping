@@ -25,11 +25,16 @@ type Config struct {
 	// Phase 3's Gateway/enterprise deployments should prefer it instead).
 	Engine string `yaml:"engine,omitempty"`
 
-	ProtectedPaths            []string     `yaml:"protected_paths"`
-	AllowlistedInstallDomains []string     `yaml:"allowlisted_install_domains"`
-	Rules                     []RuleConfig `yaml:"rules"`
-	AlwaysAllow               []string     `yaml:"always_allow"`
-	AlwaysDeny                []string     `yaml:"always_deny"`
+	ProtectedPaths            []string `yaml:"protected_paths"`
+	AllowlistedInstallDomains []string `yaml:"allowlisted_install_domains"`
+	// AllowlistedEgressDomains is checked by destructive.secret_exfiltration
+	// — deliberately a separate list from AllowlistedInstallDomains, since
+	// "safe to install from" and "safe to send local file contents to" are
+	// different trust decisions a user may want to configure independently.
+	AllowlistedEgressDomains []string     `yaml:"allowlisted_egress_domains"`
+	Rules                    []RuleConfig `yaml:"rules"`
+	AlwaysAllow              []string     `yaml:"always_allow"`
+	AlwaysDeny               []string     `yaml:"always_deny"`
 }
 
 // EngineNative and EngineOPA are the recognized values for Config.Engine.

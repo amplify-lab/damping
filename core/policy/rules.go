@@ -31,6 +31,12 @@ var matchers = map[string]matcher{
 	"mcp.write_tool_unscoped_identity":         matchMCPWriteToolUnscopedIdentity,
 	"mcp.destructive_tool_call":                matchMCPDestructiveToolCall,
 	"self_protection.damping_off_attempt":      matchDampingSelfDisableAttempt,
+
+	// 2026-07 dangerous-command-coverage expansion (rules_expansion.go).
+	"destructive.iac_destroy":             matchIACDestroy,
+	"destructive.iac_apply_unreviewed":    matchIACApplyUnreviewed,
+	"destructive.git_history_destructive": matchGitHistoryDestructive,
+	"destructive.secret_exfiltration":     matchSecretExfiltration,
 }
 
 // RedirectWritePlaceholder is what cli/shell sets Facts.Command to when it

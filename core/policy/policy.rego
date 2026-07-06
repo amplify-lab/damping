@@ -167,6 +167,32 @@ matches contains "destructive.sql_drop_truncate" if {
 	regex.match(`(?i)\bdb\.\w+\.drop\(\)|\bdb\.dropDatabase\(\)|\.(?:deleteMany|remove)\(\s*(?:\{\s*\})?\s*\)`, a)
 }
 
+# 2026-07 coverage expansion: UPDATE/DELETE with no WHERE clause (or an
+# always-true one) — mirrors rules_shell.go's hasUnscopedUpdateOrDelete.
+matches contains "destructive.sql_drop_truncate" if {
+	input.facts.command in sql_shell_clients
+	some a in input.facts.args
+	regex.match(`(?i)\b(UPDATE\s+\S+\s+SET\b|DELETE\s+FROM\b)`, a)
+	not regex.match(`(?i)\bWHERE\b`, a)
+}
+
+matches contains "destructive.sql_drop_truncate" if {
+	input.facts.command in sql_shell_clients
+	some a in input.facts.args
+	regex.match(`(?i)\b(UPDATE\s+\S+\s+SET\b|DELETE\s+FROM\b)`, a)
+	regex.match(`(?i)\bWHERE\s+(1|TRUE)\s*;?\s*$`, a)
+}
+
+# 2026-07 coverage expansion: redis-cli FLUSHALL/FLUSHDB — same rule id as
+# SQL TRUNCATE, mirrors rules_shell.go's redisShellClients/redisFlushPattern.
+redis_shell_clients := {"redis-cli"}
+
+matches contains "destructive.sql_drop_truncate" if {
+	input.facts.command in redis_shell_clients
+	some a in input.facts.args
+	regex.match(`(?i)^(FLUSHALL|FLUSHDB)$`, a)
+}
+
 # --- destructive.chmod_777_recursive — rules_shell.go matchChmod777Recursive ---
 
 matches contains "destructive.chmod_777_recursive" if {
@@ -307,4 +333,138 @@ is_damping_flag_or_value(i, a) if {
 is_damping_flag_or_value(i, a) if {
 	i > 0
 	input.facts.args[i-1] == "--config"
+}
+
+# --- 2026-07 dangerous-command-coverage expansion — rules_expansion.go ---
+# See rules_expansion.go's package-level doc comments for the real-world
+# incidents motivating each rule below (DataTalks.Club/incidentdatabase.ai
+# #1424 for iac_destroy; the Claude Code CHANGELOG v2.1.183 precedent for
+# both iac_apply_unreviewed and git_history_destructive; the TrapDoor
+# campaign for secret_exfiltration).
+
+# --- destructive.iac_destroy / destructive.iac_apply_unreviewed ---
+
+iac_destroy_commands := {"terraform", "pulumi", "cdk"}
+
+matches contains "destructive.iac_destroy" if {
+	input.facts.command in iac_destroy_commands
+	"destroy" in input.facts.args
+}
+
+matches contains "destructive.iac_apply_unreviewed" if {
+	input.facts.command == "terraform"
+	"apply" in input.facts.args
+	terraform_has_auto_approve
+}
+
+terraform_has_auto_approve if { "-auto-approve" in input.facts.args }
+
+terraform_has_auto_approve if { "--auto-approve" in input.facts.args }
+
+matches contains "destructive.iac_apply_unreviewed" if {
+	input.facts.command == "pulumi"
+	"up" in input.facts.args
+	pulumi_has_unattended
+}
+
+pulumi_has_unattended if { "--yes" in input.facts.args }
+
+pulumi_has_unattended if { "-y" in input.facts.args }
+
+pulumi_has_unattended if { "--skip-preview" in input.facts.args }
+
+# --- destructive.git_history_destructive ---
+
+git_rest(args) := array.slice(args, 1, count(args))
+
+matches contains "destructive.git_history_destructive" if {
+	input.facts.command == "git"
+	count(input.facts.args) > 0
+	input.facts.args[0] == "reset"
+	"--hard" in git_rest(input.facts.args)
+}
+
+matches contains "destructive.git_history_destructive" if {
+	input.facts.command == "git"
+	count(input.facts.args) > 0
+	input.facts.args[0] == "clean"
+	"--force" in git_rest(input.facts.args)
+}
+
+matches contains "destructive.git_history_destructive" if {
+	input.facts.command == "git"
+	count(input.facts.args) > 0
+	input.facts.args[0] == "clean"
+	some a in git_rest(input.facts.args)
+	is_short_flag_cluster(a)
+	contains(a, "f")
+}
+
+matches contains "destructive.git_history_destructive" if {
+	input.facts.command == "git"
+	count(input.facts.args) > 0
+	input.facts.args[0] == "stash"
+	some a in git_rest(input.facts.args)
+	a in {"clear", "drop"}
+}
+
+matches contains "destructive.git_history_destructive" if {
+	input.facts.command == "git"
+	count(input.facts.args) > 0
+	input.facts.args[0] == "checkout"
+	"." in git_rest(input.facts.args)
+}
+
+matches contains "destructive.git_history_destructive" if {
+	input.facts.command == "git"
+	count(input.facts.args) > 0
+	input.facts.args[0] in {"filter-branch", "filter-repo"}
+}
+
+# --- destructive.secret_exfiltration ---
+
+secret_exfil_network_sinks := {"curl", "wget", "nc", "ncat", "ssh", "scp"}
+data_upload_flags := {"-d", "--data", "--data-binary", "--data-raw", "-F", "--form"}
+
+raw_contains_sensitive_path if {
+	some p in input.config.protected_paths
+	contains(input.facts.raw, p)
+}
+
+egress_domain_allowlisted if {
+	some d in input.config.allowlisted_egress_domains
+	lower(input.facts.domain) == lower(d)
+}
+
+matches contains "destructive.secret_exfiltration" if {
+	count(input.config.protected_paths) > 0
+	input.facts.is_pipeline
+	count(input.facts.pipeline_cmds) > 0
+	last_cmd := input.facts.pipeline_cmds[count(input.facts.pipeline_cmds) - 1]
+	last_cmd in {"curl", "wget"}
+	raw_contains_sensitive_path
+	not egress_domain_allowlisted
+}
+
+matches contains "destructive.secret_exfiltration" if {
+	count(input.config.protected_paths) > 0
+	input.facts.is_pipeline
+	count(input.facts.pipeline_cmds) > 0
+	last_cmd := input.facts.pipeline_cmds[count(input.facts.pipeline_cmds) - 1]
+	last_cmd in secret_exfil_network_sinks
+	not last_cmd in {"curl", "wget"}
+	raw_contains_sensitive_path
+}
+
+matches contains "destructive.secret_exfiltration" if {
+	count(input.config.protected_paths) > 0
+	input.facts.command in {"curl", "wget"}
+	some i, a in input.facts.args
+	a in data_upload_flags
+	i + 1 < count(input.facts.args)
+	val := input.facts.args[i + 1]
+	startswith(val, "@")
+	path := substring(val, 1, -1)
+	in_protected_paths(path)
+	not egress_domain_allowlisted
 }

@@ -151,6 +151,7 @@ func (e *OPAEngine) matchingRuleIDs(f Facts) (map[string]bool, error) {
 		"config": map[string]any{
 			"protected_paths":             orEmpty(e.cfg.ProtectedPaths),
 			"allowlisted_install_domains": orEmpty(e.cfg.AllowlistedInstallDomains),
+			"allowlisted_egress_domains":  orEmpty(e.cfg.AllowlistedEgressDomains),
 		},
 	}
 

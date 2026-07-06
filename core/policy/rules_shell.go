@@ -112,7 +112,36 @@ var sqlShellClients = map[string]bool{
 	"mongosh": true,
 }
 
+// sqlUnscopedUpdateDeletePattern/sqlWhereClausePattern/
+// sqlAlwaysTrueWherePattern extend this rule (2026-07 coverage expansion
+// research) to catch UPDATE/DELETE issued via a shell-invoked SQL client
+// with no WHERE clause at all, or one that's always true ("WHERE 1"/"WHERE
+// TRUE") — the exact shape of this project's own docs/threat-model.md
+// grounding incident (Replit deleting a production database). MySQL's own
+// client has shipped --safe-updates/-U specifically to guard against this
+// for 25+ years — independent, long-standing evidence this is a real risk
+// category, not a novel concern invented for this rule.
+var sqlUnscopedUpdateDeletePattern = regexp.MustCompile(`(?i)\b(UPDATE\s+\S+\s+SET\b|DELETE\s+FROM\b)`)
+var sqlWhereClausePattern = regexp.MustCompile(`(?i)\bWHERE\b`)
+var sqlAlwaysTrueWherePattern = regexp.MustCompile(`(?i)\bWHERE\s+(1|TRUE)\s*;?\s*$`)
+
+// redisShellClients/redisFlushPattern extend the same rule id to
+// redis-cli's FLUSHALL/FLUSHDB — the identical "wipe everything, no
+// per-row scoping possible" shape as SQL TRUNCATE, just a different
+// client, so this stays part of destructive.sql_drop_truncate rather than
+// becoming its own rule id.
+var redisShellClients = map[string]bool{"redis-cli": true}
+var redisFlushPattern = regexp.MustCompile(`(?i)^(FLUSHALL|FLUSHDB)$`)
+
 func matchSQLDropTruncate(f Facts, _ Config) bool {
+	if redisShellClients[f.Command] {
+		for _, a := range f.Args {
+			if redisFlushPattern.MatchString(a) {
+				return true
+			}
+		}
+		return false
+	}
 	if !sqlShellClients[f.Command] {
 		return false
 	}
@@ -123,8 +152,29 @@ func matchSQLDropTruncate(f Facts, _ Config) bool {
 		if f.Command == "mongosh" && mongoDestructivePattern.MatchString(a) {
 			return true
 		}
+		if hasUnscopedUpdateOrDelete(a) {
+			return true
+		}
 	}
 	return false
+}
+
+// hasUnscopedUpdateOrDelete reports whether a contains an UPDATE...SET or
+// DELETE FROM statement with no WHERE clause, or one that's always true.
+// Known, accepted false-negative for v1: a WHERE clause containing a
+// subquery that's itself unscoped (e.g. "WHERE id IN (SELECT id FROM t)")
+// reads as "has a WHERE" to this text-level check even if that subquery is
+// itself dangerous — catching that would need real SQL parsing, a
+// different order of engineering than this project's existing regex-level
+// SQL matching.
+func hasUnscopedUpdateOrDelete(a string) bool {
+	if !sqlUnscopedUpdateDeletePattern.MatchString(a) {
+		return false
+	}
+	if !sqlWhereClausePattern.MatchString(a) {
+		return true
+	}
+	return sqlAlwaysTrueWherePattern.MatchString(a)
 }
 
 func matchChmod777Recursive(f Facts, _ Config) bool {

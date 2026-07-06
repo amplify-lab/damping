@@ -18,10 +18,32 @@ protected_paths:
   - ~/.aws
   - .env
   - .env.production
+  # Added by the 2026-07 dangerous-command-coverage expansion research:
+  # also read by destructive.secret_exfiltration (reading one of these AND
+  # sending it to a non-allowlisted network destination), not just the
+  # rm/write-protection rules above. Crypto wallet keystores are included
+  # here deliberately as entries in this one general list rather than a
+  # separate "crypto rule" — the TrapDoor campaign (2026/5, verified via
+  # socket.dev) used exactly this read-then-exfiltrate shape against
+  # Claude Code/Cursor to steal Solana/Sui/Aptos wallet keys, and the
+  # detection shape is identical regardless of which credential it is.
+  - ~/.npmrc
+  - ~/.netrc
+  - ~/.docker/config.json
+  - ~/.kube/config
+  - ~/.config/solana
+  - ~/.foundry/keystores
+  - ~/.ethereum/keystore
 
 allowlisted_install_domains:
   - damping.dev
   - raw.githubusercontent.com
+
+# Checked by destructive.secret_exfiltration — deliberately a separate list
+# from allowlisted_install_domains above (installing from a domain and
+# sending local secrets to a domain are different trust decisions).
+allowlisted_egress_domains:
+  - damping.dev
 
 rules:
   - id: destructive.rm_rf_protected
@@ -35,7 +57,7 @@ rules:
     action: prompt
 
   - id: destructive.sql_drop_truncate
-    description: DROP TABLE / TRUNCATE (SQL clients), or dropDatabase()/collection.drop()/an unfiltered deleteMany()/remove() (mongosh) issued via a shell-invoked DB client
+    description: DROP TABLE / TRUNCATE / UPDATE or DELETE with no WHERE clause (SQL clients), dropDatabase()/collection.drop()/an unfiltered deleteMany()/remove() (mongosh), or FLUSHALL/FLUSHDB (redis-cli) issued via a shell-invoked DB client
     risk: high
     action: prompt
 
@@ -78,6 +100,32 @@ rules:
     description: Agent tried to run "damping off" itself via its own Bash tool call (the Ona-incident failure mode) — a human running it directly at their own terminal never reaches this rule
     risk: critical
     action: deny
+
+  # --- 2026-07 dangerous-command-coverage expansion ---
+  # See core/policy/rules_expansion.go's doc comments for the real-world
+  # incidents motivating each of these (DataTalks.Club/incidentdatabase.ai
+  # #1424; the Claude Code CHANGELOG v2.1.183 precedent; the TrapDoor
+  # campaign).
+
+  - id: destructive.iac_destroy
+    description: terraform/pulumi/cdk destroy — the exact command class that deleted a production account in a real, documented incident (an agent decided to "clean up and start over")
+    risk: critical
+    action: prompt
+
+  - id: destructive.iac_apply_unreviewed
+    description: terraform apply/pulumi up with an auto-approve/skip-preview flag — skips the tool's own human-review step, itself the root-cause signal in real incidents
+    risk: high
+    action: prompt
+
+  - id: destructive.git_history_destructive
+    description: git reset --hard, clean -f*, stash clear/drop, checkout -- . (discard all local changes), or filter-branch/filter-repo (history rewrite) — destructive git operations beyond force-push
+    risk: high
+    action: prompt
+
+  - id: destructive.secret_exfiltration
+    description: A known-sensitive path (SSH/AWS/crypto-wallet/other credential files in protected_paths) read and sent to a network destination not in allowlisted_egress_domains
+    risk: critical
+    action: prompt
 
 # mcp.write_tool_unscoped_identity is implemented (core/policy/rules.go) but
 # deliberately NOT listed here: the individual tier has no identity system
