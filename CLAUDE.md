@@ -2,6 +2,22 @@
 
 This file is for anyone (human or AI agent) working *on* this codebase. If you're looking for how to *use* Damping, see [`README.md`](README.md) instead.
 
+## README.md is public-facing only — what never goes there
+
+`README.md` is written for the general public: anyone deciding whether to install and use Damping. Keep it to usage, the quick-start tutorial, the demo screenshot, and the feature comparison table — nothing else. Specifically, **never add to `README.md`** (or any other file destined for this public repo):
+
+- Internal development plans, roadmap reasoning, phase-sequencing rationale, or anything that reads like a decision log for the team rather than documentation for a user. That belongs in `CLAUDE.md` (engineering conventions) or a dedicated research doc under `docs/`, not the README.
+- Business-sensitive content of any kind: pricing/negotiation strategy, named prospect/customer lists, financial projections, competitor commentary that isn't measured and fact-checked (a fair, sourced comparison table is fine — an uncited jab is not), or anything that reads as internal strategy rather than public product information.
+- Credentials, tokens, API keys, or any other secret — obviously, but this repo's own history has a real incident to learn from (see below).
+
+This project already learned this lesson the expensive way once: on first publishing this repo, a pre-push audit caught a real leaked access token and 5 internal business-planning documents (market research, business plan, brand naming, competitive positioning/messaging strategy) that had been sitting in `docs/` since early commits. All were removed via `git-filter-repo` from full git history (not just deleted in a new commit — that would leave them recoverable in old commits), and one round of that removal happened *after* the repo had already gone public, requiring a force-push to overwrite exposed history. Full backups of the removed content exist outside this repo for Tim's own reference, not in git. See the commit history around 2026-07-06 (`chore: remove internal-only planning docs before first public push` and the docs/00 follow-up) for the specifics, and treat any future "should this go in the public repo" question the same way: if you're unsure whether something is public-safe, it isn't — ask first, don't publish and fix later.
+
+## Repo status
+
+`github.com/amplify-lab/damping` is **public**, live, and this is the *only* public-facing artifact for this project — there is no separate private mirror repo. Everything under version control here (code, docs, commit history) is visible to anyone. The five internal planning documents and one master plan doc removed per the section above are **not** archived anywhere inside this repo, public or private — they exist only in Tim's own local backup outside the repo. Do not attempt to recreate their content here from memory or from old conversation context; if a future need for that historical context arises, that's a conversation with Tim, not a file to reconstruct and commit.
+
+The billing/licensing/enterprise-control-plane code referenced in `docs/調查資料/`'s Phase 5 research (see below) does not exist yet and, per the agreed open-core model, will live in a **separate, private repository** when it's built — never in this one. This repo (`core/` + `cli/`) is and stays the permissively-licensed, publicly-inspectable half of the product on purpose; that inspectability is a stated part of Damping's trust story, not an oversight to fix later.
+
 ## Read first
 
 - [`docs/architecture.md`](docs/architecture.md) — module layout, the `ActionEvent`/`Decision` schema, why `core/` and `cli/` are split.
