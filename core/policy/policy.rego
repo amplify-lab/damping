@@ -504,3 +504,183 @@ target_basename(target) := seg if {
 	segments := split(target, "/")
 	seg := segments[count(segments) - 1]
 }
+
+# --- 2026-07 wave 2 coverage expansion — rules_wave2.go ---
+# See rules_wave2.go's package-level and per-rule doc comments for the real
+# incidents grounding each rule below (Gustavo Zanotto's postmortem for
+# kubectl_bulk_delete; the compromised Amazon Q Developer extension for
+# cloud_cli_mass_delete; WhisperGate for raw_device_write; the finch-rust/
+# sha-rust crates.io incident for cargo_publish_unreviewed; the rest-client
+# RubyGems incident for gem_push_unreviewed; Socket's Discord-webhook-as-C2
+# research for webhook_exfiltration).
+
+# --- destructive.kubectl_bulk_delete ---
+
+kubectl_bulk_delete_resources := {
+	"deployment", "deployments", "deploy",
+	"pod", "pods", "po",
+	"pvc", "pvcs", "persistentvolumeclaim", "persistentvolumeclaims",
+	"pv", "pvs", "persistentvolume", "persistentvolumes",
+	"all",
+}
+
+matches contains "destructive.kubectl_bulk_delete" if {
+	input.facts.command == "kubectl"
+	count(input.facts.args) > 0
+	input.facts.args[0] == "delete"
+	rest := git_rest(input.facts.args)
+	count(rest) > 0
+	rest[0] in {"namespace", "namespaces", "ns"}
+}
+
+matches contains "destructive.kubectl_bulk_delete" if {
+	input.facts.command == "kubectl"
+	count(input.facts.args) > 0
+	input.facts.args[0] == "delete"
+	rest := git_rest(input.facts.args)
+	count(rest) > 0
+	rest[0] in kubectl_bulk_delete_resources
+	kubectl_has_all(rest)
+}
+
+kubectl_has_all(rest) if { "--all" in rest }
+
+kubectl_has_all(rest) if { "--all-namespaces" in rest }
+
+# --- destructive.cloud_cli_mass_delete ---
+
+matches contains "destructive.cloud_cli_mass_delete" if {
+	input.facts.command == "aws"
+	count(input.facts.args) >= 2
+	input.facts.args[0] == "ec2"
+	input.facts.args[1] == "terminate-instances"
+}
+
+matches contains "destructive.cloud_cli_mass_delete" if {
+	input.facts.command == "aws"
+	count(input.facts.args) >= 2
+	input.facts.args[0] == "s3"
+	input.facts.args[1] == "rm"
+	"--recursive" in array.slice(input.facts.args, 2, count(input.facts.args))
+}
+
+matches contains "destructive.cloud_cli_mass_delete" if {
+	input.facts.command == "aws"
+	count(input.facts.args) >= 2
+	input.facts.args[0] == "s3"
+	input.facts.args[1] == "rb"
+	"--force" in array.slice(input.facts.args, 2, count(input.facts.args))
+}
+
+matches contains "destructive.cloud_cli_mass_delete" if {
+	input.facts.command == "aws"
+	count(input.facts.args) >= 2
+	input.facts.args[0] == "rds"
+	input.facts.args[1] == "delete-db-instance"
+}
+
+matches contains "destructive.cloud_cli_mass_delete" if {
+	input.facts.command == "gcloud"
+	count(input.facts.args) >= 3
+	input.facts.args[0] == "compute"
+	input.facts.args[1] == "instances"
+	input.facts.args[2] == "delete"
+}
+
+matches contains "destructive.cloud_cli_mass_delete" if {
+	input.facts.command == "az"
+	count(input.facts.args) >= 2
+	input.facts.args[0] == "vm"
+	input.facts.args[1] == "delete"
+}
+
+# --- destructive.raw_device_write ---
+
+raw_device_commands := {"dd", "shred", "blkdiscard"}
+
+raw_whole_device_pattern := `^/dev/(sd[a-z]+[0-9]*|hd[a-z]+[0-9]*|vd[a-z]+[0-9]*|xvd[a-z]+[0-9]*|nvme[0-9]+n[0-9]+(p[0-9]+)?|mmcblk[0-9]+(p[0-9]+)?)$`
+
+matches contains "destructive.raw_device_write" if {
+	input.facts.command == "dd"
+	some a in input.facts.args
+	startswith(a, "of=")
+	val := substring(a, count("of="), -1)
+	regex.match(raw_whole_device_pattern, val)
+}
+
+matches contains "destructive.raw_device_write" if {
+	input.facts.command in {"shred", "blkdiscard"}
+	some a in input.facts.args
+	regex.match(raw_whole_device_pattern, a)
+}
+
+# --- destructive.cargo_publish_unreviewed ---
+
+matches contains "destructive.cargo_publish_unreviewed" if {
+	input.facts.command == "cargo"
+	count(input.facts.args) > 0
+	input.facts.args[0] == "publish"
+	not "--dry-run" in git_rest(input.facts.args)
+}
+
+matches contains "destructive.cargo_publish_unreviewed" if {
+	input.facts.command == "cargo"
+	count(input.facts.args) > 0
+	input.facts.args[0] == "release"
+	"--execute" in git_rest(input.facts.args)
+}
+
+# --- destructive.gem_push_unreviewed ---
+
+matches contains "destructive.gem_push_unreviewed" if {
+	input.facts.command == "gem"
+	count(input.facts.args) > 0
+	input.facts.args[0] == "push"
+}
+
+matches contains "destructive.gem_push_unreviewed" if {
+	input.facts.command == "gem"
+	count(input.facts.args) > 0
+	input.facts.args[0] == "bump"
+	"--push" in git_rest(input.facts.args)
+}
+
+matches contains "destructive.gem_push_unreviewed" if {
+	input.facts.command == "rake"
+	"release" in input.facts.args
+}
+
+matches contains "destructive.gem_push_unreviewed" if {
+	input.facts.command == "bundle"
+	some i, a in input.facts.args
+	a == "rake"
+	i + 1 < count(input.facts.args)
+	input.facts.args[i + 1] == "release"
+}
+
+# --- destructive.webhook_exfiltration ---
+
+webhook_url_pattern := `(?i)https?://(discord\.com/api/webhooks/|hooks\.slack\.com/services/|outlook\.office\.com/webhook/|[a-z0-9.-]+\.webhook\.office\.com/webhookb2/)`
+
+webhook_data_flag_prefixes := [
+	"-d", "--data", "--data-binary", "--data-raw", "-F", "--form",
+	"--post-data", "--post-file", "-T", "--upload-file",
+]
+
+webhook_has_data_flag if {
+	some a in input.facts.args
+	some prefix in webhook_data_flag_prefixes
+	a == prefix
+}
+
+webhook_has_data_flag if {
+	some a in input.facts.args
+	some prefix in webhook_data_flag_prefixes
+	startswith(a, concat("", [prefix, "="]))
+}
+
+matches contains "destructive.webhook_exfiltration" if {
+	input.facts.command in {"curl", "wget"}
+	regex.match(webhook_url_pattern, input.facts.raw)
+	webhook_has_data_flag
+}

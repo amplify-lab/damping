@@ -42,6 +42,14 @@ var matchers = map[string]matcher{
 	"destructive.agent_permission_escalation": matchAgentPermissionEscalation,
 	"destructive.git_hook_write":              matchGitHookWrite,
 	"destructive.npm_lifecycle_script_write":  matchNpmLifecycleScriptWrite,
+
+	// 2026-07 wave 2 coverage expansion (rules_wave2.go).
+	"destructive.kubectl_bulk_delete":      matchKubectlBulkDelete,
+	"destructive.cloud_cli_mass_delete":    matchCloudCLIMassDelete,
+	"destructive.raw_device_write":         matchRawDeviceWrite,
+	"destructive.cargo_publish_unreviewed": matchCargoPublishUnreviewed,
+	"destructive.gem_push_unreviewed":      matchGemPushUnreviewed,
+	"destructive.webhook_exfiltration":     matchWebhookExfiltration,
 }
 
 // RedirectWritePlaceholder is what cli/shell sets Facts.Command to when it

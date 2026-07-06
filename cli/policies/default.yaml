@@ -149,6 +149,45 @@ rules:
     risk: high
     action: prompt
 
+  # --- 2026-07 wave 2 coverage expansion ---
+  # See core/policy/rules_wave2.go's doc comments for the real-world
+  # incidents motivating each of these (Gustavo Zanotto's kubectl
+  # wrong-namespace postmortem; the compromised Amazon Q Developer VS Code
+  # extension, July 2025; WhisperGate/DEV-0586's MBR-wiper; the
+  # finch-rust/sha-rust crates.io incident, 2025-12-05; the rest-client
+  # RubyGems compromise, CVE-2019-15224; Socket's Discord-webhook-as-C2
+  # campaign).
+
+  - id: destructive.kubectl_bulk_delete
+    description: kubectl delete namespace, or kubectl delete against deployments/pods/pvc/pv/all with --all or --all-namespaces — bulk destruction of an entire namespace or workload class in one command
+    risk: critical
+    action: prompt
+
+  - id: destructive.cloud_cli_mass_delete
+    description: aws ec2 terminate-instances, aws s3 rm --recursive, aws s3 rb --force, aws rds delete-db-instance, gcloud compute instances delete, or az vm delete — cloud CLI calls that mass-delete/terminate live cloud resources outside any IaC-managed workflow
+    risk: critical
+    action: prompt
+
+  - id: destructive.raw_device_write
+    description: dd, shred, or blkdiscard targeting a whole block device path (e.g. /dev/sda, /dev/nvme0n1) rather than a regular file or loop device — an irreversible raw overwrite of an entire disk
+    risk: critical
+    action: deny
+
+  - id: destructive.cargo_publish_unreviewed
+    description: cargo publish (without --dry-run), or cargo release ... --execute — publishes a crate directly to crates.io with no local review step
+    risk: high
+    action: prompt
+
+  - id: destructive.gem_push_unreviewed
+    description: gem push, gem bump --push, rake release, or bundle exec rake release — publishes a gem directly to RubyGems.org with no local review step
+    risk: high
+    action: prompt
+
+  - id: destructive.webhook_exfiltration
+    description: curl or wget sending POST data (or an uploaded file) to a Discord/Slack/Microsoft Teams incoming-webhook URL — a low-cost, unauthenticated exfiltration/C2 channel
+    risk: high
+    action: prompt
+
 # mcp.write_tool_unscoped_identity is implemented (core/policy/rules.go) but
 # deliberately NOT listed here: the individual tier has no identity system
 # to bind to (ActionEvent.Identity is always empty pre-Phase 5), so this
