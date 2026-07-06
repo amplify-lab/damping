@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -44,6 +45,19 @@ type hookInput struct {
 	ToolName  string `json:"tool_name"`
 	ToolInput struct {
 		Command string `json:"command"`
+
+		// Write/Edit/MultiEdit fields — the 2026-07 non-Bash attack-surface
+		// expansion (see core/policy/rules_configwrite.go). Claude Code only:
+		// Cursor has no pre-write hook and Codex's PreToolUse never fires for
+		// these tool names — see docs/cli-reference.md §11.
+		FilePath  string `json:"file_path"`
+		Content   string `json:"content"`    // Write
+		OldString string `json:"old_string"` // Edit
+		NewString string `json:"new_string"` // Edit
+		Edits     []struct {
+			OldString string `json:"old_string"`
+			NewString string `json:"new_string"`
+		} `json:"edits"` // MultiEdit
 	} `json:"tool_input"`
 	// TurnID/ToolUseID: present in Codex's payload, absent in Claude
 	// Code's — the discriminator between the two (see doc comment above).
@@ -98,19 +112,65 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 		return nil
 	}
 
-	var actor, sessionID, rawCommand string
+	// isConfigWrite selects the evaluation/display/audit path below: false
+	// means the shell-AST path (auditRaw is a full command line, matched via
+	// shell.Analyze), true means the Write/Edit/MultiEdit Facts-direct path
+	// (auditRaw is FactsFromToolWrite's path+content text, auditTarget is
+	// just the file path). displayText is always what the TTY Confirm
+	// prompt and a deny's stderr line show a human — kept short for the
+	// config-write path (see truncateForDisplay) since auditRaw there can be
+	// an entire file's contents.
+	var actor, sessionID, rawCommand, displayText, auditTarget string
+	var facts policy.Facts
+	var isConfigWrite bool
 	switch in.HookEventName {
 	case "PreToolUse":
-		if in.ToolName != "Bash" {
-			return nil // not a shell command; nothing for Damping's V1 CLI adapter to judge
-		}
 		actor = "claude-code"
 		if in.TurnID != "" || in.ToolUseID != "" {
 			actor = "codex"
 		}
-		sessionID, rawCommand = in.SessionID, in.ToolInput.Command
+		sessionID = in.SessionID
+
+		switch in.ToolName {
+		case "Bash":
+			rawCommand = in.ToolInput.Command
+			displayText = rawCommand
+		case "Write":
+			facts = hookadapter.FactsFromToolWrite("Write", hookadapter.ToolWriteInput{
+				FilePath: in.ToolInput.FilePath,
+				Content:  in.ToolInput.Content,
+			})
+			isConfigWrite = true
+			auditTarget = facts.Target
+			displayText = "Write " + in.ToolInput.FilePath + "\n" + truncateForDisplay(in.ToolInput.Content)
+		case "Edit":
+			facts = hookadapter.FactsFromToolWrite("Edit", hookadapter.ToolWriteInput{
+				FilePath: in.ToolInput.FilePath,
+				Edits:    []hookadapter.ToolEditOp{{OldString: in.ToolInput.OldString, NewString: in.ToolInput.NewString}},
+			})
+			isConfigWrite = true
+			auditTarget = facts.Target
+			displayText = "Edit " + in.ToolInput.FilePath + "\n" + truncateForDisplay(in.ToolInput.NewString)
+		case "MultiEdit":
+			edits := make([]hookadapter.ToolEditOp, 0, len(in.ToolInput.Edits))
+			newStrings := make([]string, 0, len(in.ToolInput.Edits))
+			for _, e := range in.ToolInput.Edits {
+				edits = append(edits, hookadapter.ToolEditOp{OldString: e.OldString, NewString: e.NewString})
+				newStrings = append(newStrings, e.NewString)
+			}
+			facts = hookadapter.FactsFromToolWrite("MultiEdit", hookadapter.ToolWriteInput{
+				FilePath: in.ToolInput.FilePath,
+				Edits:    edits,
+			})
+			isConfigWrite = true
+			auditTarget = facts.Target
+			displayText = "MultiEdit " + in.ToolInput.FilePath + "\n" + truncateForDisplay(strings.Join(newStrings, "\n"))
+		default:
+			return nil // not a tool call Damping's V1 CLI adapter judges (see hookInput's doc comment)
+		}
 	case "beforeShellExecution":
 		actor, sessionID, rawCommand = "cursor", in.ConversationID, in.Command
+		displayText = rawCommand
 	default:
 		// An unrecognized hook_event_name means a third agent (or a future,
 		// unrecognized event from Claude Code/Cursor themselves) is calling
@@ -146,10 +206,26 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 		return nil
 	}
 
-	d, err := evaluateCommandRecovering(rawCommand, engine)
+	var d decision.Decision
+	if isConfigWrite {
+		d, err = evaluateFactsRecovering(facts, engine)
+	} else {
+		d, err = evaluateCommandRecovering(rawCommand, engine)
+	}
 	if err != nil {
 		logDegraded(cmd, writer, hasAuditSink, sessionID, actor, "analyzing command: "+err.Error())
 		return nil
+	}
+
+	// persistPattern is what an "always allow/deny" TTY choice below appends
+	// to policy.yaml as an exact-match pattern (core/policy/patterns.go) —
+	// the same text Evaluate actually matched against (Facts.Raw), so a
+	// persisted pattern matches the same way the live decision did. For
+	// Write, that's the file's full new content, not just its path — see
+	// hookadapter.FactsFromToolWrite's doc comment on why Raw carries both.
+	persistPattern := rawCommand
+	if isConfigWrite {
+		persistPattern = facts.Raw
 	}
 
 	if d.Verdict == decision.Prompt {
@@ -162,12 +238,12 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 			d.Resolve(decision.Deny)
 			d.Reason = "no controlling terminal available to ask; denied by default: " + d.Reason
 		} else {
-			resolution := prompter.Confirm(rawCommand, d)
+			resolution := prompter.Confirm(displayText, d)
 			d.Resolve(resolution.Verdict)
 			closeTTY()
 
 			if resolution.Persist {
-				if err := policy.AppendAlwaysPattern(policyPath, resolution.Verdict, rawCommand); err != nil {
+				if err := policy.AppendAlwaysPattern(policyPath, resolution.Verdict, persistPattern); err != nil {
 					logDegraded(cmd, writer, hasAuditSink, sessionID, actor, "persisting always-"+string(resolution.Verdict)+" pattern: "+err.Error())
 				}
 			}
@@ -175,7 +251,12 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 	}
 
 	if hasAuditSink {
-		ev := hookadapter.BuildActionEvent(event.NewID(), sessionID, actor, rawCommand, d)
+		var ev event.ActionEvent
+		if isConfigWrite {
+			ev = hookadapter.BuildConfigWriteActionEvent(event.NewID(), sessionID, actor, auditTarget, facts.Raw, d)
+		} else {
+			ev = hookadapter.BuildActionEvent(event.NewID(), sessionID, actor, rawCommand, d)
+		}
 		if err := writer.Append(ev); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "damping: failed to write audit record: %v\n", err)
 		}
@@ -223,6 +304,46 @@ func evaluateCommandRecovering(raw string, engine policy.Evaluator) (d decision.
 		}
 	}()
 	return hookadapter.EvaluateCommand(raw, engine)
+}
+
+// evaluateFactsRecovering is evaluateCommandRecovering's counterpart for the
+// Write/Edit/MultiEdit Facts-direct path: engine.Evaluate itself runs
+// regexes against a full file's contents (see
+// core/policy/rules_configwrite.go), untrusted input in the same sense
+// shell.Analyze's is, so it gets the same fail-open-and-degraded treatment
+// on a panic rather than crashing this subprocess.
+func evaluateFactsRecovering(f policy.Facts, engine policy.Evaluator) (d decision.Decision, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("policy.Evaluate panicked: %v", r)
+		}
+	}()
+	return engine.Evaluate(f), nil
+}
+
+// truncateForDisplay bounds how much of a Write/Edit/MultiEdit's content
+// reaches the terminal — ui.TTYPrompter.Confirm prints its argument
+// verbatim on a single "Command: %s" line with no truncation of its own
+// (unlike a shell command, file content can be arbitrarily large/multi-line
+// and would otherwise blow out the confirmation prompt's layout). This only
+// affects what a human sees at the prompt; policy matching and the audit
+// log both still use the full, untruncated text (Facts.Raw).
+func truncateForDisplay(s string) string {
+	const maxLines = 12
+	const maxChars = 800
+	truncated := false
+	if lines := strings.Split(s, "\n"); len(lines) > maxLines {
+		s = strings.Join(lines[:maxLines], "\n")
+		truncated = true
+	}
+	if len(s) > maxChars {
+		s = s[:maxChars]
+		truncated = true
+	}
+	if truncated {
+		s += "\n... (truncated for display; full content evaluated and logged)"
+	}
+	return s
 }
 
 // newTTYPrompter is a package-level var (not a direct call to

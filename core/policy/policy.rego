@@ -468,3 +468,39 @@ matches contains "destructive.secret_exfiltration" if {
 	in_protected_paths(path)
 	not egress_domain_allowlisted
 }
+
+# --- 2026-07 non-Bash attack-surface expansion — rules_configwrite.go ---
+# cli/cmd/hook.go also intercepts Claude Code's Write/Edit/MultiEdit tool
+# calls now (Cursor/Codex have no equivalent pre-write hook — see
+# docs/cli-reference.md §11). See rules_configwrite.go's doc comment for
+# the real CVEs (CVE-2025-53773, CVE-2026-50549) motivating these rules.
+
+agent_settings_file_suffixes := [".vscode/settings.json", ".claude/settings.json", ".claude/settings.local.json"]
+
+matches contains "destructive.agent_permission_escalation" if {
+	input.facts.action_type == "config_write"
+	some suffix in agent_settings_file_suffixes
+	endswith(input.facts.target, suffix)
+	regex.match(`(?i)"(chat\.tools\.autoApprove|skipDangerousModePermissionPrompt|dangerouslySkipPermissions)"\s*:\s*true`, input.facts.raw)
+}
+
+matches contains "destructive.git_hook_write" if {
+	input.facts.action_type == "config_write"
+	contains(input.facts.target, ".git/hooks/")
+}
+
+matches contains "destructive.git_hook_write" if {
+	input.facts.action_type == "config_write"
+	startswith(input.facts.target, ".git/hooks/")
+}
+
+matches contains "destructive.npm_lifecycle_script_write" if {
+	input.facts.action_type == "config_write"
+	target_basename(input.facts.target) == "package.json"
+	regex.match(`(?i)"(postinstall|preinstall|prepare)"\s*:`, input.facts.raw)
+}
+
+target_basename(target) := seg if {
+	segments := split(target, "/")
+	seg := segments[count(segments) - 1]
+}

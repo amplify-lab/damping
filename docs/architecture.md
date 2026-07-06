@@ -12,9 +12,10 @@
 │   ├── decision/            # Verdict, Decision
 │   ├── policy/              # Facts + Evaluator interface + Engine.Evaluate (policy.go), Config load/validate (config.go),
 │   │                         #   always-allow/deny persistence (persist.go), always-pattern matching (patterns.go),
-│   │                         #   rule registry (rules.go) + matchers split by transport (rules_shell.go, rules_mcp.go —
-│   │                         #   each transport's rule family grows independently, see §4), OPAEngine + embedded
-│   │                         #   Rego module (opa.go, policy.rego) — Phase 3, see §4
+│   │                         #   rule registry (rules.go) + matchers split by transport (rules_shell.go, rules_mcp.go,
+│   │                         #   rules_expansion.go — dangerous-command-coverage expansion, rules_configwrite.go —
+│   │                         #   non-Bash Write/Edit/MultiEdit attack surface — each transport's rule family grows
+│   │                         #   independently, see §4), OPAEngine + embedded Rego module (opa.go, policy.rego) — Phase 3, see §4
 │   ├── atomicfile/            # Write() — temp-file+rename crash-safe write, shared by policy's
 │   │                         #   AppendAlwaysPattern and cli/adapter/agent's hook installers (both
 │   │                         #   overwrite an existing file in place and needed the identical fix)
@@ -24,7 +25,9 @@
 │   ├── cmd/                 # Cobra command tree — one file per command (init.go, doctor.go, log.go, ...)
 │   ├── shell/                # AST traversal (parser.go), Facts extraction (facts.go), static-value
 │   │                         #   resolution (literal.go) — see §5
-│   ├── adapter/hook/         # shared evaluate/build-event logic used by `policy test` and the real CLI hook
+│   ├── adapter/hook/         # shared evaluate/build-event logic used by `policy test` and the real CLI hook —
+│   │                         #   EvaluateCommand (shell-AST path) plus FactsFromToolWrite (Write/Edit/MultiEdit
+│   │                         #   Facts-direct path, see §6) and BuildActionEvent/BuildConfigWriteActionEvent
 │   ├── adapter/mcp/          # V1 thin MCP adapter — protocol wiring (wrap.go), Facts extraction (facts.go) — see §7
 │   ├── adapter/agent/        # Claude Code / Cursor / Codex hook-file install & detection, behind a
 │   │                         #   shared Agent{Name,ConfigPath,Install,HasHook} registry (registry.go) —
@@ -212,6 +215,8 @@ See `docs/cli-reference.md` §11 for the exact wire format. Summary: both agents
 - never let an internal crash silently look like a normal allow — write a `degraded` audit record even when the external agent will fail open regardless.
 
 This dispatch is keyed primarily on the payload's own event-name field — `beforeShellExecution` only ever means Cursor — but `hook_event_name: "PreToolUse"` alone is ambiguous: Codex deliberately reuses Claude Code's exact value (OpenAI built Codex's hook contract to be compatible with existing Claude Code hook scripts). The two are told apart by `turn_id`/`tool_use_id`, which Codex's real payload includes and Claude Code's does not (Claude Code sends a `prompt_id` instead) — see `docs/cli-reference.md` §11. A payload from an agent Damping still doesn't recognize at all fails open (same as any other unrecognized-but-valid input), but it still writes a `degraded` audit record via the same path as malformed JSON, rather than passing through with no trace at all — this was a real gap until it was closed (a `default:` branch that returned silently, worse than the malformed-JSON path, since even that already logged degraded).
+
+**Non-Bash dispatch (2026-07 expansion)**: within a `"PreToolUse"` payload, `runHook` further branches on `tool_name`. `"Bash"` takes the shell-AST path described above (`hookadapter.EvaluateCommand` → `shell.Analyze`). `"Write"`/`"Edit"`/`"MultiEdit"` instead call `hookadapter.FactsFromToolWrite` directly — no shell parsing involved, since a file write isn't shell text — producing a `policy.Facts` with `ActionType: event.ActionConfigWrite` that's evaluated the same way (`engine.Evaluate`, wrapped in its own panic-recovering `evaluateFactsRecovering`, mirroring `evaluateCommandRecovering`'s existing fail-open-and-degraded design for adversarial input). Any other `tool_name` (`Read`, `Grep`, ...) is a no-op — nothing in Damping's V1 policy scope judges it. Only Claude Code's own hook registration actually reaches this branch in practice: `cli/adapter/agent/claude_code.go`'s matcher covers `"Bash|Write|Edit|MultiEdit"`, but Cursor has no pre-write hook and Codex's `PreToolUse` never fires for these tool names — see `docs/cli-reference.md` §11's capability matrix.
 
 ## 7. `cli/adapter/mcp` — V1 thin adapter (not a gateway) — **implemented**
 

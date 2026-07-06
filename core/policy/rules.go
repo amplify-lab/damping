@@ -37,6 +37,11 @@ var matchers = map[string]matcher{
 	"destructive.iac_apply_unreviewed":    matchIACApplyUnreviewed,
 	"destructive.git_history_destructive": matchGitHistoryDestructive,
 	"destructive.secret_exfiltration":     matchSecretExfiltration,
+
+	// 2026-07 non-Bash attack-surface expansion (rules_configwrite.go).
+	"destructive.agent_permission_escalation": matchAgentPermissionEscalation,
+	"destructive.git_hook_write":              matchGitHookWrite,
+	"destructive.npm_lifecycle_script_write":  matchNpmLifecycleScriptWrite,
 }
 
 // RedirectWritePlaceholder is what cli/shell sets Facts.Command to when it

@@ -27,6 +27,16 @@ const (
 	ActionToolCall    ActionType = "tool_call"
 	ActionHTTPRequest ActionType = "http_request" // reserved, Phase 3+
 	ActionMemoryWrite ActionType = "memory_write" // reserved, Phase 6 (Memory Guard)
+	// ActionConfigWrite records a Write/Edit/MultiEdit tool call targeting a
+	// security-relevant configuration file (agent permission settings, git
+	// hooks, package-manager lifecycle scripts) — a genuinely different
+	// concept from ActionMemoryWrite above: memory_write is about files that
+	// influence the agent's own future *reasoning* (CLAUDE.md-style
+	// instructions, Phase 6), config_write is about files that change what
+	// code executes or what's auto-approved, independent of what any agent
+	// "believes." See docs/threat-model.md §1.1 and the 2026-07 non-Bash
+	// attack-surface coverage expansion (cli/cmd/hook.go).
+	ActionConfigWrite ActionType = "config_write"
 	// ActionSelfDisable records a `damping off` invocation — the one
 	// sanctioned way to disable enforcement (see docs/threat-model.md §4).
 	// features/self_protection.feature requires this to be audited like any

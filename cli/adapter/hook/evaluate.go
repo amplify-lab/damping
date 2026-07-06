@@ -46,3 +46,16 @@ func EvaluateCommand(raw string, engine policy.Evaluator) (decision.Decision, er
 func BuildActionEvent(eventID string, sessionID, actor, raw string, d decision.Decision) event.ActionEvent {
 	return event.New(eventID, sessionID, actor, event.ChannelCLI, event.ActionShellExec, raw, raw, d)
 }
+
+// BuildConfigWriteActionEvent is BuildActionEvent's counterpart for a
+// Write/Edit/MultiEdit tool call (event.ActionConfigWrite — see the 2026-07
+// non-Bash attack-surface expansion, cli/cmd/hook.go). Takes target
+// separately from raw, unlike BuildActionEvent: for a shell command the
+// command text itself is both the meaningful audit record and the
+// evaluation key, but for a file write the target path is the concise,
+// human-meaningful identifier while raw carries the (potentially large)
+// full written content — see docs/threat-model.md and
+// cli/adapter/hook/configwrite.go's FactsFromToolWrite doc comment.
+func BuildConfigWriteActionEvent(eventID string, sessionID, actor, target, raw string, d decision.Decision) event.ActionEvent {
+	return event.New(eventID, sessionID, actor, event.ChannelCLI, event.ActionConfigWrite, target, raw, d)
+}

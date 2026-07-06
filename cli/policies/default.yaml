@@ -127,6 +127,28 @@ rules:
     risk: critical
     action: prompt
 
+  # --- 2026-07 non-Bash attack-surface expansion ---
+  # Claude Code only (see docs/cli-reference.md §11) — cli/cmd/hook.go now
+  # also intercepts Write/Edit/MultiEdit tool calls, not just Bash. Cursor
+  # has no pre-write hook at all (only a non-blocking after-the-fact one);
+  # Codex's PreToolUse only fires for Bash. See core/policy/
+  # rules_configwrite.go's doc comments for the real CVEs motivating these.
+
+  - id: destructive.agent_permission_escalation
+    description: A write to an agent/IDE settings file (.vscode/settings.json, .claude/settings.json) enables an auto-approve/skip-confirmation key, letting future tool calls bypass human confirmation entirely
+    risk: critical
+    action: prompt
+
+  - id: destructive.git_hook_write
+    description: A write targets a file under .git/hooks/ — a code-execution persistence mechanism that runs automatically on future git operations
+    risk: high
+    action: prompt
+
+  - id: destructive.npm_lifecycle_script_write
+    description: A write to package.json introduces or modifies a postinstall/preinstall/prepare script, which npm/pnpm/yarn will execute automatically at install time
+    risk: high
+    action: prompt
+
 # mcp.write_tool_unscoped_identity is implemented (core/policy/rules.go) but
 # deliberately NOT listed here: the individual tier has no identity system
 # to bind to (ActionEvent.Identity is always empty pre-Phase 5), so this
