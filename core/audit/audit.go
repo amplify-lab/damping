@@ -127,13 +127,17 @@ func (w *Writer) Append(e event.ActionEvent) (err error) {
 
 // Filter narrows ReadAll results. A zero-value field means "don't filter on
 // this dimension" — see docs/cli-reference.md §7 for the CLI flags this maps
-// to (--channel, --risk, --actor, --since, --outcome).
+// to (--channel, --risk, --actor, --since, --until, --outcome, --policy-id,
+// --action-type).
 type Filter struct {
-	Channel event.Channel
-	Risk    event.RiskLevel
-	Actor   string
-	Since   time.Time
-	Outcome string // matches event.Verdict values, or "degraded"
+	Channel    event.Channel
+	Risk       event.RiskLevel
+	Actor      string
+	Since      time.Time
+	Until      time.Time
+	Outcome    string // matches event.Verdict values, or "degraded"
+	PolicyID   string
+	ActionType event.ActionType
 }
 
 // Matches reports whether e satisfies every non-zero field of f.
@@ -150,6 +154,15 @@ func (f Filter) Matches(e event.ActionEvent) bool {
 	if !f.Since.IsZero() && e.Timestamp.Before(f.Since) {
 		return false
 	}
+	if !f.Until.IsZero() && e.Timestamp.After(f.Until) {
+		return false
+	}
+	if f.PolicyID != "" && e.Decision.PolicyID != f.PolicyID {
+		return false
+	}
+	if f.ActionType != "" && e.ActionType != f.ActionType {
+		return false
+	}
 	if f.Outcome != "" {
 		if f.Outcome == "degraded" {
 			if !e.Decision.Degraded {
@@ -162,29 +175,72 @@ func (f Filter) Matches(e event.ActionEvent) bool {
 	return true
 }
 
+// FilterQuery is the raw string form of a Filter, as it arrives from CLI
+// flags or dashboard URL query parameters — see ParseFilter. Kept as a named
+// struct rather than more positional string parameters (this already grew
+// from 5 to 8 once Until/PolicyID/ActionType joined Channel/Risk/Actor/
+// Outcome/Since) so call sites read as field names, not a fragile
+// positional list you have to cross-check against the signature.
+type FilterQuery struct {
+	Channel    string
+	Risk       string
+	Actor      string
+	Outcome    string
+	Since      string // relative duration ("24h") or an absolute RFC3339 timestamp
+	Until      string // same vocabulary as Since
+	PolicyID   string
+	ActionType string
+}
+
 // ParseFilter builds a Filter from the same string vocabulary every surface
 // that filters the audit log accepts — `damping log`'s flags and the local
 // dashboard's query parameters both parse through this one implementation,
 // per docs/ux-dashboard-spec.md §4's "CLI/dashboard vocabulary parity"
 // principle: there is exactly one place that decides what "--risk high" or
-// "?risk=high" means. since, if non-empty, is a Go duration string (e.g.
-// "24h") measured back from now; an empty since leaves Filter.Since zero
-// (matches everything).
-func ParseFilter(channel, risk, actor, outcome, since string) (Filter, error) {
+// "?risk=high" means. Since/Until, if non-empty, are each either a Go
+// duration string (e.g. "24h", measured back from now) or an absolute
+// RFC3339 timestamp — the dashboard's time-range picker sends a relative
+// duration for its preset buttons ("Last 24h") and an absolute timestamp for
+// its custom-range <input type="datetime-local"> pair; `damping log
+// --since`/--until accept the same two forms. An empty Since/Until leaves
+// the corresponding Filter field zero (matches everything on that side).
+func ParseFilter(q FilterQuery) (Filter, error) {
 	f := Filter{
-		Channel: event.Channel(channel),
-		Risk:    event.RiskLevel(risk),
-		Actor:   actor,
-		Outcome: outcome,
+		Channel:    event.Channel(q.Channel),
+		Risk:       event.RiskLevel(q.Risk),
+		Actor:      q.Actor,
+		Outcome:    q.Outcome,
+		PolicyID:   q.PolicyID,
+		ActionType: event.ActionType(q.ActionType),
 	}
-	if since != "" {
-		d, err := time.ParseDuration(since)
+	if q.Since != "" {
+		t, err := parseTimeBound(q.Since)
 		if err != nil {
-			return Filter{}, err
+			return Filter{}, fmt.Errorf("since: %w", err)
 		}
-		f.Since = time.Now().Add(-d)
+		f.Since = t
+	}
+	if q.Until != "" {
+		t, err := parseTimeBound(q.Until)
+		if err != nil {
+			return Filter{}, fmt.Errorf("until: %w", err)
+		}
+		f.Until = t
 	}
 	return f, nil
+}
+
+// parseTimeBound accepts either a Go duration measured back from now or an
+// absolute RFC3339 timestamp — see ParseFilter's doc comment for which
+// callers send which form.
+func parseTimeBound(s string) (time.Time, error) {
+	if d, err := time.ParseDuration(s); err == nil {
+		return time.Now().Add(-d), nil
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("invalid time %q (want a Go duration like \"24h\" or an RFC3339 timestamp)", s)
 }
 
 // LimitMostRecent keeps only the last n of events (assumed already in

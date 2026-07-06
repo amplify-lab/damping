@@ -71,6 +71,23 @@ is_regenerable_target(target) if {
 	segments[count(segments) - 1] in regenerable_dir_names
 }
 
+# temp_root_prefixes mirrors rules_shell.go's isUnderTempRoot exactly — a
+# target under one of these conventional OS-managed scratch roots is
+# regenerable by construction, regardless of what its leaf directory is
+# named. Deliberately not read from opa.runtime()'s env: this must stay a
+# fixed, environment-independent set so both engines evaluate identically.
+temp_root_prefixes := {"/tmp", "/var/tmp"}
+
+is_regenerable_target(target) if {
+	some root in temp_root_prefixes
+	target == root
+}
+
+is_regenerable_target(target) if {
+	some root in temp_root_prefixes
+	startswith(target, concat("", [root, "/"]))
+}
+
 in_protected_paths(target) if {
 	some p in input.config.protected_paths
 	trimmed := trim_suffix(p, "/")

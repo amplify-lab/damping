@@ -252,7 +252,7 @@ func TestFilter_Outcome_Degraded(t *testing.T) {
 // here so the local dashboard's HTTP handlers can parse the identical
 // vocabulary (?channel=, ?risk=, etc.) without importing the cmd package.
 func TestParseFilter_BuildsEquivalentFilter(t *testing.T) {
-	f, err := ParseFilter("cli", "high", "claude-code", "deny", "24h")
+	f, err := ParseFilter(FilterQuery{Channel: "cli", Risk: "high", Actor: "claude-code", Outcome: "deny", Since: "24h"})
 	if err != nil {
 		t.Fatalf("ParseFilter: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestParseFilter_BuildsEquivalentFilter(t *testing.T) {
 }
 
 func TestParseFilter_EmptySinceLeavesZeroTime(t *testing.T) {
-	f, err := ParseFilter("", "", "", "", "")
+	f, err := ParseFilter(FilterQuery{})
 	if err != nil {
 		t.Fatalf("ParseFilter: %v", err)
 	}
@@ -275,8 +275,87 @@ func TestParseFilter_EmptySinceLeavesZeroTime(t *testing.T) {
 }
 
 func TestParseFilter_InvalidSinceErrors(t *testing.T) {
-	if _, err := ParseFilter("", "", "", "", "not-a-duration"); err == nil {
+	if _, err := ParseFilter(FilterQuery{Since: "not-a-duration"}); err == nil {
 		t.Fatal("expected an error for an unparseable since duration")
+	}
+}
+
+// TestParseFilter_AcceptsAbsoluteRFC3339ForSinceAndUntil is the dashboard's
+// custom time-range picker's vocabulary: a <input type="datetime-local">
+// converted to an absolute RFC3339 timestamp, as opposed to the preset
+// buttons' relative duration ("24h").
+func TestParseFilter_AcceptsAbsoluteRFC3339ForSinceAndUntil(t *testing.T) {
+	since := "2026-07-01T00:00:00Z"
+	until := "2026-07-02T00:00:00Z"
+	f, err := ParseFilter(FilterQuery{Since: since, Until: until})
+	if err != nil {
+		t.Fatalf("ParseFilter: %v", err)
+	}
+	wantSince, _ := time.Parse(time.RFC3339, since)
+	wantUntil, _ := time.Parse(time.RFC3339, until)
+	if !f.Since.Equal(wantSince) {
+		t.Errorf("expected Since %v, got %v", wantSince, f.Since)
+	}
+	if !f.Until.Equal(wantUntil) {
+		t.Errorf("expected Until %v, got %v", wantUntil, f.Until)
+	}
+}
+
+func TestParseFilter_InvalidUntilErrors(t *testing.T) {
+	if _, err := ParseFilter(FilterQuery{Until: "not-a-duration-or-timestamp"}); err == nil {
+		t.Fatal("expected an error for an unparseable until value")
+	}
+}
+
+func TestParseFilter_PassesThroughPolicyIDAndActionType(t *testing.T) {
+	f, err := ParseFilter(FilterQuery{PolicyID: "destructive.rm_rf_protected", ActionType: "shell_exec"})
+	if err != nil {
+		t.Fatalf("ParseFilter: %v", err)
+	}
+	if f.PolicyID != "destructive.rm_rf_protected" {
+		t.Errorf("expected PolicyID to pass through, got %q", f.PolicyID)
+	}
+	if f.ActionType != event.ActionShellExec {
+		t.Errorf("expected ActionType to pass through, got %q", f.ActionType)
+	}
+}
+
+// TestFilter_Matches_Until is Since's mirror image: an event at or before
+// Until matches, one after it does not.
+func TestFilter_Matches_Until(t *testing.T) {
+	now := time.Now()
+	e := sampleEvent(event.ChannelCLI, event.RiskLow, decision.Allow)
+	e.Timestamp = now
+
+	if !(Filter{Until: now.Add(time.Minute)}).Matches(e) {
+		t.Error("expected an event before Until to match")
+	}
+	if (Filter{Until: now.Add(-time.Minute)}).Matches(e) {
+		t.Error("expected an event after Until not to match")
+	}
+}
+
+func TestFilter_Matches_PolicyID(t *testing.T) {
+	e := sampleEvent(event.ChannelCLI, event.RiskCritical, decision.Deny)
+	e.Decision.PolicyID = "destructive.rm_rf_protected"
+
+	if !(Filter{PolicyID: "destructive.rm_rf_protected"}).Matches(e) {
+		t.Error("expected a matching PolicyID to match")
+	}
+	if (Filter{PolicyID: "destructive.git_push_force"}).Matches(e) {
+		t.Error("expected a different PolicyID not to match")
+	}
+}
+
+func TestFilter_Matches_ActionType(t *testing.T) {
+	e := sampleEvent(event.ChannelMCP, event.RiskHigh, decision.Prompt)
+	e.ActionType = event.ActionToolCall
+
+	if !(Filter{ActionType: event.ActionToolCall}).Matches(e) {
+		t.Error("expected a matching ActionType to match")
+	}
+	if (Filter{ActionType: event.ActionShellExec}).Matches(e) {
+		t.Error("expected a different ActionType not to match")
 	}
 }
 

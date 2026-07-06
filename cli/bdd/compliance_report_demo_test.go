@@ -181,7 +181,7 @@ func TestFeatures_ComplianceReportDemo(t *testing.T) {
 				return nil
 			})
 
-			sc.Then(`^the output should be valid (markdown|json|text)$`, func(format string) error {
+			sc.Then(`^the output should be valid (markdown|json|text|html)$`, func(format string) error {
 				if w.runErr != nil {
 					return w.runErr
 				}
@@ -198,6 +198,10 @@ func TestFeatures_ComplianceReportDemo(t *testing.T) {
 				case "text":
 					if !strings.HasPrefix(w.stdout, "Damping Compliance Report") {
 						return fmt.Errorf("expected the plain-text header, got:\n%s", w.stdout)
+					}
+				case "html":
+					if !strings.HasPrefix(strings.TrimSpace(w.stdout), "<!doctype html>") {
+						return fmt.Errorf("expected a well-formed HTML document, got:\n%s", w.stdout)
 					}
 				}
 				return nil

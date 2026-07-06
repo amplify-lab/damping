@@ -48,6 +48,7 @@ Feature: Early compliance-report demo (V1 CLI, not the Phase 5 enterprise featur
       | markdown |
       | json     |
       | text     |
+      | html     |
 
   Scenario: Exporting a real compliance report from the actual local audit log
     Given the local audit log contains a mix of allowed, denied, and prompt-resolved events across multiple actors

@@ -23,22 +23,28 @@ var logFollowPollInterval = 500 * time.Millisecond
 
 func newLogCmd() *cobra.Command {
 	var (
-		channel string
-		risk    string
-		actor   string
-		outcome string
-		since   string
-		asJSON  bool
-		limit   int
-		follow  bool
+		channel    string
+		risk       string
+		actor      string
+		outcome    string
+		since      string
+		until      string
+		policyID   string
+		actionType string
+		asJSON     bool
+		limit      int
+		follow     bool
 	)
 	c := &cobra.Command{
 		Use:   "log",
 		Short: "Replay the local audit trail",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			f, err := buildLogFilter(channel, risk, actor, outcome, since)
+			f, err := audit.ParseFilter(audit.FilterQuery{
+				Channel: channel, Risk: risk, Actor: actor, Outcome: outcome,
+				Since: since, Until: until, PolicyID: policyID, ActionType: actionType,
+			})
 			if err != nil {
-				return err
+				return fmt.Errorf("--since/--until: %w", err)
 			}
 
 			auditPath, err := paths.Audit()
@@ -86,7 +92,10 @@ func newLogCmd() *cobra.Command {
 	c.Flags().StringVar(&risk, "risk", "", "filter by risk level (low|medium|high|critical)")
 	c.Flags().StringVar(&actor, "actor", "", "filter by actor")
 	c.Flags().StringVar(&outcome, "outcome", "", "filter by outcome (allow|deny|prompt|degraded)")
-	c.Flags().StringVar(&since, "since", "", "only show events newer than this duration ago (e.g. 24h)")
+	c.Flags().StringVar(&since, "since", "", "only show events at or after this point: a duration ago (e.g. 24h) or an absolute RFC3339 timestamp")
+	c.Flags().StringVar(&until, "until", "", "only show events at or before this point: a duration ago (e.g. 1h) or an absolute RFC3339 timestamp")
+	c.Flags().StringVar(&policyID, "policy-id", "", "filter by the matched rule's policy id (e.g. destructive.rm_rf_protected)")
+	c.Flags().StringVar(&actionType, "action-type", "", "filter by action type (shell_exec|tool_call|config_write|self_disable)")
 	c.Flags().BoolVar(&asJSON, "json", false, "output newline-delimited JSON instead of a table")
 	c.Flags().IntVar(&limit, "limit", 0, "show at most N most-recent events (0 = no limit)")
 	c.Flags().BoolVar(&follow, "follow", false, "keep watching for new events after printing existing ones (like tail -f); Ctrl+C to stop")
@@ -114,14 +123,6 @@ func newLogShowCmd() *cobra.Command {
 			return fmt.Errorf("no audit event found with event_id %q", args[0])
 		},
 	}
-}
-
-func buildLogFilter(channel, risk, actor, outcome, since string) (audit.Filter, error) {
-	f, err := audit.ParseFilter(channel, risk, actor, outcome, since)
-	if err != nil {
-		return audit.Filter{}, fmt.Errorf("--since: %w", err)
-	}
-	return f, nil
 }
 
 func readFilteredEvents(f audit.Filter) ([]event.ActionEvent, error) {

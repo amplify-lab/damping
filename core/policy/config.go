@@ -35,6 +35,15 @@ type Config struct {
 	Rules                    []RuleConfig `yaml:"rules"`
 	AlwaysAllow              []string     `yaml:"always_allow"`
 	AlwaysDeny               []string     `yaml:"always_deny"`
+
+	// NonInteractivePromptFallback lets an operator resolve a Prompt-tier
+	// decision by risk tier when no controlling terminal is available to ask
+	// a human (e.g. an agent running unattended in the background) — see
+	// cli/cmd/hook.go's resolveNonInteractivePrompt. Absent, or a risk tier
+	// with no entry here, keeps the original conservative default: deny.
+	// Values must be "allow" or "deny" (never "prompt" — there's no human to
+	// re-ask), enforced by Validate.
+	NonInteractivePromptFallback map[event.RiskLevel]decision.Verdict `yaml:"noninteractive_prompt_fallback,omitempty"`
 }
 
 // EngineNative and EngineOPA are the recognized values for Config.Engine.
@@ -114,6 +123,18 @@ func (c Config) Validate() error {
 			// default case), the least safe fallback for what a rule author
 			// likely meant as a real risk tier. Reject at load time instead.
 			return fmt.Errorf("policy: rule %q has invalid risk %q", r.ID, r.Risk)
+		}
+	}
+	for risk, verdict := range c.NonInteractivePromptFallback {
+		switch risk {
+		case event.RiskLow, event.RiskMedium, event.RiskHigh, event.RiskCritical:
+		default:
+			return fmt.Errorf("policy: noninteractive_prompt_fallback has invalid risk %q", risk)
+		}
+		switch verdict {
+		case decision.Allow, decision.Deny:
+		default:
+			return fmt.Errorf("policy: noninteractive_prompt_fallback[%q] has invalid verdict %q (want %q or %q)", risk, verdict, decision.Allow, decision.Deny)
 		}
 	}
 	return nil

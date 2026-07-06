@@ -88,6 +88,21 @@ func TestHandleCSS_ServesCompiledStylesheet(t *testing.T) {
 	}
 }
 
+func TestHandleChartsJS_ServesEmbeddedScript(t *testing.T) {
+	s, _ := newTestServer(t, policies.Default)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, newLocalRequest("/static/charts.js"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Header().Get("Content-Type"), "javascript") {
+		t.Fatalf("expected a javascript content type, got %q", rec.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(rec.Body.String(), "DampingCharts") {
+		t.Fatalf("expected the DampingCharts namespace in the served script, got: %s", rec.Body.String())
+	}
+}
+
 func TestHandleSummary_ReportsRuleCountAndAgents(t *testing.T) {
 	s, _ := newTestServer(t, policies.Default)
 	rec := httptest.NewRecorder()

@@ -139,6 +139,54 @@ rules:
 	}
 }
 
+func TestParseConfig_AcceptsNonInteractivePromptFallback(t *testing.T) {
+	raw := []byte(`
+version: 1
+noninteractive_prompt_fallback:
+  low: allow
+  medium: allow
+  critical: deny
+`)
+	cfg, err := ParseConfig(raw)
+	if err != nil {
+		t.Fatalf("expected a valid noninteractive_prompt_fallback to parse, got: %v", err)
+	}
+	if cfg.NonInteractivePromptFallback[event.RiskLow] != decision.Allow {
+		t.Errorf("expected low -> allow, got %q", cfg.NonInteractivePromptFallback[event.RiskLow])
+	}
+	if cfg.NonInteractivePromptFallback[event.RiskCritical] != decision.Deny {
+		t.Errorf("expected critical -> deny, got %q", cfg.NonInteractivePromptFallback[event.RiskCritical])
+	}
+}
+
+func TestParseConfig_RejectsNonInteractivePromptFallbackInvalidRisk(t *testing.T) {
+	raw := []byte(`
+version: 1
+noninteractive_prompt_fallback:
+  extremely_bad: allow
+`)
+	if _, err := ParseConfig(raw); err == nil {
+		t.Fatal("expected an error for an invalid risk key in noninteractive_prompt_fallback")
+	}
+}
+
+// TestParseConfig_RejectsNonInteractivePromptFallbackVerdictOfPrompt is a
+// regression test for a nonsensical config: this map exists specifically to
+// resolve a Prompt-tier decision when there's no human to ask, so mapping a
+// risk tier back to "prompt" can never be honored and must be rejected at
+// load time rather than silently falling through to the conservative deny
+// default at evaluation time.
+func TestParseConfig_RejectsNonInteractivePromptFallbackVerdictOfPrompt(t *testing.T) {
+	raw := []byte(`
+version: 1
+noninteractive_prompt_fallback:
+  low: prompt
+`)
+	if _, err := ParseConfig(raw); err == nil {
+		t.Fatal("expected an error for noninteractive_prompt_fallback mapping a risk to \"prompt\"")
+	}
+}
+
 // --- features/dangerous_command.feature, translated 1:1 into Go tests ---
 
 func TestEvaluate_BlocksHomeDirectoryDeletion(t *testing.T) {

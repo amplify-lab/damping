@@ -72,7 +72,16 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 // implementation.
 func parseFilterQuery(r *http.Request) (audit.Filter, error) {
 	q := r.URL.Query()
-	return audit.ParseFilter(q.Get("channel"), q.Get("risk"), q.Get("actor"), q.Get("outcome"), q.Get("since"))
+	return audit.ParseFilter(audit.FilterQuery{
+		Channel:    q.Get("channel"),
+		Risk:       q.Get("risk"),
+		Actor:      q.Get("actor"),
+		Outcome:    q.Get("outcome"),
+		Since:      q.Get("since"),
+		Until:      q.Get("until"),
+		PolicyID:   q.Get("policy_id"),
+		ActionType: q.Get("action_type"),
+	})
 }
 
 // defaultEventsLimit caps /api/events when the caller doesn't pass an

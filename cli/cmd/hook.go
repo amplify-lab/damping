@@ -232,11 +232,11 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 		prompter, closeTTY, err := newTTYPrompter()
 		if err != nil {
 			// No controlling terminal available (e.g. a background/CI
-			// execution context) — a Prompt-tier decision that can't be
-			// asked defaults to Deny, the same conservative fallback
-			// ui.TTYPrompter itself uses when stdin closes mid-prompt.
-			d.Resolve(decision.Deny)
-			d.Reason = "no controlling terminal available to ask; denied by default: " + d.Reason
+			// execution context) — resolve per cfg.NonInteractivePromptFallback
+			// if the matched rule's risk tier has an entry, otherwise the
+			// same conservative Deny default ui.TTYPrompter itself uses when
+			// stdin closes mid-prompt.
+			d = resolveNonInteractivePrompt(d, cfg)
 		} else {
 			resolution := prompter.Confirm(displayText, d)
 			d.Resolve(resolution.Verdict)
@@ -273,6 +273,28 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 	// Allow (directly, or resolved from a prompt): exit 0, the agent
 	// proceeds through its normal permission flow.
 	return nil
+}
+
+// resolveNonInteractivePrompt resolves a Prompt-tier decision when no
+// controlling terminal is available to ask a human. Config.
+// NonInteractivePromptFallback lets an operator opt a risk tier into a
+// concrete verdict for exactly this situation (e.g. "medium" -> allow, so a
+// background agent's everyday-but-flagged command isn't blocked purely
+// because nobody was there to answer a prompt) instead of the historical
+// unconditional Deny, which treated every risk tier identically whenever a
+// command happened to run unattended. A risk tier with no configured entry
+// — including when NonInteractivePromptFallback itself is nil, the default
+// — keeps that original conservative behavior.
+func resolveNonInteractivePrompt(d decision.Decision, cfg policy.Config) decision.Decision {
+	verdict := decision.Deny
+	reason := "no controlling terminal available to ask; denied by default: " + d.Reason
+	if v, ok := cfg.NonInteractivePromptFallback[event.RiskLevel(d.Risk)]; ok {
+		verdict = v
+		reason = fmt.Sprintf("no controlling terminal available to ask; resolved to %s per noninteractive_prompt_fallback for risk %q: %s", v, d.Risk, d.Reason)
+	}
+	d.Resolve(verdict)
+	d.Reason = reason
+	return d
 }
 
 // evaluateCommandRecovering wraps hookadapter.EvaluateCommand with a

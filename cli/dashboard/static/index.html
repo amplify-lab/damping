@@ -40,7 +40,16 @@
           <input name="actor" type="text" placeholder="e.g. claude-code" autocomplete="off">
         </label>
         <label class="filter-field"><span>Since</span>
-          <select name="since"><option value="">all time</option><option value="1h">1h</option><option value="24h">24h</option><option value="168h">7d</option></select>
+          <select id="since-select" name="since"><option value="">all time</option><option value="1h">1h</option><option value="24h">24h</option><option value="168h">7d</option><option value="720h">30d</option><option value="__custom">custom range…</option></select>
+        </label>
+        <label class="filter-field custom-range-field hidden"><span>From</span>
+          <input id="custom-from" type="datetime-local">
+        </label>
+        <label class="filter-field custom-range-field hidden"><span>Until</span>
+          <input id="custom-until" type="datetime-local">
+        </label>
+        <label class="filter-field"><span>Rule</span>
+          <input name="policy_id" type="text" placeholder="e.g. destructive.rm_rf_protected" autocomplete="off">
         </label>
         <label class="filter-field flex-row items-center gap-1.5">
           <input id="live-toggle" type="checkbox" checked>
@@ -49,6 +58,23 @@
         <span id="stream-status" class="text-xs text-slate-500" role="status"></span>
         <span id="truncated-note" class="text-xs text-amber-400 hidden" role="status">showing only the most recent events — narrow with Since for the rest</span>
       </form>
+
+      <section aria-label="Statistics" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="stats-card">
+          <h2 class="stats-title">Risk over time</h2>
+          <svg id="risk-over-time-chart" viewBox="0 0 400 120" preserveAspectRatio="none" class="w-full h-28"></svg>
+          <div class="flex gap-3 mt-1 text-xs text-slate-500">
+            <span><span class="legend-dot" style="background:#14b8a6"></span>low</span>
+            <span><span class="legend-dot" style="background:#eab308"></span>medium</span>
+            <span><span class="legend-dot" style="background:#f59e0b"></span>high</span>
+            <span><span class="legend-dot" style="background:#ef4444"></span>critical</span>
+          </div>
+        </div>
+        <div class="stats-card">
+          <h2 class="stats-title">Top triggered rules</h2>
+          <div id="top-rules-chart" class="flex flex-col gap-1.5"></div>
+        </div>
+      </section>
 
       <div id="events-region" class="rounded border border-slate-800 overflow-x-auto min-h-[8rem]">
         <table class="w-full text-sm" aria-describedby="events-state">
@@ -105,6 +131,7 @@
   </div>
 </template>
 
+<script src="/static/charts.js"></script>
 <script>
 "use strict";
 
@@ -118,7 +145,14 @@ function currentFilterParams() {
   for (const el of form.elements) {
     if (!el.name) continue;
     if (el.type === "checkbox") continue;
+    if (el.name === "since" && el.value === "__custom") continue; // resolved from the two datetime-local fields below instead
     if (el.value) params.set(el.name, el.value);
+  }
+  if (document.getElementById("since-select").value === "__custom") {
+    const from = document.getElementById("custom-from").value;
+    const until = document.getElementById("custom-until").value;
+    if (from) params.set("since", new Date(from).toISOString());
+    if (until) params.set("until", new Date(until).toISOString());
   }
   return params;
 }
@@ -324,34 +358,6 @@ async function loadSummary() {
   }
 }
 
-function renderSparkline(svg, points) {
-  svg.textContent = "";
-  if (points.length === 0) {
-    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-    line.setAttribute("x1", "0"); line.setAttribute("y1", "20"); line.setAttribute("x2", "100"); line.setAttribute("y2", "20");
-    line.setAttribute("stroke", "#14b8a6"); line.setAttribute("stroke-width", "2");
-    svg.appendChild(line);
-    return;
-  }
-  const max = 4, w = 100, h = 24, pad = 3;
-  const step = points.length > 1 ? w / (points.length - 1) : 0;
-  const coords = points.map((p, i) => {
-    const x = points.length > 1 ? i * step : w / 2;
-    const y = h - pad - (p - 1) / (max - 1) * (h - 2 * pad);
-    return [x, y];
-  });
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-  path.setAttribute("points", coords.map(c => c[0].toFixed(1) + "," + c[1].toFixed(1)).join(" "));
-  path.setAttribute("fill", "none");
-  path.setAttribute("stroke-width", "2");
-  // Color settles from warm (early/high risk) to cool (recent/low risk) —
-  // same redundant color+shape story as the risk badges, not relying on
-  // shape alone for anyone with a color vision deficiency either.
-  const lastRisk = points[points.length - 1];
-  path.setAttribute("stroke", lastRisk >= 3 ? "#f59e0b" : lastRisk === 2 ? "#eab308" : "#14b8a6");
-  svg.appendChild(path);
-}
-
 async function loadSessions() {
   const list = document.getElementById("sessions-list");
   try {
@@ -373,7 +379,7 @@ async function loadSessions() {
       const badge = card.querySelector('[data-field="settled"]');
       badge.textContent = sess.settled ? "settled" : "active";
       badge.classList.add(sess.settled ? "badge-allow" : "badge-high");
-      renderSparkline(card.querySelector('[data-field="sparkline"]'), sess.points || []);
+      DampingCharts.sparkline(card.querySelector('[data-field="sparkline"]'), sess.points || []);
       list.appendChild(card);
     }
   } catch (e) {
@@ -407,6 +413,34 @@ async function loadEvents() {
   }
 }
 
+async function loadStats() {
+  const chart = document.getElementById("risk-over-time-chart");
+  const rules = document.getElementById("top-rules-chart");
+  try {
+    const res = await fetch("/api/stats?" + currentFilterParams().toString());
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const s = await res.json();
+    DampingCharts.stackedRiskOverTime(chart, s.risk_over_time || []);
+    const items = (s.top_rules || []).map(r => ({ label: r.policy_id, count: r.count, color: DampingCharts.RISK_COLORS[r.risk] }));
+    if (items.length === 0) {
+      rules.textContent = "";
+      const empty = document.createElement("div");
+      empty.className = "text-slate-600 text-xs";
+      empty.textContent = "No rule matches in this period.";
+      rules.appendChild(empty);
+    } else {
+      DampingCharts.barChart(rules, items);
+    }
+  } catch (e) {
+    chart.textContent = "";
+    rules.textContent = "";
+    const err = document.createElement("div");
+    err.className = "text-red-400 text-xs";
+    err.textContent = "Couldn't load statistics.";
+    rules.appendChild(err);
+  }
+}
+
 let stream = null;
 
 function startStream() {
@@ -435,19 +469,26 @@ document.getElementById("filter-form").addEventListener("input", () => {
   clearTimeout(filterDebounce);
   filterDebounce = setTimeout(() => {
     loadEvents();
+    loadStats();
     if (document.getElementById("live-toggle").checked) startStream();
   }, 250);
 });
 document.getElementById("live-toggle").addEventListener("change", (e) => {
   if (e.target.checked) startStream(); else stopStream();
 });
+document.getElementById("since-select").addEventListener("change", (e) => {
+  const isCustom = e.target.value === "__custom";
+  document.querySelectorAll(".custom-range-field").forEach(el => el.classList.toggle("hidden", !isCustom));
+});
 
 loadSummary();
 loadSessions();
 loadEvents();
+loadStats();
 startStream();
 setInterval(loadSummary, 15000);
 setInterval(loadSessions, 15000);
+setInterval(loadStats, 15000);
 </script>
 </body>
 </html>

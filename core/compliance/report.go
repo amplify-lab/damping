@@ -24,9 +24,11 @@ package compliance
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/amplify-lab/damping/core/decision"
 	"github.com/amplify-lab/damping/core/event"
 )
 
@@ -50,6 +52,29 @@ type Entry struct {
 	Reason    string
 }
 
+// DailyRiskCount is one day's risk-tier breakdown — Report.RiskOverTime's
+// element, used by RenderHTML's timeline chart. Bucketed by calendar day
+// (UTC), the natural unit for a report whose period typically spans weeks
+// to a month, unlike the local dashboard's /api/stats, which buckets a much
+// shorter, operator-chosen window into a fixed count of slices instead.
+type DailyRiskCount struct {
+	Date                        time.Time
+	Low, Medium, High, Critical int
+}
+
+// RuleBreakdown is one row of Report.TopRules — how many times one rule id
+// matched across the reporting period.
+type RuleBreakdown struct {
+	RuleID string
+	Count  int
+}
+
+// reportTopRulesLimit caps Report.TopRules the same way the local
+// dashboard's own top-rules panel caps itself (cli/dashboard/stats.go's
+// topRulesLimit) — a glanceable "what's actually firing" summary, not an
+// exhaustive per-rule report.
+const reportTopRulesLimit = 10
+
 // Report is the generated compliance view over a slice of ActionEvents.
 type Report struct {
 	GeneratedAt     time.Time
@@ -60,6 +85,17 @@ type Report struct {
 	RiskCounts      map[event.RiskLevel]int
 	OutcomeCounts   map[string]int
 	HighRiskEntries []Entry
+
+	// RiskOverTime, TopRules, DeniedCount, and CriticalDeniedCount are
+	// derived summary numbers RenderHTML's charts are built from —
+	// RenderMarkdown/RenderText don't need them (their own summary section
+	// reads RiskCounts/OutcomeCounts directly), but they're computed here in
+	// Generate rather than re-derived from raw events at render time, so
+	// every Render* method stays a pure function of the same Report value.
+	RiskOverTime        []DailyRiskCount
+	TopRules            []RuleBreakdown
+	DeniedCount         int
+	CriticalDeniedCount int
 }
 
 // highRiskTiers are the only risk levels that belong in a Report's detail
@@ -87,6 +123,10 @@ func Generate(events []event.ActionEvent, isDemo bool) Report {
 		RiskCounts:    map[event.RiskLevel]int{},
 		OutcomeCounts: map[string]int{},
 	}
+	ruleCounts := map[string]int{}
+	dailyBuckets := map[time.Time]*DailyRiskCount{}
+	var dailyOrder []time.Time
+
 	for i, e := range events {
 		r.RiskCounts[e.RiskLevel]++
 		outcome := string(e.Decision.Outcome())
@@ -97,6 +137,34 @@ func Generate(events []event.ActionEvent, isDemo bool) Report {
 		}
 		if i == 0 || e.Timestamp.After(r.PeriodEnd) {
 			r.PeriodEnd = e.Timestamp
+		}
+
+		day := e.Timestamp.UTC().Truncate(24 * time.Hour)
+		bucket, ok := dailyBuckets[day]
+		if !ok {
+			bucket = &DailyRiskCount{Date: day}
+			dailyBuckets[day] = bucket
+			dailyOrder = append(dailyOrder, day)
+		}
+		switch e.RiskLevel {
+		case event.RiskLow:
+			bucket.Low++
+		case event.RiskMedium:
+			bucket.Medium++
+		case event.RiskHigh:
+			bucket.High++
+		case event.RiskCritical:
+			bucket.Critical++
+		}
+
+		if e.Decision.PolicyID != "" {
+			ruleCounts[e.Decision.PolicyID]++
+		}
+		if decision.Verdict(outcome) == decision.Deny {
+			r.DeniedCount++
+			if e.RiskLevel == event.RiskCritical {
+				r.CriticalDeniedCount++
+			}
 		}
 
 		if !highRiskTiers[e.RiskLevel] {
@@ -114,6 +182,25 @@ func Generate(events []event.ActionEvent, isDemo bool) Report {
 			Reason:    e.Decision.Reason,
 		})
 	}
+
+	sort.Slice(dailyOrder, func(i, j int) bool { return dailyOrder[i].Before(dailyOrder[j]) })
+	for _, d := range dailyOrder {
+		r.RiskOverTime = append(r.RiskOverTime, *dailyBuckets[d])
+	}
+
+	for id, count := range ruleCounts {
+		r.TopRules = append(r.TopRules, RuleBreakdown{RuleID: id, Count: count})
+	}
+	sort.Slice(r.TopRules, func(i, j int) bool {
+		if r.TopRules[i].Count != r.TopRules[j].Count {
+			return r.TopRules[i].Count > r.TopRules[j].Count
+		}
+		return r.TopRules[i].RuleID < r.TopRules[j].RuleID
+	})
+	if len(r.TopRules) > reportTopRulesLimit {
+		r.TopRules = r.TopRules[:reportTopRulesLimit]
+	}
+
 	return r
 }
 

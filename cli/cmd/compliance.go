@@ -33,7 +33,7 @@ func newComplianceReportDemoCmd() *cobra.Command {
 			return renderComplianceReport(cmd, r, format)
 		},
 	}
-	c.Flags().StringVar(&format, "format", "markdown", "output format (markdown|text|json)")
+	c.Flags().StringVar(&format, "format", "markdown", "output format (markdown|text|json|html)")
 	return c
 }
 
@@ -46,7 +46,7 @@ func newComplianceReportExportCmd() *cobra.Command {
 		Use:   "export",
 		Short: "Generate a compliance report from the real local audit trail",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			f, err := audit.ParseFilter("", "", "", "", since)
+			f, err := audit.ParseFilter(audit.FilterQuery{Since: since})
 			if err != nil {
 				return fmt.Errorf("--since: %w", err)
 			}
@@ -58,7 +58,7 @@ func newComplianceReportExportCmd() *cobra.Command {
 			return renderComplianceReport(cmd, r, format)
 		},
 	}
-	c.Flags().StringVar(&format, "format", "markdown", "output format (markdown|text|json)")
+	c.Flags().StringVar(&format, "format", "markdown", "output format (markdown|text|json|html)")
 	c.Flags().StringVar(&since, "since", "", "only include events newer than this duration ago (e.g. 720h for 30 days); empty means the entire local audit log")
 	return c
 }
@@ -79,7 +79,14 @@ func renderComplianceReport(cmd *cobra.Command, r compliance.Report, format stri
 		}
 		_, err = fmt.Fprintln(w, string(data))
 		return err
+	case "html":
+		html, err := r.RenderHTML()
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprint(w, html)
+		return err
 	default:
-		return fmt.Errorf("unknown --format %q (want markdown|text|json)", format)
+		return fmt.Errorf("unknown --format %q (want markdown|text|json|html)", format)
 	}
 }

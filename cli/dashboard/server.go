@@ -21,7 +21,7 @@ import (
 	"strings"
 )
 
-//go:embed static/dashboard.css static/index.html
+//go:embed static/dashboard.css static/index.html static/charts.js
 var staticFS embed.FS
 
 // Config is everything the dashboard needs already resolved before it
@@ -65,7 +65,9 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleIndex)
 	mux.HandleFunc("GET /static/dashboard.css", s.handleCSS)
+	mux.HandleFunc("GET /static/charts.js", s.handleChartsJS)
 	mux.HandleFunc("GET /api/summary", s.handleSummary)
+	mux.HandleFunc("GET /api/stats", s.handleStats)
 	mux.HandleFunc("GET /api/sessions", s.handleSessions)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/events/stream", s.handleEventStream)
@@ -133,5 +135,15 @@ func (s *Server) handleCSS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	_, _ = w.Write(data)
+}
+
+func (s *Server) handleChartsJS(w http.ResponseWriter, r *http.Request) {
+	data, err := staticFS.ReadFile("static/charts.js")
+	if err != nil {
+		http.Error(w, "dashboard: embedded charts.js missing", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	_, _ = w.Write(data)
 }

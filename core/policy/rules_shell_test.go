@@ -1,6 +1,10 @@
 package policy
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/amplify-lab/damping/core/decision"
+)
 
 // TestHasRecursiveForce_CatchesEveryRealSpelling is a permanent regression
 // test for a real bypass found via code review: an earlier version of
@@ -84,5 +88,66 @@ func TestEvaluate_BlocksChmodWithLeadingDigitMode(t *testing.T) {
 	d := e.Evaluate(Facts{Raw: "chmod -R 1777 /var/www", Command: "chmod", Args: []string{"-R", "1777", "/var/www"}})
 	if d.PolicyID != "destructive.chmod_777_recursive" {
 		t.Fatalf("expected destructive.chmod_777_recursive, got %q (verdict %v)", d.PolicyID, d.Verdict)
+	}
+}
+
+// TestIsUnderTempRoot is a permanent regression test for a real false
+// positive: a developer's own disposable /tmp scratch directories (e.g. an
+// agent's research working directory) were flagged destructive.rm_rf_protected
+// purely because their basename wasn't in regenerableDirNames — an OS-managed
+// scratch root is regenerable by construction, the same reasoning already
+// applied to node_modules/build/dist, so rm -rf under one should be treated
+// the same way regardless of what the leaf directory happens to be named.
+func TestIsUnderTempRoot(t *testing.T) {
+	cases := []struct {
+		target string
+		want   bool
+	}{
+		{"/tmp", true},
+		{"/tmp/scratch-research", true},
+		{"/tmp/claude-1000/some-session/scratchpad", true},
+		{"/var/tmp", true},
+		{"/var/tmp/build-cache", true},
+		{"/tmp-not-really", false}, // must not match by prefix alone
+		{"/etc", false},
+		{"/home/user/tmp", false}, // "tmp" as a path *segment* elsewhere is not the OS temp root
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := isUnderTempRoot(tc.target); got != tc.want {
+			t.Errorf("isUnderTempRoot(%q) = %v, want %v", tc.target, got, tc.want)
+		}
+	}
+}
+
+func TestEvaluate_AllowsRmRfUnderOSTempRoot(t *testing.T) {
+	e := loadDefaultEngine(t)
+	cases := []string{
+		"/tmp/scratch-research",
+		"/tmp/claude-1000/some-session/scratchpad",
+		"/var/tmp/build-cache",
+	}
+	for _, target := range cases {
+		d := e.Evaluate(Facts{Raw: "rm -rf " + target, Command: "rm", Args: []string{"-rf", target}, Target: target})
+		if d.Verdict != decision.Allow {
+			t.Errorf("rm -rf %s: expected Allow, got verdict %v (rule %q)", target, d.Verdict, d.PolicyID)
+		}
+	}
+}
+
+// TestEvaluate_StillBlocksProtectedPathsThatLookLikeTempPaths guards against
+// a naive prefix-only implementation swallowing an explicitly protected path
+// that happens to sit inside /tmp — an operator-configured protected_paths
+// entry must always win over the temp-root allowance.
+func TestEvaluate_StillBlocksProtectedPathsThatLookLikeTempPaths(t *testing.T) {
+	cfg, err := LoadConfig(defaultPolicyPath(t))
+	if err != nil {
+		t.Fatalf("loading default policy: %v", err)
+	}
+	cfg.ProtectedPaths = append(cfg.ProtectedPaths, "/tmp/do-not-touch")
+	e := New(cfg)
+	d := e.Evaluate(Facts{Raw: "rm -rf /tmp/do-not-touch", Command: "rm", Args: []string{"-rf", "/tmp/do-not-touch"}, Target: "/tmp/do-not-touch"})
+	if d.PolicyID != "destructive.rm_rf_protected" {
+		t.Fatalf("expected destructive.rm_rf_protected for an explicitly protected path, got %q (verdict %v)", d.PolicyID, d.Verdict)
 	}
 }

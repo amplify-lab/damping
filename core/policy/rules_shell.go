@@ -45,7 +45,28 @@ func matchRmRfProtected(f Facts, cfg Config) bool {
 		if inProtectedPaths(target, cfg.ProtectedPaths) {
 			return true
 		}
-		if !regenerableDirNames[basename(target)] {
+		if regenerableDirNames[basename(target)] || isUnderTempRoot(target) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// tempRootPrefixes are conventional Unix scratch-space roots the OS clears on
+// its own schedule (reboot, tmpfs, systemd-tmpfiles) — a target under one of
+// these is regenerable by construction, the same reasoning already applied
+// to regenerableDirNames, regardless of what the leaf directory is named.
+// Deliberately not os.TempDir() (which follows $TMPDIR at runtime): this
+// must stay a fixed, environment-independent set so
+// core/policy/opa_equivalence_test.go can keep asserting byte-for-byte
+// identical behavior between this Go engine and policy.rego, neither of
+// which should depend on ambient process environment.
+var tempRootPrefixes = []string{"/tmp", "/var/tmp"}
+
+func isUnderTempRoot(target string) bool {
+	for _, root := range tempRootPrefixes {
+		if target == root || strings.HasPrefix(target, root+"/") {
 			return true
 		}
 	}

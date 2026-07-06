@@ -677,6 +677,66 @@ func TestHook_PromptWithoutTTYDefaultsToDenyAndLogsDegraded(t *testing.T) {
 	}
 }
 
+// writePolicyWithNonInteractiveFallback copies the shipped default policy
+// and appends a noninteractive_prompt_fallback block, returning the temp
+// file's path for use with --config. Mirrors
+// TestMCPWrap_LogsDegradedWhenAuditSinkUnavailable's pattern for building a
+// modified policy copy without touching the real embedded default.yaml.
+func writePolicyWithNonInteractiveFallback(t *testing.T, fallbackYAML string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "policies", "default.yaml"))
+	if err != nil {
+		t.Fatalf("reading default policy: %v", err)
+	}
+	policyPath := filepath.Join(t.TempDir(), "policy.yaml")
+	content := string(raw) + "\nnoninteractive_prompt_fallback:\n" + fallbackYAML
+	if err := os.WriteFile(policyPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("writing policy copy: %v", err)
+	}
+	return policyPath
+}
+
+// TestHook_NonInteractivePromptFallback_ResolvesConfiguredRiskToAllow is the
+// BDD counterpart to TestHook_PromptWithoutTTYDefaultsToDenyAndLogsDegraded:
+// once an operator opts a risk tier into noninteractive_prompt_fallback, a
+// Prompt-tier decision at that risk tier resolves to the configured verdict
+// instead of the unconditional deny — destructive.chmod_777_recursive is
+// "medium" risk in the shipped default policy, prompt-tier, a real command a
+// background agent might legitimately run.
+func TestHook_NonInteractivePromptFallback_ResolvesConfiguredRiskToAllow(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	policyPath := writePolicyWithNonInteractiveFallback(t, "  medium: allow\n")
+
+	stdin := `{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"chmod -R 777 /var/www"}}`
+	_, _, err := run(t, stdin, "--config", policyPath, "hook", "pretooluse")
+	if err != nil {
+		t.Fatalf("expected the configured medium -> allow fallback to permit the command, got %v", err)
+	}
+}
+
+// TestHook_NonInteractivePromptFallback_LeavesUnconfiguredRiskTierDenied
+// proves the fallback is opt-in per risk tier, not a blanket relaxation: with
+// only "medium" configured, a "critical" Prompt-tier decision
+// (destructive.rm_rf_protected) must still deny by default when there's no
+// TTY to ask.
+func TestHook_NonInteractivePromptFallback_LeavesUnconfiguredRiskTierDenied(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	policyPath := writePolicyWithNonInteractiveFallback(t, "  medium: allow\n")
+
+	stdin := `{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"rm -rf ~/"}}`
+	_, _, err := run(t, stdin, "--config", policyPath, "hook", "pretooluse")
+	var exitErr *ExitCodeError
+	if !isExitCodeError(err, &exitErr) || exitErr.Code != 2 {
+		t.Fatalf("expected the unconfigured critical risk tier to still deny (Code:2), got %v", err)
+	}
+}
+
 func TestHook_IgnoresNonBashTools(t *testing.T) {
 	setupTestEnv(t)
 	if _, _, err := run(t, "", "init"); err != nil {
@@ -1200,6 +1260,45 @@ func TestLog_CLIAndMCPShareOneAuditTrailAndFilterCorrectly(t *testing.T) {
 	}
 	if !strings.Contains(mcpOnly, "No audit events") {
 		t.Fatal("expected no mcp-channel events yet (only a CLI hook ran)")
+	}
+}
+
+// TestLog_FiltersByPolicyIDActionTypeAndUntil is the BDD-level check for the
+// three filter dimensions core/audit.Filter gained alongside the dashboard's
+// /api/stats work (PolicyID, ActionType, Until) — proving they're wired
+// through the CLI, not just unit-tested in core/audit directly.
+func TestLog_FiltersByPolicyIDActionTypeAndUntil(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	stdin := `{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"/proc/self/root/usr/bin/npx rm -rf /"}}`
+	if _, _, err := run(t, stdin, "hook", "pretooluse"); !isExitCodeError(err, new(*ExitCodeError)) {
+		t.Fatalf("expected the setup command to hard-deny, got %v", err)
+	}
+
+	matching, _, err := run(t, "", "log", "--policy-id", "destructive.proc_sandbox_bypass", "--action-type", "shell_exec")
+	if err != nil {
+		t.Fatalf("log --policy-id --action-type: %v", err)
+	}
+	if strings.Contains(matching, "No audit events") {
+		t.Fatal("expected the seeded event to match its own real policy id and action type")
+	}
+
+	noMatch, _, err := run(t, "", "log", "--policy-id", "destructive.git_push_force")
+	if err != nil {
+		t.Fatalf("log --policy-id (non-matching): %v", err)
+	}
+	if !strings.Contains(noMatch, "No audit events") {
+		t.Fatal("expected a different policy id to match nothing")
+	}
+
+	tooEarly, _, err := run(t, "", "log", "--until", "1h")
+	if err != nil {
+		t.Fatalf("log --until: %v", err)
+	}
+	if !strings.Contains(tooEarly, "No audit events") {
+		t.Fatal("expected --until 1h (one hour ago) to exclude an event that just happened")
 	}
 }
 

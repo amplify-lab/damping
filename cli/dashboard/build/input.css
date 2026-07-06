@@ -32,4 +32,14 @@
   .badge-mcp { @apply bg-indigo-950 text-indigo-300; }
 
   .settled-badge { @apply text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400; }
+
+  .stats-card { @apply rounded border border-slate-800 bg-slate-900/50 p-3 flex flex-col gap-2; }
+  .stats-title { @apply text-xs text-slate-500 uppercase tracking-wide font-medium; }
+  .legend-dot { @apply inline-block w-2 h-2 rounded-full mr-1 align-middle; }
+
+  .bar-row { @apply flex items-center gap-2 text-xs; }
+  .bar-label { @apply font-mono text-slate-400 w-48 truncate shrink-0; }
+  .bar-track { @apply flex-1 h-3 rounded bg-slate-800 overflow-hidden; }
+  .bar-fill { @apply h-full rounded bg-teal-500; }
+  .bar-count { @apply text-slate-400 w-8 text-right shrink-0; }
 }
