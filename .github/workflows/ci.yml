@@ -22,7 +22,7 @@ jobs:
       - uses: golangci/golangci-lint-action@v6
         with:
           working-directory: core
-          version: "~> v2"
+          version: "v2.12.2"
       - run: go test ./... -race -cover
 
   cli:
@@ -41,7 +41,7 @@ jobs:
       - uses: golangci/golangci-lint-action@v6
         with:
           working-directory: cli
-          version: "~> v2"
+          version: "v2.12.2"
       # cli/bdd runs every V1-scope features/*.feature file through godog
       # (dangerous_command, self_protection, mcp_tool_governance, audit_log,
       # policy_config) — see docs/00-統一開發計畫（定案版）.md: a scenario
@@ -84,11 +84,11 @@ jobs:
         with:
           go-version: "1.26"
       - name: gosec (core)
-        uses: securego/gosec@master
+        uses: securego/gosec@v2.27.1
         with:
           args: "-fmt sarif -out core-gosec.sarif ./core/..."
       - name: gosec (cli)
-        uses: securego/gosec@master
+        uses: securego/gosec@v2.27.1
         with:
           args: "-fmt sarif -out cli-gosec.sarif ./cli/..."
       - name: SBOM (core)
