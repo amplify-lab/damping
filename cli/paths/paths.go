@@ -83,3 +83,16 @@ func CursorHooks() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".cursor", "hooks.json")
 }
+
+// CodexConfig returns where Codex CLI's own hook config lives — see
+// ClaudeSettings's doc comment, same reasoning with $DAMPING_CODEX_HOOKS.
+// Verified against developers.openai.com/codex/hooks: Codex reads
+// ~/.codex/hooks.json, the same {"hooks":{"PreToolUse":[...]}} shape
+// Claude Code's settings.json uses (see adapter/agent/codex.go).
+func CodexConfig() string {
+	if v := os.Getenv("DAMPING_CODEX_HOOKS"); v != "" {
+		return v
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".codex", "hooks.json")
+}

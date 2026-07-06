@@ -11,7 +11,6 @@ import (
 
 	"github.com/amplify-lab/damping/cli/adapter/agent"
 	"github.com/amplify-lab/damping/cli/enforcement"
-	"github.com/amplify-lab/damping/cli/paths"
 	"github.com/amplify-lab/damping/core/audit"
 	"github.com/amplify-lab/damping/core/event"
 	"github.com/amplify-lab/damping/core/policy"
@@ -46,11 +45,10 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 		out.RuleCount = len(cfg.Rules)
 	}
 
-	if has, err := agent.HasClaudeCodeHook(paths.ClaudeSettings()); err == nil && has {
-		out.Agents = append(out.Agents, "claude-code")
-	}
-	if has, err := agent.HasCursorHook(paths.CursorHooks()); err == nil && has {
-		out.Agents = append(out.Agents, "cursor")
+	for _, a := range agent.Registry {
+		if has, err := a.HasHook(a.ConfigPath()); err == nil && has {
+			out.Agents = append(out.Agents, a.Name)
+		}
 	}
 
 	// A prior version silently left DegradedCount7d at its zero value on any

@@ -16,15 +16,19 @@ import (
 	"github.com/amplify-lab/damping/core/policy"
 )
 
-// hookInput is the union of both agents' `damping hook pretooluse` stdin
-// shapes — see docs/cli-reference.md §11 for the verified contract. Claude
-// Code and Cursor are wired to invoke the exact same command (see
-// cli/adapter/agent's shared HookCommand), so the payload's own shape is
-// the only signal that distinguishes them; HookEventName ("PreToolUse" vs.
-// "beforeShellExecution") is the field both agents happen to include for
-// exactly this purpose, and every real payload this project has ever seen
-// from either agent carries it, so it's used as the primary discriminator
-// rather than probing which of the two disjoint field sets got populated.
+// hookInput is the union of every supported agent's `damping hook
+// pretooluse` stdin shape — see docs/cli-reference.md §11 for the verified
+// contract. Claude Code, Cursor, and Codex are all wired to invoke the
+// exact same command (see cli/adapter/agent's shared HookCommand), so the
+// payload's own shape is the only signal that distinguishes them.
+// HookEventName is the primary discriminator ("beforeShellExecution" only
+// ever means Cursor), but it is NOT sufficient on its own anymore: Codex's
+// PreToolUse hook deliberately sends the identical hook_event_name value
+// Claude Code uses (verified against developers.openai.com/codex/hooks —
+// OpenAI built Codex's hook contract to be Claude-Code-hook-script
+// compatible, this is why). The two are told apart by TurnID/ToolUseID:
+// Codex's real payload includes them, Claude Code's does not (Claude Code
+// sends a PromptID instead) — see the "PreToolUse" case below.
 //
 // A review found the previous version of this struct only ever decoded
 // Claude Code's shape — a real Cursor beforeShellExecution payload has no
@@ -33,14 +37,18 @@ import (
 // evaluated by nothing and always allowed, despite `damping doctor`/
 // `status` reporting the Cursor hook as actively registered.
 type hookInput struct {
-	HookEventName string `json:"hook_event_name"` // "PreToolUse" (Claude Code) or "beforeShellExecution" (Cursor)
+	HookEventName string `json:"hook_event_name"` // "PreToolUse" (Claude Code, Codex) or "beforeShellExecution" (Cursor)
 
-	// Claude Code (PreToolUse) shape.
+	// Claude Code / Codex (PreToolUse) shape — shared, since both send it.
 	SessionID string `json:"session_id"`
 	ToolName  string `json:"tool_name"`
 	ToolInput struct {
 		Command string `json:"command"`
 	} `json:"tool_input"`
+	// TurnID/ToolUseID: present in Codex's payload, absent in Claude
+	// Code's — the discriminator between the two (see doc comment above).
+	TurnID    string `json:"turn_id"`
+	ToolUseID string `json:"tool_use_id"`
 
 	// Cursor (beforeShellExecution) shape.
 	ConversationID string `json:"conversation_id"`
@@ -96,7 +104,11 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 		if in.ToolName != "Bash" {
 			return nil // not a shell command; nothing for Damping's V1 CLI adapter to judge
 		}
-		actor, sessionID, rawCommand = "claude-code", in.SessionID, in.ToolInput.Command
+		actor = "claude-code"
+		if in.TurnID != "" || in.ToolUseID != "" {
+			actor = "codex"
+		}
+		sessionID, rawCommand = in.SessionID, in.ToolInput.Command
 	case "beforeShellExecution":
 		actor, sessionID, rawCommand = "cursor", in.ConversationID, in.Command
 	default:

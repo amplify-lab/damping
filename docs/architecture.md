@@ -26,10 +26,16 @@
 │   │                         #   resolution (literal.go) — see §5
 │   ├── adapter/hook/         # shared evaluate/build-event logic used by `policy test` and the real CLI hook
 │   ├── adapter/mcp/          # V1 thin MCP adapter — protocol wiring (wrap.go), Facts extraction (facts.go) — see §7
-│   ├── adapter/agent/        # Claude Code / Cursor hook-file install & detection; shared JSON-file
-│   │                         #   read/write (jsonfile.go) so it isn't mistaken for Claude-Code-specific
+│   ├── adapter/agent/        # Claude Code / Cursor / Codex hook-file install & detection, behind a
+│   │                         #   shared Agent{Name,ConfigPath,Install,HasHook} registry (registry.go) —
+│   │                         #   doctor/status/init/dashboard all iterate it instead of hand-coding a
+│   │                         #   branch per agent. Claude Code and Codex share one PreToolUse-array
+│   │                         #   implementation (pretooluse_hook.go); Cursor's shape differs (flat
+│   │                         #   list, required "version" field) and stays separate. Shared JSON-file
+│   │                         #   read/write lives in jsonfile.go.
 │   ├── paths/                 # ~/.damping/* path resolution ($DAMPING_HOME override for tests), plus
-│   │                         #   ClaudeSettings()/CursorHooks() (agent hook config paths, same override pattern)
+│   │                         #   ClaudeSettings()/CursorHooks()/CodexConfig() (agent hook config paths,
+│   │                         #   same override pattern)
 │   ├── enforcement/           # IsDisabled() — whether `damping off` is currently in effect. Split out of
 │   │                         #   cmd/onoff.go specifically so cli/dashboard can ask the same question
 │   │                         #   without importing cli/cmd (which imports cli/dashboard to wire the command)
@@ -196,7 +202,7 @@ Built on `mvdan.cc/sh/v3/syntax`. Two layers, not one:
 
 `Analyze` — not each rule individually, which would just fragment the same coverage — has real Go native fuzz coverage (`cli/shell/fuzz_test.go`'s `FuzzAnalyze`), seeded from every real bypass this package's tests assert on and run through the full `Analyze` → `Engine.Evaluate` pipeline every seed and mutation, on every rule at once; CI runs it for 30s per PR, longer locally. "Must never trigger" regressions live as ordinary Go tests (e.g. `TestAnalyze_AllowsSafeEverydayCommands`) — see `docs/00-統一開發計畫（定案版）.md` §六 and the test strategy in the original `開發計畫.md`.
 
-## 6. `cli/cmd` hook entrypoint — Claude Code / Cursor integration contract
+## 6. `cli/cmd` hook entrypoint — Claude Code / Cursor / Codex integration contract
 
 See `docs/cli-reference.md` §11 for the exact wire format. Summary: both agents only treat **exit code 2** as blocking; any other non-zero code fails open (action proceeds).
 
@@ -205,7 +211,7 @@ See `docs/cli-reference.md` §11 for the exact wire format. Summary: both agents
 - exit `0` for allow (directly, or resolved from a prompt) — no JSON needed on this path in V1,
 - never let an internal crash silently look like a normal allow — write a `degraded` audit record even when the external agent will fail open regardless.
 
-This dispatch is keyed on the payload's own event-name field — `hook_event_name` for Claude Code, `beforeShellExecution` for Cursor — and today recognizes only those two. A payload from a third agent Damping doesn't yet parse also fails open (same as any other unrecognized-but-valid input), but it still writes a `degraded` audit record via the same path as malformed JSON, rather than passing through with no trace at all — this was a real gap until it was closed (a `default:` branch that returned silently, worse than the malformed-JSON path, since even that already logged degraded).
+This dispatch is keyed primarily on the payload's own event-name field — `beforeShellExecution` only ever means Cursor — but `hook_event_name: "PreToolUse"` alone is ambiguous: Codex deliberately reuses Claude Code's exact value (OpenAI built Codex's hook contract to be compatible with existing Claude Code hook scripts). The two are told apart by `turn_id`/`tool_use_id`, which Codex's real payload includes and Claude Code's does not (Claude Code sends a `prompt_id` instead) — see `docs/cli-reference.md` §11. A payload from an agent Damping still doesn't recognize at all fails open (same as any other unrecognized-but-valid input), but it still writes a `degraded` audit record via the same path as malformed JSON, rather than passing through with no trace at all — this was a real gap until it was closed (a `default:` branch that returned silently, worse than the malformed-JSON path, since even that already logged degraded).
 
 ## 7. `cli/adapter/mcp` — V1 thin adapter (not a gateway) — **implemented**
 

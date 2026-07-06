@@ -21,10 +21,17 @@ import (
 // notice changes (hook removed, policy tampered with) rather than only ever
 // reporting the current instant — see docs/threat-model.md §4 and §8.
 type doctorState struct {
-	PolicyHash      string `json:"policy_hash"`
-	ClaudeHookFound bool   `json:"claude_hook_found"`
-	CursorHookFound bool   `json:"cursor_hook_found"`
-	CheckedAt       string `json:"checked_at"`
+	PolicyHash string          `json:"policy_hash"`
+	HookFound  map[string]bool `json:"hook_found,omitempty"`
+	CheckedAt  string          `json:"checked_at"`
+
+	// Legacy, pre-registry fields (docs/00 §七 item 8) — read-only, only
+	// ever populated by unmarshaling an old doctor-state.json written
+	// before HookFound existed. loadDoctorState migrates these into
+	// HookFound so upgrading doesn't spuriously report "hook missing" for
+	// an agent that was already registered; nothing writes them anymore.
+	LegacyClaudeHookFound bool `json:"claude_hook_found,omitempty"`
+	LegacyCursorHookFound bool `json:"cursor_hook_found,omitempty"`
 }
 
 func newDoctorCmd() *cobra.Command {
@@ -59,33 +66,22 @@ func newDoctorCmd() *cobra.Command {
 				}
 			}
 
-			claudePath := paths.ClaudeSettings()
-			if hasClaude, err := agent.HasClaudeCodeHook(claudePath); err == nil {
-				next.ClaudeHookFound = hasClaude
-				switch {
-				case prev.ClaudeHookFound && !hasClaude:
-					fmt.Fprintln(w, "  ✗ Claude Code hook missing — was it removed outside `damping off`?")
-					fmt.Fprintln(w, "      → run `damping init --agent claude-code --force` to reinstall")
-					failed++
-				case hasClaude:
-					fmt.Fprintln(w, "  ✓ Claude Code hook registered")
-				default:
-					fmt.Fprintln(w, "  · Claude Code hook not registered — run `damping init` if you use Claude Code")
+			next.HookFound = map[string]bool{}
+			for _, a := range agent.Registry {
+				has, err := a.HasHook(a.ConfigPath())
+				if err != nil {
+					continue
 				}
-			}
-
-			cursorPath := paths.CursorHooks()
-			if hasCursor, err := agent.HasCursorHook(cursorPath); err == nil {
-				next.CursorHookFound = hasCursor
+				next.HookFound[a.Name] = has
 				switch {
-				case prev.CursorHookFound && !hasCursor:
-					fmt.Fprintln(w, "  ✗ Cursor hook missing — was it removed outside `damping off`?")
-					fmt.Fprintln(w, "      → run `damping init --agent cursor --force` to reinstall")
+				case prev.HookFound[a.Name] && !has:
+					fmt.Fprintf(w, "  ✗ %s hook missing — was it removed outside `damping off`?\n", a.DisplayName)
+					fmt.Fprintf(w, "      → run `damping init --agent %s --force` to reinstall\n", a.Name)
 					failed++
-				case hasCursor:
-					fmt.Fprintln(w, "  ✓ Cursor hook registered")
+				case has:
+					fmt.Fprintf(w, "  ✓ %s hook registered\n", a.DisplayName)
 				default:
-					fmt.Fprintln(w, "  · Cursor hook not registered — run `damping init` if you use Cursor")
+					fmt.Fprintf(w, "  · %s hook not registered — run `damping init` if you use %s\n", a.DisplayName, a.DisplayName)
 				}
 			}
 
@@ -141,6 +137,18 @@ func loadDoctorState() (doctorState, error) {
 	}
 	var s doctorState
 	_ = json.Unmarshal(data, &s)
+	if s.HookFound == nil {
+		s.HookFound = map[string]bool{}
+	}
+	// Migrate a doctor-state.json written before the agent registry
+	// existed (see the Legacy* fields' doc comment) so upgrading doesn't
+	// spuriously report "hook missing" for an agent already registered.
+	if s.LegacyClaudeHookFound {
+		s.HookFound["claude-code"] = true
+	}
+	if s.LegacyCursorHookFound {
+		s.HookFound["cursor"] = true
+	}
 	return s, nil
 }
 

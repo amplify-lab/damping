@@ -23,19 +23,31 @@ import (
 )
 
 // setupTestEnv points every damping path at fresh temp directories so tests
-// never touch a real ~/.damping or a real agent settings file.
+// never touch a real ~/.damping or a real agent settings file. A review
+// found this had been missing the Codex override entirely when Codex
+// support was added — every test calling `init` was silently writing a
+// real hook registration into the actual developer machine's real
+// ~/.codex/hooks.json (a real, in-use Codex install, not a fixture) until
+// caught and fixed. DAMPING_CODEX_HOOKS must be set here from the same
+// commit that first makes any test call `init`/`doctor`/`status` after
+// Codex joins agent.Registry, not added later.
 func setupTestEnv(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("DAMPING_HOME", filepath.Join(dir, "damping-home"))
 	t.Setenv("DAMPING_CLAUDE_SETTINGS", filepath.Join(dir, "claude", "settings.json"))
 	t.Setenv("DAMPING_CURSOR_HOOKS", filepath.Join(dir, "cursor", "hooks.json"))
+	t.Setenv("DAMPING_CODEX_HOOKS", filepath.Join(dir, "codex", "hooks.json"))
 	// `init` only registers a hook for an agent whose config directory it can
-	// detect — pre-create both so tests exercise the "agent installed" path.
+	// detect — pre-create all three so tests exercise the "agent installed"
+	// path for every registered agent.
 	if err := os.MkdirAll(filepath.Join(dir, "claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(dir, "cursor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "codex"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -749,6 +761,91 @@ func TestHook_CursorAuditRecordUsesActorAndConversationID(t *testing.T) {
 	}
 	if events[0].SessionID != "conv-xyz" {
 		t.Fatalf("expected session_id to come from conversation_id (%q), got %q", "conv-xyz", events[0].SessionID)
+	}
+}
+
+// TestHook_EvaluatesCodexPayload_DeniesDangerousCommand proves Codex's
+// PreToolUse payload — which deliberately shares Claude Code's exact
+// hook_event_name value (verified against developers.openai.com/codex/
+// hooks) — still reaches the policy engine and is correctly attributed to
+// "codex", not misread as a second Claude Code call. Uses turn_id as the
+// discriminator, per hookInput's doc comment.
+func TestHook_EvaluatesCodexPayload_DeniesDangerousCommand(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	stdin := `{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash","turn_id":"turn-1","tool_use_id":"tu-1","tool_input":{"command":"/proc/self/root/usr/bin/npx rm -rf /"}}`
+	_, stderr, err := run(t, stdin, "hook", "pretooluse")
+	var exitErr *ExitCodeError
+	if !isExitCodeError(err, &exitErr) || exitErr.Code != 2 {
+		t.Fatalf("expected ExitCodeError{Code:2} for a known sandbox bypass via the Codex payload shape, got %v", err)
+	}
+	if stderr == "" {
+		t.Fatal("expected a reason to be printed to stderr for a hard deny")
+	}
+}
+
+// TestHook_CodexAuditRecordUsesCodexActor is the discriminator's core
+// regression guard: a Codex payload (has turn_id) must be attributed
+// "codex" in the audit trail, and — the other half of the same guard — a
+// Claude-Code-shaped payload (no turn_id) must still be attributed
+// "claude-code", not accidentally reclassified now that TurnID/ToolUseID
+// exist on the shared struct.
+func TestHook_CodexAuditRecordUsesCodexActor(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	stdin := `{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash","turn_id":"turn-1","tool_use_id":"tu-1","tool_input":{"command":"git status"}}`
+	if _, _, err := run(t, stdin, "hook", "pretooluse"); err != nil {
+		t.Fatalf("hook: %v", err)
+	}
+
+	auditPath, err := paths.Audit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := audit.ReadAll(auditPath, audit.Filter{})
+	if err != nil {
+		t.Fatalf("reading audit log: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected exactly 1 audit event, got %d", len(events))
+	}
+	if events[0].Actor != "codex" {
+		t.Fatalf("expected actor %q, got %q", "codex", events[0].Actor)
+	}
+}
+
+// TestHook_ClaudeCodePayloadWithoutTurnIDStaysClaudeCode is the other half
+// of TestHook_CodexAuditRecordUsesCodexActor: a genuine Claude Code payload
+// (no turn_id/tool_use_id at all) must still be attributed "claude-code"
+// after adding the Codex discriminator fields to hookInput — a regression
+// this test would catch if the zero-value check above were ever inverted.
+func TestHook_ClaudeCodePayloadWithoutTurnIDStaysClaudeCode(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	stdin := `{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git status"}}`
+	if _, _, err := run(t, stdin, "hook", "pretooluse"); err != nil {
+		t.Fatalf("hook: %v", err)
+	}
+
+	auditPath, err := paths.Audit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := audit.ReadAll(auditPath, audit.Filter{})
+	if err != nil {
+		t.Fatalf("reading audit log: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected exactly 1 audit event, got %d", len(events))
+	}
+	if events[0].Actor != "claude-code" {
+		t.Fatalf("expected actor %q, got %q", "claude-code", events[0].Actor)
 	}
 }
 

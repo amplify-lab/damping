@@ -104,6 +104,7 @@ func TestFeatures_LocalDashboard(t *testing.T) {
 				t.Setenv("DAMPING_HOME", dir)
 				t.Setenv("DAMPING_CLAUDE_SETTINGS", claudeSettings)
 				t.Setenv("DAMPING_CURSOR_HOOKS", cursorHooks)
+				t.Setenv("DAMPING_CODEX_HOOKS", filepath.Join(dir, "codex", "hooks.json"))
 				if err := agent.InstallClaudeCodeHook(claudeSettings, false); err != nil {
 					return ctx, err
 				}

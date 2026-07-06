@@ -49,12 +49,18 @@ Feature: Damping cannot be silently disabled
     Then Damping should intercept the command
     And the matched rule should be "self_protection.damping_off_attempt"
 
-  Scenario: Hook removal outside "damping off" is detected and surfaced
-    Given Damping's hook entry was present in "~/.claude/settings.json" during the last "damping doctor" run
-    When something other than "damping off" removes that hook entry
+  Scenario Outline: Hook removal outside "damping off" is detected and surfaced, for any registered agent
+    Given Damping's "<agent>" hook entry was present during the last "damping doctor" run
+    When something other than "damping off" removes the "<agent>" hook entry
     And the human runs "damping doctor" again
     Then doctor should report the hook as missing
-    And doctor should suggest "damping init --agent claude-code --force" to reinstall
+    And doctor should suggest "damping init --agent <agent> --force" to reinstall
+
+    Examples:
+      | agent       |
+      | claude-code |
+      | cursor      |
+      | codex       |
 
   Scenario: Policy file tampering is surfaced, not silently trusted
     Given "damping doctor" recorded a hash of the active policy file on the last run

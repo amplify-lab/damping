@@ -3,7 +3,8 @@
 // docs/cli-reference.md §11 for the verified Claude Code contract this
 // targets; see cursor.go's own comment for the verified Cursor contract,
 // including the required top-level "version" field a prior review found
-// missing.
+// missing; see codex.go for Codex, which shares this file's exact
+// PreToolUse-array shape (pretooluse_hook.go).
 package agent
 
 // HookCommand is what damping registers as the hook entrypoint. Kept as a
@@ -22,79 +23,12 @@ const claudeCodeMatcher = "Bash"
 // entries under force — e.g. a user's own Write/Edit hooks — found via
 // review).
 func InstallClaudeCodeHook(settingsPath string, force bool) error {
-	settings, err := readJSONObject(settingsPath)
-	if err != nil {
-		return err
-	}
-
-	hooks, _ := settings["hooks"].(map[string]any)
-	if hooks == nil {
-		hooks = map[string]any{}
-	}
-	preToolUse, _ := hooks["PreToolUse"].([]any)
-
-	if !force && hasClaudeHookEntry(preToolUse) {
-		return nil // already installed
-	}
-
-	entry := map[string]any{
-		"matcher": claudeCodeMatcher,
-		"hooks": []any{
-			map[string]any{"type": "command", "command": HookCommand},
-		},
-	}
-	if force {
-		preToolUse = append(removeMatcherEntries(preToolUse, claudeCodeMatcher), entry)
-	} else {
-		preToolUse = append(preToolUse, entry)
-	}
-
-	hooks["PreToolUse"] = preToolUse
-	settings["hooks"] = hooks
-	return writeJSONObject(settingsPath, settings)
-}
-
-// removeMatcherEntries drops every PreToolUse entry scoped to matcher,
-// preserving entries for any other matcher (or malformed entries — a
-// non-object element passes through untouched rather than being
-// interpreted as "no matcher, drop it") in their original order.
-func removeMatcherEntries(preToolUse []any, matcher string) []any {
-	kept := make([]any, 0, len(preToolUse))
-	for _, raw := range preToolUse {
-		if m, ok := raw.(map[string]any); ok && m["matcher"] == matcher {
-			continue
-		}
-		kept = append(kept, raw)
-	}
-	return kept
+	return installPreToolUseHook(settingsPath, claudeCodeMatcher, force)
 }
 
 // HasClaudeCodeHook reports whether the settings file already registers
 // Damping's hook — used by `damping doctor` to detect removal since the
 // last check (see docs/threat-model.md §4).
 func HasClaudeCodeHook(settingsPath string) (bool, error) {
-	settings, err := readJSONObject(settingsPath)
-	if err != nil {
-		return false, err
-	}
-	hooks, _ := settings["hooks"].(map[string]any)
-	preToolUse, _ := hooks["PreToolUse"].([]any)
-	return hasClaudeHookEntry(preToolUse), nil
-}
-
-func hasClaudeHookEntry(preToolUse []any) bool {
-	for _, raw := range preToolUse {
-		entry, ok := raw.(map[string]any)
-		if !ok || entry["matcher"] != claudeCodeMatcher {
-			continue
-		}
-		hooksList, _ := entry["hooks"].([]any)
-		for _, rawHook := range hooksList {
-			h, ok := rawHook.(map[string]any)
-			if ok && h["command"] == HookCommand {
-				return true
-			}
-		}
-	}
-	return false
+	return hasPreToolUseHook(settingsPath, claudeCodeMatcher)
 }

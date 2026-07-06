@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/amplify-lab/damping/cli/adapter/agent"
-	"github.com/amplify-lab/damping/cli/paths"
 	"github.com/amplify-lab/damping/cli/policies"
 )
 
@@ -43,34 +42,23 @@ func newInitCmd() *cobra.Command {
 				fmt.Fprintf(w, "  ✓ Policy already present at %s (use --force to overwrite)\n", policyPath)
 			}
 
-			claudePath := paths.ClaudeSettings()
-			cursorPath := paths.CursorHooks()
-
-			if agentFlag == "all" || agentFlag == "claude-code" {
-				if _, err := os.Stat(filepath.Dir(claudePath)); err == nil { // #nosec G703 -- claudePath is $DAMPING_CLAUDE_SETTINGS or the fixed ~/.claude/settings.json default, set by the local user themselves, not attacker-influenced
-					fmt.Fprintf(w, "  ✓ Detected Claude Code (%s)\n", claudePath)
-					if !dryRun {
-						if err := agent.InstallClaudeCodeHook(claudePath, force); err != nil {
-							return err
-						}
-						fmt.Fprintln(w, "  → Registered PreToolUse hook in Claude Code settings")
-					} else {
-						fmt.Fprintln(w, "  (dry run) would register PreToolUse hook in Claude Code settings")
-					}
+			for _, a := range agent.Registry {
+				if agentFlag != "all" && agentFlag != a.Name {
+					continue
 				}
-			}
-			if agentFlag == "all" || agentFlag == "cursor" {
-				if _, err := os.Stat(filepath.Dir(cursorPath)); err == nil { // #nosec G703 -- cursorPath is $DAMPING_CURSOR_HOOKS or the fixed ~/.cursor/hooks.json default, set by the local user themselves, not attacker-influenced
-					fmt.Fprintf(w, "  ✓ Detected Cursor (%s)\n", cursorPath)
-					if !dryRun {
-						if err := agent.InstallCursorHook(cursorPath, force); err != nil {
-							return err
-						}
-						fmt.Fprintln(w, "  → Registered beforeShellExecution hook in Cursor")
-					} else {
-						fmt.Fprintln(w, "  (dry run) would register beforeShellExecution hook in Cursor")
-					}
+				configPath := a.ConfigPath()
+				if _, err := os.Stat(filepath.Dir(configPath)); err != nil { // #nosec G703 -- configPath is a $DAMPING_*_SETTINGS/HOOKS override or a fixed default under the user's own home dir, set by the local user themselves, not attacker-influenced
+					continue // agent not detected on this machine — nothing to register
 				}
+				fmt.Fprintf(w, "  ✓ Detected %s (%s)\n", a.DisplayName, configPath)
+				if dryRun {
+					fmt.Fprintf(w, "  (dry run) would register %s in %s\n", a.HookLabel, a.DisplayName)
+					continue
+				}
+				if err := a.Install(configPath, force); err != nil {
+					return err
+				}
+				fmt.Fprintf(w, "  → Registered %s in %s\n", a.HookLabel, a.DisplayName)
 			}
 
 			// A review found docs/cli-reference.md documented this exact
@@ -90,7 +78,7 @@ func newInitCmd() *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().StringVar(&agentFlag, "agent", "all", "which agent(s) to configure: claude-code|cursor|all")
+	c.Flags().StringVar(&agentFlag, "agent", "all", "which agent(s) to configure: claude-code|cursor|codex|all")
 	c.Flags().BoolVar(&force, "force", false, "overwrite existing policy/hook entries")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "print what would change, write nothing")
 	return c

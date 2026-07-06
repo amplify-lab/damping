@@ -21,6 +21,7 @@ import (
 
 	"github.com/cucumber/godog"
 
+	"github.com/amplify-lab/damping/cli/adapter/agent"
 	"github.com/amplify-lab/damping/cli/enforcement"
 	"github.com/amplify-lab/damping/cli/paths"
 	"github.com/amplify-lab/damping/cli/shell"
@@ -156,10 +157,14 @@ func TestFeatures_SelfProtection(t *testing.T) {
 				t.Setenv("DAMPING_HOME", filepath.Join(dir, "damping-home"))
 				t.Setenv("DAMPING_CLAUDE_SETTINGS", filepath.Join(dir, "claude", "settings.json"))
 				t.Setenv("DAMPING_CURSOR_HOOKS", filepath.Join(dir, "cursor", "hooks.json"))
+				t.Setenv("DAMPING_CODEX_HOOKS", filepath.Join(dir, "codex", "hooks.json"))
 				if err := os.MkdirAll(filepath.Join(dir, "claude"), 0o755); err != nil {
 					return err
 				}
 				if err := os.MkdirAll(filepath.Join(dir, "cursor"), 0o755); err != nil {
+					return err
+				}
+				if err := os.MkdirAll(filepath.Join(dir, "codex"), 0o755); err != nil {
 					return err
 				}
 				if err := w.run("", "init"); err != nil {
@@ -328,11 +333,15 @@ func TestFeatures_SelfProtection(t *testing.T) {
 
 			// --- doctor: hook removal + policy tampering detection ---
 
-			sc.Given(`^Damping's hook entry was present in "([^"]*)" during the last "damping doctor" run$`, func(string) error {
+			sc.Given(`^Damping's "([^"]*)" hook entry was present during the last "damping doctor" run$`, func(string) error {
 				return w.run("", "doctor")
 			})
-			sc.When(`^something other than "damping off" removes that hook entry$`, func() error {
-				return os.WriteFile(os.Getenv("DAMPING_CLAUDE_SETTINGS"), []byte("{}"), 0o644)
+			sc.When(`^something other than "damping off" removes the "([^"]*)" hook entry$`, func(agentName string) error {
+				a, ok := agent.ByName(agentName)
+				if !ok {
+					return fmt.Errorf("unknown agent %q", agentName)
+				}
+				return os.WriteFile(a.ConfigPath(), []byte("{}"), 0o644)
 			})
 			sc.When(`^the human runs "damping doctor" again$`, func() error {
 				return w.run("", "doctor")

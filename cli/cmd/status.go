@@ -8,7 +8,6 @@ import (
 
 	"github.com/amplify-lab/damping/cli/adapter/agent"
 	"github.com/amplify-lab/damping/cli/enforcement"
-	"github.com/amplify-lab/damping/cli/paths"
 	"github.com/amplify-lab/damping/core/policy"
 )
 
@@ -66,11 +65,10 @@ func newStatusCmd() *cobra.Command {
 			// loaded — a machine that never ran `damping init` still
 			// deserves to see "no agents registered", not nothing at all.
 			var agents []string
-			if has, err := agent.HasClaudeCodeHook(paths.ClaudeSettings()); err == nil && has {
-				agents = append(agents, "claude-code (active)")
-			}
-			if has, err := agent.HasCursorHook(paths.CursorHooks()); err == nil && has {
-				agents = append(agents, "cursor (active)")
+			for _, a := range agent.Registry {
+				if has, err := a.HasHook(a.ConfigPath()); err == nil && has {
+					agents = append(agents, a.Name+" (active)")
+				}
 			}
 			if len(agents) == 0 {
 				agents = append(agents, "none registered — run `damping init`")

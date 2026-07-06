@@ -2,7 +2,7 @@
 
 **One policy. One audit trail. Across your terminal and your MCP servers.**
 
-Damping sits between your AI coding agent (Claude Code, Cursor, and more to come) and the real world. Before a destructive shell command or a risky MCP tool call actually runs, Damping checks it against a policy engine and gives you the chance to say no — and it writes down what happened either way, in one place, regardless of which channel the action came through.
+Damping sits between your AI coding agent (Claude Code, Cursor, Codex, and more to come) and the real world. Before a destructive shell command or a risky MCP tool call actually runs, Damping checks it against a policy engine and gives you the chance to say no — and it writes down what happened either way, in one place, regardless of which channel the action came through.
 
 ```
 ⚠  Damping intercepted a destructive command
@@ -46,14 +46,14 @@ Nobody else in this space unifies CLI and MCP under one engine and one audit tra
 
 ```
 brew install damping        # or: curl -sSL https://damping.dev/install | sh
-damping init                # detects Claude Code / Cursor, installs the default policy, registers hooks
+damping init                # detects Claude Code / Cursor / Codex, installs the default policy, registers hooks
 ```
 
 `damping init` prints a confirmation for every agent it found and wired up, and closes with a one-line demo suggestion (`ask your agent to run rm -rf /tmp/test`) — that's step 2 below.
 
 ### 2. Watch it intercept something
 
-Ask your agent (Claude Code, Cursor) to run something Damping's default policy treats as destructive — `rm -rf /tmp/test` is the safe way to see this without risking real data. You'll see this at your terminal, not in the agent's own chat window (Damping owns its own confirmation prompt on `/dev/tty`, independent of whichever agent triggered it):
+Ask your agent (Claude Code, Cursor, Codex) to run something Damping's default policy treats as destructive — `rm -rf /tmp/test` is the safe way to see this without risking real data. You'll see this at your terminal, not in the agent's own chat window (Damping owns its own confirmation prompt on `/dev/tty`, independent of whichever agent triggered it):
 
 ```
 ⚠  Damping intercepted a destructive command

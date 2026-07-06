@@ -84,6 +84,7 @@ func TestFeatures_AuditLog(t *testing.T) {
 				t.Setenv("DAMPING_HOME", filepath.Join(dir, "damping-home"))
 				t.Setenv("DAMPING_CLAUDE_SETTINGS", filepath.Join(dir, "claude", "settings.json"))
 				t.Setenv("DAMPING_CURSOR_HOOKS", filepath.Join(dir, "cursor", "hooks.json"))
+				t.Setenv("DAMPING_CODEX_HOOKS", filepath.Join(dir, "codex", "hooks.json"))
 				if _, _, err := runDampingCommand("", "init"); err != nil {
 					return err
 				}
