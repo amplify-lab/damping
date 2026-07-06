@@ -217,6 +217,8 @@ That last line is the real proof — it exercises the actual published archive p
 
 Because of the first gap, the "Release" GitHub Actions run's own pass/fail badge reflects the Homebrew step's exit code — it will show red even on a release that otherwise shipped completely correctly. Don't read a failed workflow run as "the release didn't go out"; check the actual GitHub Release page and run the install-path verification above instead.
 
+**The separate "CI" workflow (runs on every push to `main`, not just tags) is fully green as of `v0.2.0` (2026-07-06)** — three unrelated, pre-existing bugs were found and fixed while verifying this release, none caused by `v0.2.0`'s own feature work: `golangci-lint-action` was pinned to a version (`v6`) that cannot run golangci-lint v2 at all, needed for `go.mod`'s `go 1.26`; `securego/gosec`'s Docker-based action silently killed its own job step scanning `core/policy` with no error message (nested-Docker resource pressure, most likely — switched to installing gosec as a native binary instead); and one benchmark-shaped test asserting a sub-millisecond budget correctly skipped under `-short` but not under `-race`, whose own instrumentation overhead alone blew that budget regardless of real eval cost. So unlike the Homebrew/domain gaps above, don't expect the CI badge to be red going forward — if it is, that's a real regression.
+
 ## Security
 
 See [`SECURITY.md`](SECURITY.md) for how to report a vulnerability, including policy bypasses.
