@@ -123,7 +123,7 @@ Everything below is implemented and covered by passing tests — not aspirationa
 - 90 BDD (Gherkin) scenarios, all wired to real code and passing, not just documentation.
 - Cross-platform release engineering (Homebrew, one-line install script, GitHub Releases for linux/darwin × amd64/arm64).
 
-Not yet built: Phase 3's full enterprise Gateway (OAuth 2.1, confused-deputy defense), Phase 4's Cloudflare-based team dashboard, Phase 5's enterprise/compliance tier — see [`docs/調查資料/`](docs/調查資料/) for infra research already done on these (three rounds, cross-verified against primary sources). Engineering-level detail on everything above lives in [`CLAUDE.md`](CLAUDE.md), not here.
+Not yet built: Phase 3's full enterprise Gateway (OAuth 2.1, confused-deputy defense), Phase 4's Cloudflare-based team dashboard, Phase 5's enterprise/compliance tier. Engineering-level detail on everything above lives in [`CLAUDE.md`](CLAUDE.md), not here.
 
 ## Contributing
 

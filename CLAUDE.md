@@ -14,9 +14,11 @@ This project already learned this lesson the expensive way once: on first publis
 
 ## Repo status
 
-`github.com/amplify-lab/damping` is **public**, live, and this is the *only* public-facing artifact for this project — there is no separate private mirror repo. Everything under version control here (code, docs, commit history) is visible to anyone. The five internal planning documents and one master plan doc removed per the section above are **not** archived anywhere inside this repo, public or private — they exist only in Tim's own local backup outside the repo. Do not attempt to recreate their content here from memory or from old conversation context; if a future need for that historical context arises, that's a conversation with Tim, not a file to reconstruct and commit.
+`github.com/amplify-lab/damping` is **public**, live, and this is the *only* public-facing artifact for this project — there is no separate private mirror repo. Everything under version control here (code, docs, commit history) is visible to anyone.
 
-The billing/licensing/enterprise-control-plane code referenced in `docs/調查資料/`'s Phase 5 research (see below) does not exist yet and, per the agreed open-core model, will live in a **separate, private repository** when it's built — never in this one. This repo (`core/` + `cli/`) is and stays the permissively-licensed, publicly-inspectable half of the product on purpose; that inspectability is a stated part of Damping's trust story, not an oversight to fix later.
+Tim maintains a **separate materials folder entirely outside this git repository** (not gitignored-inside — fully outside, so git has no path to it at all, which is a harder guarantee than gitignore against an accidental `git add -f` or a gitignore misconfiguration) for anything that shouldn't be public: the five internal planning documents and one master plan doc removed per the section above, the enterprise-infrastructure research (three rounds — self-hosted-vs-vendor tradeoffs for the OAuth/Cloudflare/control-plane/memory-poisoning decisions, moved out of `docs/` for the same reason as the other business/competitive-reasoning content above), and anywhere future internal-only material should default to living until it's deliberately decided to be public. If you're an AI agent working in this repo and need that context, ask Tim directly — do not attempt to reconstruct any of it here from memory or old conversation context, and do not assume it's absent just because it's not in this repo.
+
+The billing/licensing/enterprise-control-plane code for Phase 5 does not exist yet and, per the agreed open-core model, will live in a **separate, private repository** when it's built — never in this one. This repo (`core/` + `cli/`) is and stays the permissively-licensed, publicly-inspectable half of the product on purpose; that inspectability is a stated part of Damping's trust story, not an oversight to fix later.
 
 ## Read first
 
@@ -32,7 +34,6 @@ The billing/licensing/enterprise-control-plane code referenced in `docs/調查�
 | `docs/cli-reference.md` | Full `damping` command surface, hook contract, policy file schema |
 | `docs/threat-model.md` | What Damping defends against, known bypass classes, fail-open vs. fail-closed |
 | `docs/ux-dashboard-spec.md` | Phase 4/5 team dashboard & enterprise compliance UI spec |
-| `docs/調查資料/` | Enterprise infra research (Phase 3/4/5 self-hosted vs. vendor choices, Phase 6 spec) — three rounds, each verifying and adversarially stress-testing the last against primary sources |
 | `features/` | Gherkin BDD scenarios — the acceptance criteria for every phase |
 | `core/` | Transport-agnostic policy engine, schema, audit log — no dependency on any specific agent/transport |
 | `cli/` | The `damping` binary: hook entrypoint, `mcp wrap`, `log`/`status`/`doctor`/`dashboard` subcommands |
@@ -104,7 +105,7 @@ High-level status lives in README.md; this is the deeper per-package picture.
 - **OPA/Rego policy engine (Phase 3, partial)** — every rule above also has an embedded OPA/Rego implementation (`core/policy/policy.rego` + `opa.go`), selectable per-deployment via `policy.yaml`'s `engine: opa` field. `core/policy/opa_equivalence_test.go` proves both engines return byte-identical decisions for every rule; `opa_bench_test.go` gates eval latency at sub-millisecond.
 - **`damping dashboard`** — a local, single-user web view of the audit log (`cli/dashboard`): summary strip, filterable event table, per-session risk sparklines, live tail via Server-Sent Events, no separate frontend build (vanilla JS + a Tailwind-compiled stylesheet checked into the repo, embedded via `go:embed`). Not Phase 4's team dashboard (`docs/ux-dashboard-spec.md`) — that's a separate, not-yet-built React+TS app.
 - **Release engineering** (`.goreleaser.yaml`, `install.sh`, `.github/workflows/release.yml`) — cross-platform builds, a Homebrew cask, a one-line install script, all verified end-to-end locally.
-- **Not yet built**: Phase 3's full Gateway (OAuth 2.1, confused-deputy defense), Phase 4's Cloudflare-based team dashboard, Phase 5's enterprise/compliance tier, Phase 6's memory-poisoning defense. See `docs/調查資料/` for infra research already done on Phases 3-6 (self-hosted vs. vendor tradeoffs, a concrete Phase 6 spec draft) — read round 3 first, it supersedes rounds 1-2's reversed calls.
+- **Not yet built**: Phase 3's full Gateway (OAuth 2.1, confused-deputy defense), Phase 4's Cloudflare-based team dashboard, Phase 5's enterprise/compliance tier, Phase 6's memory-poisoning defense. Infra research on these (self-hosted vs. vendor tradeoffs, a concrete Phase 6 spec draft) exists but lives outside this repo — see "Repo status" above; ask Tim for it.
 - **Windows** — the `/dev/tty` interactive-prompt approach is Unix-only; `cli/ui/tty_windows.go` currently falls back to deny-by-default and documents the gap rather than faking support.
 
 ## CSS
