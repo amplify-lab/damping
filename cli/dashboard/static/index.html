@@ -441,6 +441,29 @@ async function loadStats() {
   }
 }
 
+// scheduleLiveDerivedRefresh piggybacks the sessions/stats panels on the
+// SSE connection that's already open for the events table, instead of each
+// polling on its own timer: a new event is the only thing that can change
+// either panel's content, so refreshing them the moment one arrives is both
+// more responsive (no up-to-15s-stale window) and cheaper (no wasted
+// fetches while nothing is happening). Debounced so a burst of several
+// events arriving within the same instant triggers one refresh, not one
+// per event. setInterval below still runs, at a much longer interval, as a
+// safety net for the one gap this can't cover on its own: core/audit.Follow
+// resumes tailing a reconnected SSE stream from whatever's new at
+// reconnect time, so an event that happened during a brief disconnect
+// never arrives as a live message at all — see handleEventStream's own doc
+// comment. A monitoring dashboard should never depend on a single
+// mechanism to eventually reflect reality.
+let liveDerivedRefreshDebounce = null;
+function scheduleLiveDerivedRefresh() {
+  clearTimeout(liveDerivedRefreshDebounce);
+  liveDerivedRefreshDebounce = setTimeout(() => {
+    loadSessions();
+    loadStats();
+  }, 500);
+}
+
 let stream = null;
 
 function startStream() {
@@ -450,7 +473,10 @@ function startStream() {
   stream.onopen = () => { statusEl.textContent = "● live"; statusEl.className = "text-xs text-teal-400"; };
   stream.onerror = () => { statusEl.textContent = "○ reconnecting…"; statusEl.className = "text-xs text-amber-400"; };
   stream.onmessage = (e) => {
-    try { prependEvent(JSON.parse(e.data)); } catch (err) { /* ignore malformed frame */ }
+    try {
+      prependEvent(JSON.parse(e.data));
+      scheduleLiveDerivedRefresh();
+    } catch (err) { /* ignore malformed frame */ }
   };
 }
 
@@ -486,9 +512,13 @@ loadSessions();
 loadEvents();
 loadStats();
 startStream();
+// Sessions/stats' primary update path is now scheduleLiveDerivedRefresh
+// (triggered per SSE message, above) — this interval is only the safety
+// net for the SSE-reconnect gap described there, so it's long relative to
+// how fast this dashboard actually feels in the common case.
 setInterval(loadSummary, 15000);
-setInterval(loadSessions, 15000);
-setInterval(loadStats, 15000);
+setInterval(loadSessions, 60000);
+setInterval(loadStats, 60000);
 </script>
 </body>
 </html>
