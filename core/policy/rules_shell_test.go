@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/amplify-lab/damping/core/decision"
+	"github.com/amplify-lab/damping/core/event"
 )
 
 // TestHasRecursiveForce_CatchesEveryRealSpelling is a permanent regression
@@ -149,5 +150,87 @@ func TestEvaluate_StillBlocksProtectedPathsThatLookLikeTempPaths(t *testing.T) {
 	d := e.Evaluate(Facts{Raw: "rm -rf /tmp/do-not-touch", Command: "rm", Args: []string{"-rf", "/tmp/do-not-touch"}, Target: "/tmp/do-not-touch"})
 	if d.PolicyID != "destructive.rm_rf_protected" {
 		t.Fatalf("expected destructive.rm_rf_protected for an explicitly protected path, got %q (verdict %v)", d.PolicyID, d.Verdict)
+	}
+}
+
+// TestIsSystemCriticalPath is a permanent regression test for the risk-tier
+// split found via a real user's own audit-log review: every one of the 15
+// real rm -rf interceptions Tim's own machine had logged turned out to be
+// disposable scratch/research cleanup, not a genuine catastrophic delete —
+// yet all 15 carried the same "critical" severity as an actual home-
+// directory wipe, because the only two tiers this rule ever had were
+// "explicitly known-safe" and "everything else is critical." The dividing
+// line that actually matters is whether the target is a well-known,
+// whole-filesystem-breaking system directory (this list) versus merely "not
+// on the regenerable/temp-root allowlist" — see matchRmRfUnrecognizedPath
+// for the latter, now a separate, lower-risk rule.
+func TestIsSystemCriticalPath(t *testing.T) {
+	cases := []struct {
+		target string
+		want   bool
+	}{
+		{"/etc", true},
+		{"/etc/nginx", true},
+		{"/usr", true},
+		{"/usr/local", true},
+		{"/bin", true},
+		{"/sbin", true},
+		{"/lib", true},
+		{"/lib64", true},
+		{"/var", true},
+		{"/boot", true},
+		{"/opt", true},
+		{"/root", true},
+		{"/sys", true},
+		{"/proc", true},
+		{"/dev", true},
+		{"/run", true},
+		{"/srv", true},
+		{"/tmp", false},        // OS scratch space, handled by isUnderTempRoot instead
+		{"/home/alice", false}, // a user's own home dir isn't "the" home root check, but also isn't system-critical
+		{"/etcetera", false},   // must not match by prefix alone
+		{"./my-scratch-dir", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := isSystemCriticalPath(tc.target); got != tc.want {
+			t.Errorf("isSystemCriticalPath(%q) = %v, want %v", tc.target, got, tc.want)
+		}
+	}
+}
+
+// TestEvaluate_RmRfSystemCriticalPathStaysCritical confirms the risk-tier
+// split didn't accidentally downgrade genuinely catastrophic targets — a
+// system directory like /etc is just as unrecoverable as the home directory
+// or filesystem root, even though (unlike those) it isn't hardcoded in
+// isFilesystemOrHomeRoot.
+func TestEvaluate_RmRfSystemCriticalPathStaysCritical(t *testing.T) {
+	e := loadDefaultEngine(t)
+	for _, target := range []string{"/etc", "/usr/local", "/var"} {
+		d := e.Evaluate(Facts{Raw: "rm -rf " + target, Command: "rm", Args: []string{"-rf", target}, Target: target})
+		if d.PolicyID != "destructive.rm_rf_protected" {
+			t.Errorf("rm -rf %s: expected destructive.rm_rf_protected (critical), got %q (verdict %v)", target, d.PolicyID, d.Verdict)
+		}
+	}
+}
+
+// TestEvaluate_RmRfUnrecognizedPathIsMediumRiskNotCritical is the core
+// regression guard for the risk-tier split: a target that's merely absent
+// from the regenerable/temp-root allowlist — not home/root/protected/
+// system-critical — is a real but much smaller concern than a catastrophic
+// delete, and now gets its own lower-risk rule instead of inheriting
+// destructive.rm_rf_protected's critical severity. This is what lets
+// Config.NonInteractivePromptFallback actually help with exactly the kind
+// of everyday scratch-directory cleanup a background agent runs constantly.
+func TestEvaluate_RmRfUnrecognizedPathIsMediumRiskNotCritical(t *testing.T) {
+	e := loadDefaultEngine(t)
+	for _, target := range []string{"./my-scratch-research", ".scratch_research", "some-custom-folder"} {
+		d := e.Evaluate(Facts{Raw: "rm -rf " + target, Command: "rm", Args: []string{"-rf", target}, Target: target})
+		if d.PolicyID != "destructive.rm_rf_unrecognized_path" {
+			t.Errorf("rm -rf %s: expected destructive.rm_rf_unrecognized_path, got %q (verdict %v)", target, d.PolicyID, d.Verdict)
+		}
+		if d.Risk != string(event.RiskMedium) {
+			t.Errorf("rm -rf %s: expected medium risk, got %q", target, d.Risk)
+		}
 	}
 }

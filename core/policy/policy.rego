@@ -49,6 +49,45 @@ matches contains "destructive.rm_rf_protected" if {
 	has_recursive_force
 	some target in rm_path_operands
 	not is_regenerable_target(target)
+	is_system_critical_path(target)
+}
+
+# --- destructive.rm_rf_unrecognized_path — rules_shell.go
+# matchRmRfUnrecognizedPath — a target that's merely absent from
+# regenerable_dir_names/temp_root_prefixes but isn't home/root/protected/
+# system-critical either is a real but much smaller concern than the
+# genuinely catastrophic targets rm_rf_protected covers above, so it gets its
+# own lower-risk rule id. See rules_shell.go's doc comment for the real
+# audit-log evidence (2026-07-07) motivating this split.
+
+matches contains "destructive.rm_rf_unrecognized_path" if {
+	input.facts.command == "rm"
+	has_recursive_force
+	some target in rm_path_operands
+	not is_regenerable_target(target)
+	not is_filesystem_or_home_root(target)
+	not in_protected_paths(target)
+	not is_system_critical_path(target)
+}
+
+# system_critical_dirs mirrors rules_shell.go's systemCriticalDirs exactly —
+# well-known top-level Unix directories whose loss breaks the entire machine,
+# not just one project, just as unrecoverable as the home directory or
+# filesystem root even though there's no single fixed literal to compare
+# against.
+system_critical_dirs := {
+	"/etc", "/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64",
+	"/var", "/boot", "/opt", "/root", "/sys", "/proc", "/dev", "/run", "/srv",
+}
+
+is_system_critical_path(target) if {
+	some dir in system_critical_dirs
+	target == dir
+}
+
+is_system_critical_path(target) if {
+	some dir in system_critical_dirs
+	startswith(target, concat("", [dir, "/"]))
 }
 
 rm_path_operands contains a if {

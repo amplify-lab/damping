@@ -171,8 +171,8 @@ $ damping log --channel mcp
 
 以下這些都已經做完、有測試在把關——不是畫大餅，是現在的實際狀況：
 
-- CLI shell 指令攔截，用的是真正的 AST 解析，不是正規表達式硬湊，涵蓋 24 條預設規則（破壞性刪除、強制推送、破壞性 SQL/Mongo/Redis 操作、遞迴權限變更、沒查核的安裝 pipeline、編碼過的 payload、沙箱繞過路徑、infra-as-code 的 destroy/沒審查就 apply、破壞性的 git 歷史操作、憑證外洩、kubectl/雲端 CLI 大量刪除、對整顆裝置的原始寫入、沒審查的 crates.io/RubyGems 發布、聊天軟體 webhook 外洩，還有更多）——完整清單跟每一條背後的真實事故，見 [`docs/threat-model.md`](docs/threat-model.md) 跟上面「這些是它要防的真實事故」那節。
-- Claude Code 的 `Write`/`Edit`/`MultiEdit` 工具呼叫，現在跟 `Bash` 一樣會被顧到——上面 24 條規則裡有 3 條專門抓危險的*檔案寫入*（agent 權限升級、git-hook 埋後門、npm 生命週期腳本注入），不只是抓危險指令而已。目前只支援 Claude Code；Cursor 跟 Codex 為什麼還沒做，原因寫在 [`docs/cli-reference.md`](docs/cli-reference.md) §11。
+- CLI shell 指令攔截，用的是真正的 AST 解析，不是正規表達式硬湊，涵蓋 25 條預設規則（破壞性刪除、強制推送、破壞性 SQL/Mongo/Redis 操作、遞迴權限變更、沒查核的安裝 pipeline、編碼過的 payload、沙箱繞過路徑、infra-as-code 的 destroy/沒審查就 apply、破壞性的 git 歷史操作、憑證外洩、kubectl/雲端 CLI 大量刪除、對整顆裝置的原始寫入、沒審查的 crates.io/RubyGems 發布、聊天軟體 webhook 外洩，還有更多）——完整清單跟每一條背後的真實事故，見 [`docs/threat-model.md`](docs/threat-model.md) 跟上面「這些是它要防的真實事故」那節。
+- Claude Code 的 `Write`/`Edit`/`MultiEdit` 工具呼叫，現在跟 `Bash` 一樣會被顧到——上面 25 條規則裡有 3 條專門抓危險的*檔案寫入*（agent 權限升級、git-hook 埋後門、npm 生命週期腳本注入），不只是抓危險指令而已。目前只支援 Claude Code；Cursor 跟 Codex 為什麼還沒做，原因寫在 [`docs/cli-reference.md`](docs/cli-reference.md) §11。
 - `damping mcp wrap`——同一套政策引擎、同一份稽核紀錄，MCP 工具呼叫也一樣管，不只是終端機。
 - 本機的 `damping dashboard`（畫面如上）跟 `damping log`，可以把兩種管道的完整稽核紀錄重播出來——還有風險趨勢圖、觸發最多次的規則排行，以及時間區間/規則 ID 篩選，這兩個圖表都是算在完整歷史紀錄上，不是只看畫面上那幾筆而已。
 - 內建 OPA/Rego 政策引擎，可以當作預設 Go 引擎之外的另一個選擇。

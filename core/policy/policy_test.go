@@ -425,12 +425,16 @@ func TestEvaluate_AliasResolvedCommandIsTreatedLikeItsTarget(t *testing.T) {
 	// cli/shell is responsible for resolving "nuke" -> "rm -rf" via its alias
 	// table (see docs/threat-model.md §3) and handing policy.Evaluate
 	// already-normalized Facts. This test documents that once normalized,
-	// the same rule fires — it does not test alias resolution itself, which
-	// belongs to cli/shell.
+	// the same rule fires as would fire for the literal, already-resolved
+	// command — it does not test alias resolution itself, which belongs to
+	// cli/shell. ~/Documents is neither the home root nor a protected/
+	// system-critical path, so under the rm-rf risk-tier split it correctly
+	// resolves to the medium-risk "unrecognized path" rule, not the critical
+	// one — see rules_shell.go's matchRmRfUnrecognizedPath doc comment.
 	e := loadDefaultEngine(t)
 	d := e.Evaluate(Facts{Raw: "nuke ~/Documents", Command: "rm", Args: []string{"-rf", "~/Documents"}, Target: "~/Documents"})
-	if d.PolicyID != "destructive.rm_rf_protected" {
-		t.Fatalf("expected rule destructive.rm_rf_protected, got %q", d.PolicyID)
+	if d.PolicyID != "destructive.rm_rf_unrecognized_path" {
+		t.Fatalf("expected rule destructive.rm_rf_unrecognized_path, got %q", d.PolicyID)
 	}
 }
 

@@ -10,7 +10,7 @@ Feature: Intercept destructive shell commands
   Scenario: Block deletion of the home directory
     When the agent attempts to execute "rm -rf ~/"
     Then Damping should intercept the command
-    And the confirmation prompt should state "your home directory, filesystem root, or a configured protected path, this could destroy irreplaceable data"
+    And the confirmation prompt should state "your home directory, the filesystem root, a configured protected path, or a well-known system directory"
     And the command should not execute until the user responds
 
   Scenario: Block deletion of root
@@ -177,7 +177,7 @@ Feature: Intercept destructive shell commands
     Given the alias table maps "nuke" to "rm -rf"
     When the agent attempts to execute "nuke ~/Documents"
     Then Damping should intercept the command
-    And the matched rule should be "destructive.rm_rf_protected"
+    And the matched rule should be "destructive.rm_rf_unrecognized_path"
 
   Scenario: Command constructed dynamically via command substitution is not silently trusted
     When the agent attempts to execute "$(echo rm) -rf ~/"

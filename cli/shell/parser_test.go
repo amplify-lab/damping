@@ -264,10 +264,14 @@ func TestAnalyze_DetectsProcSandboxBypass(t *testing.T) {
 }
 
 func TestAnalyze_ResolvesKnownAliasToItsDangerousTarget(t *testing.T) {
+	// ~/Documents is neither the home root nor a protected/system-critical
+	// path, so under the rm-rf risk-tier split it correctly resolves to the
+	// medium-risk "unrecognized path" rule, not the critical one — see
+	// core/policy/rules_shell.go's matchRmRfUnrecognizedPath doc comment.
 	e := loadEngine(t)
 	d := evaluateRaw(t, e, "nuke ~/Documents")
-	if d.PolicyID != "destructive.rm_rf_protected" {
-		t.Fatalf("expected the alias to resolve to destructive.rm_rf_protected, got %q", d.PolicyID)
+	if d.PolicyID != "destructive.rm_rf_unrecognized_path" {
+		t.Fatalf("expected the alias to resolve to destructive.rm_rf_unrecognized_path, got %q", d.PolicyID)
 	}
 }
 

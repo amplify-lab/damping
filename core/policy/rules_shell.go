@@ -23,6 +23,15 @@ var regenerableDirNames = map[string]bool{
 	"venv":         true,
 }
 
+// matchRmRfProtected is deliberately narrow: it only matches the targets
+// where "not explicitly known-safe" and "genuinely catastrophic" are the
+// same thing — the home directory, the filesystem root, an operator-
+// configured protected path, or a well-known system directory whose loss
+// breaks the whole machine, not just one project. Everything else that
+// simply isn't on the regenerable/temp-root allowlist is a real but much
+// smaller concern, handled by the separate, lower-risk
+// matchRmRfUnrecognizedPath — see that function's doc comment for why this
+// split exists.
 func matchRmRfProtected(f Facts, cfg Config) bool {
 	if f.Command != "rm" {
 		return false
@@ -45,10 +54,79 @@ func matchRmRfProtected(f Facts, cfg Config) bool {
 		if inProtectedPaths(target, cfg.ProtectedPaths) {
 			return true
 		}
-		if regenerableDirNames[basename(target)] || isUnderTempRoot(target) {
+		// A recognized-safe target (regenerableDirNames/isUnderTempRoot)
+		// always wins, even over a system-critical path prefix — /var/tmp is
+		// both a recognized OS scratch root and a subdirectory of /var (a
+		// system-critical dir when taken as a whole), and the former is the
+		// more specific, deliberately-carved-out exception.
+		if isRecognizedSafeRmTarget(target) {
 			continue
 		}
+		if isSystemCriticalPath(target) {
+			return true
+		}
+	}
+	return false
+}
+
+// isRecognizedSafeRmTarget reports whether target is a known-regenerable
+// directory name or sits under an OS-managed temp scratch root — the
+// "fully allow, matches neither rm -rf rule" case both matchRmRfProtected
+// and matchRmRfUnrecognizedPath must agree on identically, checked before
+// either rule's own more specific logic.
+func isRecognizedSafeRmTarget(target string) bool {
+	return regenerableDirNames[basename(target)] || isUnderTempRoot(target)
+}
+
+// matchRmRfUnrecognizedPath is the risk-tier split's other half — a real
+// user's own audit-log review (2026-07-07) found every single one of 15
+// real rm -rf interceptions on their machine was disposable scratch/
+// research cleanup, not a genuine catastrophic delete, yet all 15 carried
+// the same critical severity as an actual home-directory wipe, because the
+// original matchRmRfProtected only had two tiers: "explicitly known-safe"
+// and "everything else is critical." A target that's merely absent from
+// regenerableDirNames/isUnderTempRoot — not home/root/protected/system-
+// critical — is a real but much smaller concern (could be a typo, could be
+// perfectly intentional), so it gets its own lower-risk rule instead. This
+// is also what lets Config.NonInteractivePromptFallback actually help with
+// everyday scratch-directory cleanup a background agent runs constantly,
+// without loosening the genuinely catastrophic cases matchRmRfProtected
+// still catches.
+func matchRmRfUnrecognizedPath(f Facts, cfg Config) bool {
+	if f.Command != "rm" {
+		return false
+	}
+	if !hasRecursiveForce(f.Args) {
+		return false
+	}
+	for _, target := range rmPathOperands(f.Args) {
+		if isRecognizedSafeRmTarget(target) {
+			continue
+		}
+		if isFilesystemOrHomeRoot(target) || inProtectedPaths(target, cfg.ProtectedPaths) || isSystemCriticalPath(target) {
+			continue // matchRmRfProtected's concern, not this rule's
+		}
 		return true
+	}
+	return false
+}
+
+// systemCriticalDirs are well-known top-level Unix directories whose loss
+// breaks the entire machine, not just one project — deleting any of these
+// is just as unrecoverable as deleting the home directory or filesystem
+// root, even though (unlike those) there's no single fixed literal to
+// compare against; every real path under one of these roots counts, not
+// just the bare directory itself (see isSystemCriticalPath).
+var systemCriticalDirs = []string{
+	"/etc", "/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64",
+	"/var", "/boot", "/opt", "/root", "/sys", "/proc", "/dev", "/run", "/srv",
+}
+
+func isSystemCriticalPath(target string) bool {
+	for _, dir := range systemCriticalDirs {
+		if target == dir || strings.HasPrefix(target, dir+"/") {
+			return true
+		}
 	}
 	return false
 }

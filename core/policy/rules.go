@@ -20,6 +20,7 @@ type matcher func(Facts, Config) bool
 // firing.
 var matchers = map[string]matcher{
 	"destructive.rm_rf_protected":              matchRmRfProtected,
+	"destructive.rm_rf_unrecognized_path":      matchRmRfUnrecognizedPath,
 	"destructive.git_push_force":               matchGitPushForce,
 	"destructive.sql_drop_truncate":            matchSQLDropTruncate,
 	"destructive.chmod_777_recursive":          matchChmod777Recursive,

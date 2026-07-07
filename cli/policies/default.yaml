@@ -47,8 +47,13 @@ allowlisted_egress_domains:
 
 rules:
   - id: destructive.rm_rf_protected
-    description: Recursive+force delete of a path that isn't a known regenerable build/cache directory (node_modules, dist, build, ...) — for your home directory, filesystem root, or a configured protected path, this could destroy irreplaceable data
+    description: Recursive+force delete of your home directory, the filesystem root, a configured protected path, or a well-known system directory (/etc, /usr, /var, ...) — this could destroy irreplaceable data or break the whole machine
     risk: critical
+    action: prompt
+
+  - id: destructive.rm_rf_unrecognized_path
+    description: Recursive+force delete of a path that isn't a known regenerable build/cache directory (node_modules, dist, build, ...) or OS temp scratch space (/tmp, /var/tmp), but also isn't one of the genuinely catastrophic targets destructive.rm_rf_protected covers — worth a confirmation, but a real order of magnitude less severe than deleting your home directory
+    risk: medium
     action: prompt
 
   - id: destructive.git_push_force

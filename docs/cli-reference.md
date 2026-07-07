@@ -185,7 +185,7 @@ mcp.destructive_tool_call                  high      prompt
 self_protection.damping_off_attempt        critical  deny
 
 $ damping policy test "rm -rf ~/Documents"
-→ Would PROMPT (rule: destructive.rm_rf_protected, reason: Recursive+force delete of a path that isn't a known regenerable build/cache directory (node_modules, dist, build, ...) — for your home directory, filesystem root, or a configured protected path, this could destroy irreplaceable data)
+→ Would PROMPT (rule: destructive.rm_rf_unrecognized_path, reason: Recursive+force delete of a path that isn't a known regenerable build/cache directory (node_modules, dist, build, ...) or OS temp scratch space (/tmp, /var/tmp), but also isn't one of the genuinely catastrophic targets destructive.rm_rf_protected covers — worth a confirmation, but a real order of magnitude less severe than deleting your home directory)
 
 $ damping policy edit     # opens $EDITOR on ~/.damping/policy.yaml
 $ damping policy validate # schema + rule sanity check, no side effects
@@ -353,84 +353,108 @@ allowlisted_egress_domains:
 
 rules:
   - id: destructive.rm_rf_protected
-    description: Recursive+force delete of a path that isn't a known regenerable build/cache directory (node_modules, dist, build, ...) — for your home directory, filesystem root, or a configured protected path, this could destroy irreplaceable data
+    description: Recursive+force delete of your home directory, the filesystem root, a configured protected path, or a well-known system directory (/etc, /usr, /var, ...) — this could destroy irreplaceable data or break the whole machine
     risk: critical
     action: prompt
+
+  - id: destructive.rm_rf_unrecognized_path
+    description: Recursive+force delete of a path that isn't a known regenerable build/cache directory (node_modules, dist, build, ...) or OS temp scratch space (/tmp, /var/tmp), but also isn't one of the genuinely catastrophic targets destructive.rm_rf_protected covers — worth a confirmation, but a real order of magnitude less severe than deleting your home directory
+    risk: medium
+    action: prompt
+
   - id: destructive.git_push_force
     description: Force-push can overwrite remote history
     risk: high
     action: prompt
+
   - id: destructive.sql_drop_truncate
     description: DROP TABLE / TRUNCATE / UPDATE or DELETE with no WHERE clause (SQL clients), dropDatabase()/collection.drop()/an unfiltered deleteMany()/remove() (mongosh), or FLUSHALL/FLUSHDB (redis-cli) issued via a shell-invoked DB client
     risk: high
     action: prompt
+
   - id: destructive.chmod_777_recursive
     description: Recursive world-writable permissions
     risk: medium
     action: prompt
+
   - id: destructive.curl_pipe_sh_unallowlisted
     description: curl|sh, curl|bash, curl|zsh, wget|sh, wget|bash, or wget|zsh from a domain not in allowlisted_install_domains
     risk: medium
     action: prompt
+
   - id: destructive.encoded_payload_pipe
     description: base64-decode (or similar) piped into a shell/eval
     risk: high
     action: prompt
+
   - id: destructive.proc_sandbox_bypass
     description: Known /proc-based sandbox bypass path literals
     risk: critical
     action: deny
+
   - id: destructive.dynamic_command_construction
     description: Command name built dynamically (e.g. command substitution) and cannot be statically resolved
     risk: medium
     action: prompt
+
   - id: destructive.write_protected_path
     description: Output redirected (>, >>, etc) into a protected path
     risk: critical
     action: prompt
+
   - id: mcp.destructive_tool_call
     description: MCP tool the server itself declared destructive (ToolAnnotations.DestructiveHint)
     risk: high
     action: prompt
+
   - id: self_protection.damping_off_attempt
     description: Agent tried to run "damping off" itself via its own Bash tool call (the Ona-incident failure mode) — a human running it directly at their own terminal never reaches this rule
     risk: critical
     action: deny
+
   # --- 2026-07 dangerous-command-coverage expansion ---
   # See core/policy/rules_expansion.go's doc comments for the real-world
   # incidents motivating each of these (DataTalks.Club/incidentdatabase.ai
   # #1424; the Claude Code CHANGELOG v2.1.183 precedent; the TrapDoor
   # campaign).
+
   - id: destructive.iac_destroy
     description: terraform/pulumi/cdk destroy — the exact command class that deleted a production account in a real, documented incident (an agent decided to "clean up and start over")
     risk: critical
     action: prompt
+
   - id: destructive.iac_apply_unreviewed
     description: terraform apply/pulumi up with an auto-approve/skip-preview flag — skips the tool's own human-review step, itself the root-cause signal in real incidents
     risk: high
     action: prompt
+
   - id: destructive.git_history_destructive
     description: git reset --hard, clean -f*, stash clear/drop, checkout -- . (discard all local changes), or filter-branch/filter-repo (history rewrite) — destructive git operations beyond force-push
     risk: high
     action: prompt
+
   - id: destructive.secret_exfiltration
     description: A known-sensitive path (SSH/AWS/crypto-wallet/other credential files in protected_paths) read and sent to a network destination not in allowlisted_egress_domains
     risk: critical
     action: prompt
+
   # --- 2026-07 non-Bash attack-surface expansion ---
-  # Claude Code only (see §11 below) — cli/cmd/hook.go now also intercepts
-  # Write/Edit/MultiEdit tool calls, not just Bash. Cursor has no pre-write
-  # hook at all (only a non-blocking after-the-fact one); Codex's
-  # PreToolUse only fires for Bash. See core/policy/rules_configwrite.go's
-  # doc comments for the real CVEs motivating these.
+  # Claude Code only (see docs/cli-reference.md §11) — cli/cmd/hook.go now
+  # also intercepts Write/Edit/MultiEdit tool calls, not just Bash. Cursor
+  # has no pre-write hook at all (only a non-blocking after-the-fact one);
+  # Codex's PreToolUse only fires for Bash. See core/policy/
+  # rules_configwrite.go's doc comments for the real CVEs motivating these.
+
   - id: destructive.agent_permission_escalation
     description: A write to an agent/IDE settings file (.vscode/settings.json, .claude/settings.json) enables an auto-approve/skip-confirmation key, letting future tool calls bypass human confirmation entirely
     risk: critical
     action: prompt
+
   - id: destructive.git_hook_write
     description: A write targets a file under .git/hooks/ — a code-execution persistence mechanism that runs automatically on future git operations
     risk: high
     action: prompt
+
   - id: destructive.npm_lifecycle_script_write
     description: A write to package.json introduces or modifies a postinstall/preinstall/prepare script, which npm/pnpm/yarn will execute automatically at install time
     risk: high
