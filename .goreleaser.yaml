@@ -81,6 +81,13 @@ release:
   github:
     owner: amplify-lab
     name: damping
+  # Without this, re-running a Release workflow job against a tag that
+  # already has a (partially or fully) published release — e.g. retrying
+  # after fixing an unrelated failure downstream, like the Homebrew cask
+  # push's token permissions — fails every asset upload with "422
+  # Validation Failed ... already_exists" instead of actually retrying
+  # anything. Found via a real v0.2.0 rerun hitting exactly this.
+  replace_existing_artifacts: true
 
 # homebrew_casks, not the older brews: key — brews was soft-deprecated at
 # v2.10 and hard-deprecated (enforced, `goreleaser check` fails) at v2.16.
