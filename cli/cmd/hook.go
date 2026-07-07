@@ -27,9 +27,19 @@ import (
 // PreToolUse hook deliberately sends the identical hook_event_name value
 // Claude Code uses (verified against developers.openai.com/codex/hooks —
 // OpenAI built Codex's hook contract to be Claude-Code-hook-script
-// compatible, this is why). The two are told apart by TurnID/ToolUseID:
-// Codex's real payload includes them, Claude Code's does not (Claude Code
-// sends a PromptID instead) — see the "PreToolUse" case below.
+// compatible, this is why). The two are told apart by TurnID alone — see
+// the "PreToolUse" case below.
+//
+// A real, live misattribution bug (found 2026-07-07 by directly capturing
+// a genuine Claude Code session's actual hook stdin, not by re-reading
+// docs) found ToolUseID is NOT a valid part of that discriminator: real
+// Claude Code payloads DO send a non-empty tool_use_id (this struct's
+// earlier doc comment, and the tests it was written against, wrongly
+// assumed they never do) — every "codex" audit entry a real Claude-Code-
+// only user ever saw was actually misattributed Claude Code traffic. Only
+// TurnID (confirmed absent from that same real capture, and confirmed
+// present in Codex's own documented PreToolUse contract) is exclusive to
+// Codex.
 //
 // A review found the previous version of this struct only ever decoded
 // Claude Code's shape — a real Cursor beforeShellExecution payload has no
@@ -59,8 +69,10 @@ type hookInput struct {
 			NewString string `json:"new_string"`
 		} `json:"edits"` // MultiEdit
 	} `json:"tool_input"`
-	// TurnID/ToolUseID: present in Codex's payload, absent in Claude
-	// Code's — the discriminator between the two (see doc comment above).
+	// TurnID: present in Codex's payload, absent in Claude Code's — the
+	// discriminator between the two (see doc comment above). ToolUseID is
+	// parsed but deliberately NOT used for discrimination — both agents
+	// send it.
 	TurnID    string `json:"turn_id"`
 	ToolUseID string `json:"tool_use_id"`
 
@@ -126,7 +138,7 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 	switch in.HookEventName {
 	case "PreToolUse":
 		actor = "claude-code"
-		if in.TurnID != "" || in.ToolUseID != "" {
+		if in.TurnID != "" {
 			actor = "codex"
 		}
 		sessionID = in.SessionID

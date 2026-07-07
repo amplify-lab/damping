@@ -850,8 +850,8 @@ func TestHook_EvaluatesCodexPayload_DeniesDangerousCommand(t *testing.T) {
 // regression guard: a Codex payload (has turn_id) must be attributed
 // "codex" in the audit trail, and — the other half of the same guard — a
 // Claude-Code-shaped payload (no turn_id) must still be attributed
-// "claude-code", not accidentally reclassified now that TurnID/ToolUseID
-// exist on the shared struct.
+// "claude-code". See TestHook_RealClaudeCodePayloadWithToolUseIDStaysClaudeCode
+// below for why ToolUseID alone is deliberately not part of this check.
 func TestHook_CodexAuditRecordUsesCodexActor(t *testing.T) {
 	setupTestEnv(t)
 	if _, _, err := run(t, "", "init"); err != nil {
@@ -879,10 +879,13 @@ func TestHook_CodexAuditRecordUsesCodexActor(t *testing.T) {
 }
 
 // TestHook_ClaudeCodePayloadWithoutTurnIDStaysClaudeCode is the other half
-// of TestHook_CodexAuditRecordUsesCodexActor: a genuine Claude Code payload
-// (no turn_id/tool_use_id at all) must still be attributed "claude-code"
-// after adding the Codex discriminator fields to hookInput — a regression
-// this test would catch if the zero-value check above were ever inverted.
+// of TestHook_CodexAuditRecordUsesCodexActor: a minimal payload with neither
+// turn_id nor tool_use_id set must still be attributed "claude-code" — a
+// regression this test would catch if the zero-value check on TurnID were
+// ever inverted. This is a minimal-fields edge case, not a claim about what
+// a real Claude Code payload actually looks like — see
+// TestHook_RealClaudeCodePayloadWithToolUseIDStaysClaudeCode for that (a
+// real payload does send tool_use_id; this check must not key off it).
 func TestHook_ClaudeCodePayloadWithoutTurnIDStaysClaudeCode(t *testing.T) {
 	setupTestEnv(t)
 	if _, _, err := run(t, "", "init"); err != nil {
@@ -906,6 +909,49 @@ func TestHook_ClaudeCodePayloadWithoutTurnIDStaysClaudeCode(t *testing.T) {
 	}
 	if events[0].Actor != "claude-code" {
 		t.Fatalf("expected actor %q, got %q", "claude-code", events[0].Actor)
+	}
+}
+
+// TestHook_RealClaudeCodePayloadWithToolUseIDStaysClaudeCode is a regression
+// test for a real, live misattribution bug: a genuine Claude Code hook
+// invocation (captured directly from a real, currently-running session by
+// temporarily tee-ing the hook's actual stdin) includes a non-empty
+// tool_use_id — contradicting hookInput's own doc comment and this file's
+// other Codex-discriminator tests, both of which assumed real Claude Code
+// payloads never send it. Every real "codex" audit entry Tim had ever seen
+// on his own dashboard was actually his own Claude Code session — the old
+// `in.TurnID != "" || in.ToolUseID != ""` check misclassified every single
+// one, since ToolUseID is populated by Claude Code too and is not
+// Codex-exclusive. turn_id (confirmed absent from this real capture, and
+// confirmed present in Codex's own documented PreToolUse contract via
+// developers.openai.com/codex/hooks) is the only field that's actually
+// exclusive to Codex — see the fixed discriminator in runHook.
+func TestHook_RealClaudeCodePayloadWithToolUseIDStaysClaudeCode(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	// Verbatim shape of a real payload captured from a live Claude Code
+	// session's actual PreToolUse hook stdin (2026-07-07) — every field
+	// Claude Code genuinely sends, not a hand-guessed subset.
+	stdin := `{"session_id":"s1","transcript_path":"/home/user/.claude/projects/foo/s1.jsonl","cwd":"/home/user/project","prompt_id":"0dd82e07-3f3e-46e6-90ac-690ed22fc1ac","permission_mode":"bypassPermissions","effort":{"level":"xhigh"},"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git status"},"tool_use_id":"toolu_018nNwC3aUScdY5E8uGopMZL"}`
+	if _, _, err := run(t, stdin, "hook", "pretooluse"); err != nil {
+		t.Fatalf("hook: %v", err)
+	}
+
+	auditPath, err := paths.Audit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := audit.ReadAll(auditPath, audit.Filter{})
+	if err != nil {
+		t.Fatalf("reading audit log: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected exactly 1 audit event, got %d", len(events))
+	}
+	if events[0].Actor != "claude-code" {
+		t.Fatalf("expected actor %q for a real Claude Code payload (tool_use_id present, turn_id absent), got %q", "claude-code", events[0].Actor)
 	}
 }
 
