@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/amplify-lab/damping/cli/adapter/agent"
 	"github.com/amplify-lab/damping/cli/paths"
+	"github.com/amplify-lab/damping/cli/policies"
 	"github.com/amplify-lab/damping/core/audit"
 	"github.com/amplify-lab/damping/core/policy"
 )
@@ -63,6 +65,15 @@ func newDoctorCmd() *cobra.Command {
 					warned++
 				} else {
 					fmt.Fprintf(w, "  ✓ Policy file valid (%s, %d rules)\n", policyPath, len(cfg.Rules))
+				}
+
+				if missing := missingDefaultRules(cfg); len(missing) > 0 {
+					fmt.Fprintf(w, "  ⚠ %d rule(s) shipped in the current default policy are missing from your policy file — probably just older than this binary, not a deliberate removal (`damping init` never overwrites an existing policy.yaml, so upgrading the binary alone doesn't add new default rules to it):\n", len(missing))
+					for _, id := range missing {
+						fmt.Fprintf(w, "      - %s\n", id)
+					}
+					fmt.Fprintf(w, "      → review, then `damping init --force` to refresh (overwrites the whole file — re-add any custom always_allow/always_deny/protected_paths entries afterward)\n")
+					warned++
 				}
 			}
 
@@ -115,6 +126,34 @@ func newDoctorCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// missingDefaultRules reports which rule ids the binary's own currently-
+// embedded default policy (cli/policies.Default) ships that cfg does not
+// have — a staleness signal, not a validity one: cfg is already a fully
+// valid, loadable Config regardless of this check's result. A parse
+// failure on the embedded default (which should never happen in a real
+// release — it's covered by core/policy's own TestLoadConfig_
+// DefaultPolicyIsValid) fails this check silently rather than crashing
+// `damping doctor` over an internal packaging problem it can't fix by
+// itself.
+func missingDefaultRules(cfg policy.Config) []string {
+	defaultCfg, err := policy.ParseConfig([]byte(policies.Default))
+	if err != nil {
+		return nil
+	}
+	have := make(map[string]bool, len(cfg.Rules))
+	for _, r := range cfg.Rules {
+		have[r.ID] = true
+	}
+	var missing []string
+	for _, r := range defaultCfg.Rules {
+		if !have[r.ID] {
+			missing = append(missing, r.ID)
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }
 
 func hashFile(path string) string {

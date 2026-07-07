@@ -62,15 +62,22 @@ $ damping doctor
 Damping doctor — environment check
 
   ✓ Policy file valid (~/.damping/policy.yaml, 11 rules)
+  ⚠ 13 rule(s) shipped in the current default policy are missing from your policy file — probably just older than this binary, not a deliberate removal (`damping init` never overwrites an existing policy.yaml, so upgrading the binary alone doesn't add new default rules to it):
+      - destructive.agent_permission_escalation
+      - destructive.cargo_publish_unreviewed
+      ...
+      → review, then `damping init --force` to refresh (overwrites the whole file — re-add any custom always_allow/always_deny/protected_paths entries afterward)
   ✓ Claude Code hook registered
   ✗ Cursor hook missing — was it removed outside `damping off`?
       → run `damping init --agent cursor --force` to reinstall
   ⚠ 2 degraded-mode event(s) in the last 7 days — run `damping log --outcome degraded` for details
 
-1 check(s) failed, 1 warning(s).
+1 check(s) failed, 2 warning(s).
 ```
 
 Exit code 4 if any check fails. An agent whose hook was never registered at all (never ran `damping init`, or that agent isn't installed) shows an informational `·` line ("not registered — run `damping init`") rather than either ✓ or ✗ — only an agent that **was** previously seen registered and has since disappeared is treated as a failure (see `docs/threat-model.md` §4's self-protection requirement). `--verbose`/paste-ready bundle and `--json` output described in earlier drafts of this doc are **not implemented in V1** — `damping doctor` takes no flags today.
+
+**The missing-default-rules check** (`missingDefaultRules` in `cli/cmd/doctor.go`) exists because `damping init` deliberately never overwrites an existing `policy.yaml` — the right behavior for protecting a user's own `always_allow`/`always_deny`/`protected_paths` customizations, but it means a policy file created by an old binary silently stays frozen at whatever rule set existed then, even across upgrading to a binary that ships many more default rules. Found from a real case: a user's policy file had 11 rules while the currently-installed binary shipped 24, discovered only by comparing dashboards across two machines — nothing had ever told them their policy was stale. This check diffs the currently-embedded default policy's rule ids against the loaded policy's own rule ids and warns (not fails — a policy missing some default rules is still perfectly valid and loadable) whenever the shipped default has moved ahead.
 
 The "hook missing since last check" case is the direct, user-visible surface of the self-protection requirement in `docs/threat-model.md` §4 — it must never be silently absent from this output.
 

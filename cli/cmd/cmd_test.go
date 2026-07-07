@@ -282,6 +282,69 @@ func TestDoctor_WarnsWhenPolicyHashChanges(t *testing.T) {
 	}
 }
 
+// TestDoctor_WarnsWhenPolicyMissingRulesFromCurrentDefault is the check
+// found via a real gap: `damping init` never overwrites an existing
+// policy.yaml (by design, so it never clobbers a user's own always_allow/
+// always_deny/protected_paths customizations), so a policy file created by
+// an old binary silently stays frozen at whatever rule set existed then —
+// even after upgrading to a binary shipping many more default rules. A
+// real user hit exactly this: 11 rules on disk vs. 24 in the currently-
+// installed binary, discovered only by noticing the dashboard's rule count
+// looked different from a different machine's. `doctor` should surface
+// this itself rather than requiring the user to notice a discrepancy.
+func TestDoctor_WarnsWhenPolicyMissingRulesFromCurrentDefault(t *testing.T) {
+	setupTestEnv(t)
+	staleYAML := []byte(`
+version: 1
+rules:
+  - id: destructive.rm_rf_protected
+    description: a
+    risk: critical
+    action: prompt
+  - id: destructive.git_push_force
+    description: b
+    risk: high
+    action: prompt
+`)
+	policyPath := filepath.Join(t.TempDir(), "policy.yaml")
+	if err := os.WriteFile(policyPath, staleYAML, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := run(t, "", "--config", policyPath, "doctor")
+	if err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if !strings.Contains(out, "missing from your policy file") {
+		t.Fatalf("expected a missing-rules warning, got: %s", out)
+	}
+	// destructive.sql_drop_truncate is one of the rules this stale fixture
+	// omits — spot-checking one real id, not just the summary count, so
+	// this test would catch the warning listing the wrong rules entirely.
+	if !strings.Contains(out, "destructive.sql_drop_truncate") {
+		t.Fatalf("expected the specific missing rule ids to be named, got: %s", out)
+	}
+	if strings.Contains(out, "0 warning") {
+		t.Fatalf("expected at least 1 warning (a stale policy is a warning, not a hard failure — it's still a valid, loadable policy), got: %s", out)
+	}
+}
+
+// TestDoctor_NoMissingRulesWarningWithFullDefaultPolicy is the other half:
+// a freshly-`init`ed policy (the current shipped default, verbatim) must
+// not warn about itself.
+func TestDoctor_NoMissingRulesWarningWithFullDefaultPolicy(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, _, err := run(t, "", "doctor")
+	if err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if strings.Contains(out, "missing from your policy file") {
+		t.Fatalf("expected no missing-rules warning right after init, got: %s", out)
+	}
+}
+
 // TestDoctor_WarnsWhenAuditLogUnreadable is a regression test for a real
 // false all-clear: doctor's degraded-events check used to discard
 // audit.ReadAll's error entirely (`degraded, _ := audit.ReadAll(...)`) and
