@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/amplify-lab/damping/core/audit"
 	"github.com/amplify-lab/damping/core/decision"
 	"github.com/amplify-lab/damping/core/event"
+	"github.com/amplify-lab/damping/core/policy"
 )
 
 func sampleEvent(sessionID, actor string, channel event.Channel, risk event.RiskLevel, d decision.Decision) event.ActionEvent {
@@ -167,6 +169,43 @@ func TestHandleSummary_ReportsDegradedReadFailure(t *testing.T) {
 	}
 }
 
+func TestHandlePolicy_ReturnsFullRuleList(t *testing.T) {
+	s, _ := newTestServer(t, policies.Default)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, newLocalRequest("/api/policy"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var got []policy.RuleConfig
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding rules: %v", err)
+	}
+	cfg, err := policy.ParseConfig([]byte(policies.Default))
+	if err != nil {
+		t.Fatalf("parsing default policy for comparison: %v", err)
+	}
+	if len(got) != len(cfg.Rules) {
+		t.Fatalf("expected %d rules (the full default policy), got %d", len(cfg.Rules), len(got))
+	}
+	// Every rule must carry a real, non-empty description — that's the
+	// entire point of this endpoint (the dashboard's "what does this
+	// protect against" explainer has nothing to show otherwise).
+	for _, r := range got {
+		if r.ID == "" || r.Description == "" || r.Risk == "" || r.Action == "" {
+			t.Fatalf("expected every rule to have id/description/risk/action populated, got %+v", r)
+		}
+	}
+}
+
+func TestHandlePolicy_ReportsLoadFailure(t *testing.T) {
+	s, _ := newTestServer(t, "") // no policy file written at all
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, newLocalRequest("/api/policy"))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for a missing policy file, got %d", rec.Code)
+	}
+}
+
 func TestHandleEvents_EmptyLogReturnsEmptyArrayNotNull(t *testing.T) {
 	s, _ := newTestServer(t, policies.Default)
 	rec := httptest.NewRecorder()
@@ -202,6 +241,78 @@ func TestHandleEvents_FiltersByRisk(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].SessionID != "s1" {
 		t.Fatalf("expected exactly the critical-risk event, got %+v", got)
+	}
+}
+
+func TestHandleEvents_FiltersByKeyword(t *testing.T) {
+	s, auditPath := newTestServer(t, policies.Default)
+	w := audit.NewWriter(auditPath)
+	mustAppend := func(e event.ActionEvent) {
+		t.Helper()
+		if err := w.Append(e); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+	e1 := sampleEvent("s1", "claude-code", event.ChannelCLI, event.RiskLow, decision.Decision{Verdict: decision.Allow})
+	e1.Raw = "cd ~/projects/fangchan-xiuwei-v3 && git status"
+	e2 := sampleEvent("s2", "claude-code", event.ChannelCLI, event.RiskLow, decision.Decision{Verdict: decision.Allow})
+	e2.Raw = "git log --oneline"
+	mustAppend(e1)
+	mustAppend(e2)
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, newLocalRequest("/api/events?keyword=fangchan"))
+	var got []event.ActionEvent
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding events: %v", err)
+	}
+	if len(got) != 1 || got[0].SessionID != "s1" {
+		t.Fatalf("expected only the event mentioning fangchan, got %+v", got)
+	}
+}
+
+// TestHandleEvents_BeforeCursorEnablesLoadOlderPagination is the dashboard-
+// level regression test for the "load older" pattern: fetching with
+// ?before=<oldest event already shown> must return the next page back in
+// time without re-including that same boundary event (Before is exclusive —
+// see audit.Filter's doc comment).
+func TestHandleEvents_BeforeCursorEnablesLoadOlderPagination(t *testing.T) {
+	s, auditPath := newTestServer(t, policies.Default)
+	w := audit.NewWriter(auditPath)
+	base := time.Now().Add(-time.Hour)
+	var oldest event.ActionEvent
+	for i := 0; i < 5; i++ {
+		ev := sampleEvent("s", "claude-code", event.ChannelCLI, event.RiskLow, decision.Decision{Verdict: decision.Allow})
+		ev.EventID = fmt.Sprintf("evt_%d", i)
+		ev.Timestamp = base.Add(time.Duration(i) * time.Second)
+		if err := w.Append(ev); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+		if i == 2 {
+			oldest = ev // the "oldest of the currently-shown page" cursor
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	// url.QueryEscape (not plain string concatenation) so the timestamp's own
+	// "+"/":" characters — real for a non-UTC offset — survive query-string
+	// decoding intact; a real browser's URLSearchParams does this
+	// automatically, which a naive concatenation here would not reproduce.
+	s.Handler().ServeHTTP(rec, newLocalRequest("/api/events?before="+url.QueryEscape(oldest.Timestamp.Format(time.RFC3339Nano))))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var got []event.ActionEvent
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding events: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected exactly the 2 events strictly older than the cursor (evt_0, evt_1), got %d: %+v", len(got), got)
+	}
+	for _, e := range got {
+		if e.EventID == oldest.EventID {
+			t.Fatalf("expected the cursor event itself to be excluded (Before is exclusive), but got it back: %+v", e)
+		}
 	}
 }
 

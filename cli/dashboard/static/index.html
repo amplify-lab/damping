@@ -11,67 +11,76 @@
 <header class="border-b border-slate-800 px-4 py-3 flex items-center gap-3">
   <svg width="28" height="16" viewBox="0 0 32 16" aria-hidden="true"><path d="M2 8 Q6 2 10 8 T18 8" fill="none" stroke="#f59e0b" stroke-width="2"/><path d="M18 8 L30 8" fill="none" stroke="#14b8a6" stroke-width="2"/></svg>
   <span class="font-mono text-lg tracking-tight">damping</span>
-  <span class="text-slate-500 text-sm">local dashboard — reads ~/.damping/audit.jsonl, nothing leaves this machine</span>
+  <span data-i18n="subtitle" class="text-slate-500 text-sm">local dashboard — reads ~/.damping/audit.jsonl, nothing leaves this machine</span>
+  <div class="lang-toggle" role="group" aria-label="Language / 語言">
+    <button type="button" data-lang="en" aria-pressed="true">EN</button>
+    <button type="button" data-lang="zh" aria-pressed="false">中文</button>
+  </div>
 </header>
 
 <main class="p-4 flex flex-col gap-4 max-w-screen-2xl mx-auto">
 
   <section id="summary-strip" aria-label="Enforcement summary" class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-    <div class="summary-card"><div class="summary-label">Enforcement</div><div id="summary-enabled" class="summary-value">…</div></div>
-    <div class="summary-card"><div class="summary-label">Policy</div><div id="summary-policy" class="summary-value">…</div></div>
-    <div class="summary-card"><div class="summary-label">Agents</div><div id="summary-agents" class="summary-value">…</div></div>
-    <div class="summary-card"><div class="summary-label">Degraded (7d)</div><div id="summary-degraded" class="summary-value">…</div></div>
+    <div class="summary-card"><div data-i18n="enforcement_label" class="summary-label">Enforcement</div><div id="summary-enabled" class="summary-value">…</div></div>
+    <button type="button" id="summary-policy-btn" class="summary-card-button" aria-haspopup="dialog">
+      <div data-i18n="policy_label" class="summary-label">Policy</div><div id="summary-policy" class="summary-value">…</div>
+    </button>
+    <div class="summary-card"><div data-i18n="agents_label" class="summary-label">Agents</div><div id="summary-agents" class="summary-value">…</div></div>
+    <div class="summary-card"><div data-i18n="degraded_label" class="summary-label">Degraded (7d)</div><div id="summary-degraded" class="summary-value">…</div></div>
   </section>
 
   <div class="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-4">
 
     <section aria-label="Event stream" class="flex flex-col gap-3 min-w-0">
       <form id="filter-form" class="flex flex-wrap items-end gap-2" aria-label="Filter events">
-        <label class="filter-field"><span>Channel</span>
-          <select name="channel"><option value="">any</option><option value="cli">cli</option><option value="mcp">mcp</option></select>
+        <label class="filter-field"><span data-i18n="filter_channel">Channel</span>
+          <select name="channel"><option data-i18n="opt_any" value="">any</option><option value="cli">cli</option><option value="mcp">mcp</option></select>
         </label>
-        <label class="filter-field"><span>Risk</span>
-          <select name="risk"><option value="">any</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="critical">critical</option></select>
+        <label class="filter-field"><span data-i18n="filter_risk">Risk</span>
+          <select name="risk"><option data-i18n="opt_any" value="">any</option><option data-i18n="risk_low" value="low">low</option><option data-i18n="risk_medium" value="medium">medium</option><option data-i18n="risk_high" value="high">high</option><option data-i18n="risk_critical" value="critical">critical</option></select>
         </label>
-        <label class="filter-field"><span>Outcome</span>
-          <select name="outcome"><option value="">any</option><option value="allow">allow</option><option value="deny">deny</option><option value="prompt">prompt</option><option value="degraded">degraded</option></select>
+        <label class="filter-field"><span data-i18n="filter_outcome">Outcome</span>
+          <select name="outcome"><option data-i18n="opt_any" value="">any</option><option data-i18n="outcome_allow" value="allow">allow</option><option data-i18n="outcome_deny" value="deny">deny</option><option data-i18n="outcome_prompt" value="prompt">prompt</option><option data-i18n="outcome_degraded" value="degraded">degraded</option></select>
         </label>
-        <label class="filter-field"><span>Actor</span>
-          <input name="actor" type="text" placeholder="e.g. claude-code" autocomplete="off">
+        <label class="filter-field"><span data-i18n="filter_keyword">Keyword</span>
+          <input name="keyword" type="text" data-i18n-placeholder="placeholder_keyword" placeholder="search command/target text" autocomplete="off">
         </label>
-        <label class="filter-field"><span>Since</span>
-          <select id="since-select" name="since"><option value="">all time</option><option value="1h">1h</option><option value="24h">24h</option><option value="168h">7d</option><option value="720h">30d</option><option value="__custom">custom range…</option></select>
+        <label class="filter-field"><span data-i18n="filter_actor">Actor</span>
+          <input name="actor" type="text" data-i18n-placeholder="placeholder_actor" placeholder="e.g. claude-code" autocomplete="off">
         </label>
-        <label class="filter-field custom-range-field hidden"><span>From</span>
+        <label class="filter-field"><span data-i18n="filter_since">Since</span>
+          <select id="since-select" name="since"><option data-i18n="since_all_time" value="">all time</option><option data-i18n="since_1h" value="1h">1h</option><option data-i18n="since_24h" value="24h">24h</option><option data-i18n="since_7d" value="168h">7d</option><option data-i18n="since_30d" value="720h">30d</option><option data-i18n="since_custom" value="__custom">custom range…</option></select>
+        </label>
+        <label class="filter-field custom-range-field hidden"><span data-i18n="filter_from">From</span>
           <input id="custom-from" type="datetime-local">
         </label>
-        <label class="filter-field custom-range-field hidden"><span>Until</span>
+        <label class="filter-field custom-range-field hidden"><span data-i18n="filter_until">Until</span>
           <input id="custom-until" type="datetime-local">
         </label>
-        <label class="filter-field"><span>Rule</span>
-          <input name="policy_id" type="text" placeholder="e.g. destructive.rm_rf_protected" autocomplete="off">
+        <label class="filter-field"><span data-i18n="filter_rule">Rule</span>
+          <input name="policy_id" type="text" data-i18n-placeholder="placeholder_rule" placeholder="e.g. destructive.rm_rf_protected" autocomplete="off">
         </label>
         <label class="filter-field flex-row items-center gap-1.5">
           <input id="live-toggle" type="checkbox" checked>
-          <span>Live</span>
+          <span data-i18n="filter_live">Live</span>
         </label>
         <span id="stream-status" class="text-xs text-slate-500" role="status"></span>
-        <span id="truncated-note" class="text-xs text-amber-400 hidden" role="status">showing only the most recent events — narrow with Since for the rest</span>
+        <span id="truncated-note" data-i18n="truncated_note" class="text-xs text-amber-400 hidden" role="status">showing only the most recent events — narrow with Since for the rest</span>
       </form>
 
       <section aria-label="Statistics" class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div class="stats-card">
-          <h2 class="stats-title">Risk over time</h2>
+          <h2 data-i18n="stats_risk_over_time" class="stats-title">Risk over time</h2>
           <svg id="risk-over-time-chart" viewBox="0 0 400 120" preserveAspectRatio="none" class="w-full h-28"></svg>
           <div class="flex gap-3 mt-1 text-xs text-slate-500">
-            <span><span class="legend-dot" style="background:#14b8a6"></span>low</span>
-            <span><span class="legend-dot" style="background:#eab308"></span>medium</span>
-            <span><span class="legend-dot" style="background:#f59e0b"></span>high</span>
-            <span><span class="legend-dot" style="background:#ef4444"></span>critical</span>
+            <span><span class="legend-dot" style="background:#14b8a6"></span><span data-i18n="risk_low">low</span></span>
+            <span><span class="legend-dot" style="background:#eab308"></span><span data-i18n="risk_medium">medium</span></span>
+            <span><span class="legend-dot" style="background:#f59e0b"></span><span data-i18n="risk_high">high</span></span>
+            <span><span class="legend-dot" style="background:#ef4444"></span><span data-i18n="risk_critical">critical</span></span>
           </div>
         </div>
         <div class="stats-card">
-          <h2 class="stats-title">Top triggered rules</h2>
+          <h2 data-i18n="stats_top_rules" class="stats-title">Top triggered rules</h2>
           <div id="top-rules-chart" class="flex flex-col gap-1.5"></div>
         </div>
       </section>
@@ -80,22 +89,23 @@
         <table class="w-full text-sm" aria-describedby="events-state">
           <thead>
             <tr class="text-left text-slate-400 border-b border-slate-800">
-              <th class="px-3 py-2 font-medium">Time</th>
-              <th class="px-3 py-2 font-medium">Channel</th>
-              <th class="px-3 py-2 font-medium">Actor</th>
-              <th class="px-3 py-2 font-medium">Target</th>
-              <th class="px-3 py-2 font-medium">Risk</th>
-              <th class="px-3 py-2 font-medium">Decision</th>
+              <th data-i18n="th_time" class="px-3 py-2 font-medium">Time</th>
+              <th data-i18n="th_channel" class="px-3 py-2 font-medium">Channel</th>
+              <th data-i18n="th_actor" class="px-3 py-2 font-medium">Actor</th>
+              <th data-i18n="th_target" class="px-3 py-2 font-medium">Target</th>
+              <th data-i18n="th_risk" class="px-3 py-2 font-medium">Risk</th>
+              <th data-i18n="th_decision" class="px-3 py-2 font-medium">Decision</th>
             </tr>
           </thead>
           <tbody id="events-body"></tbody>
         </table>
+        <button id="load-older-btn" type="button" data-i18n="load_older" class="load-older-btn hidden">Load older events</button>
         <div id="events-state" class="p-6 text-center text-slate-500 text-sm"></div>
       </div>
     </section>
 
     <aside aria-label="Recent sessions" class="flex flex-col gap-2">
-      <h2 class="text-slate-400 text-xs uppercase tracking-wide font-medium">Recent sessions</h2>
+      <h2 data-i18n="recent_sessions" class="text-slate-400 text-xs uppercase tracking-wide font-medium">Recent sessions</h2>
       <div id="sessions-list" class="flex flex-col gap-2"></div>
     </aside>
 
@@ -104,10 +114,23 @@
 
 <div id="detail-drawer" class="hidden fixed inset-y-0 right-0 w-full max-w-md bg-slate-900 border-l border-slate-800 p-4 overflow-y-auto z-10" role="dialog" aria-label="Event detail">
   <div class="flex justify-between items-center mb-3">
-    <h2 class="font-mono text-sm text-slate-300">Event detail</h2>
+    <h2 data-i18n="detail_title" class="font-mono text-sm text-slate-300">Event detail</h2>
     <button id="detail-close" class="text-slate-400 hover:text-slate-200 text-xl leading-none" aria-label="Close event detail">&times;</button>
   </div>
   <dl id="detail-fields" class="flex flex-col gap-1 text-sm"></dl>
+</div>
+
+<div id="policy-modal" class="hidden modal-overlay" role="presentation">
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="policy-modal-title">
+    <div class="modal-header">
+      <div>
+        <h2 id="policy-modal-title" data-i18n="policy_modal_title" class="font-mono text-sm text-slate-200">What Damping protects against</h2>
+        <p data-i18n="policy_modal_subtitle" class="text-xs text-slate-500 mt-0.5">Rule descriptions are the policy file's own canonical text (kept in English) — only this dialog's labels are translated.</p>
+      </div>
+      <button id="policy-modal-close" class="text-slate-400 hover:text-slate-200 text-xl leading-none shrink-0 ml-3" aria-label="Close">&times;</button>
+    </div>
+    <div id="policy-modal-body" class="modal-body"></div>
+  </div>
 </div>
 
 <template id="row-template">
@@ -135,9 +158,119 @@
 <script>
 "use strict";
 
-const RISK_CLASS = { low: "badge-low", medium: "badge-medium", high: "badge-high", critical: "badge-critical" };
-const DECISION_CLASS = { allow: "badge-allow", deny: "badge-deny", prompt: "badge-prompt" };
-const RISK_LABEL = { low: "Low", medium: "Medium", high: "High", critical: "Critical" };
+// I18N: every static UI-chrome string this dashboard shows, in English and
+// Traditional Chinese. Deliberately scoped to chrome only — labels,
+// headers, buttons, empty/error states — never the audit DATA itself
+// (Target/Raw/Reason, or a policy rule's own Description). Those stay
+// exactly as written in policy.yaml/the audit log: a single canonical
+// English source of truth that compliance reports, the OPA/Go engine
+// equivalence tests, and every existing consumer already assume. Deeper
+// content translation (rule descriptions, hook-prompt text, CLI output) is
+// a distinct, much larger product decision, deliberately not bundled here.
+const I18N = {
+  en: {
+    subtitle: "local dashboard — reads ~/.damping/audit.jsonl, nothing leaves this machine",
+    enforcement_label: "Enforcement", policy_label: "Policy", agents_label: "Agents", degraded_label: "Degraded (7d)",
+    agents_none: "none registered",
+    filter_channel: "Channel", filter_risk: "Risk", filter_outcome: "Outcome", filter_keyword: "Keyword",
+    filter_actor: "Actor", filter_since: "Since", filter_from: "From", filter_until: "Until", filter_rule: "Rule", filter_live: "Live",
+    opt_any: "any",
+    risk_low: "low", risk_medium: "medium", risk_high: "high", risk_critical: "critical",
+    outcome_allow: "allow", outcome_deny: "deny", outcome_prompt: "prompt", outcome_degraded: "degraded",
+    since_all_time: "all time", since_1h: "1h", since_24h: "24h", since_7d: "7d", since_30d: "30d", since_custom: "custom range…",
+    placeholder_actor: "e.g. claude-code", placeholder_rule: "e.g. destructive.rm_rf_protected", placeholder_keyword: "search command/target text",
+    truncated_note: "showing only the most recent events — narrow with Since for the rest",
+    stream_live: "● live", stream_reconnecting: "○ reconnecting…",
+    stats_risk_over_time: "Risk over time", stats_top_rules: "Top triggered rules",
+    no_rule_matches: "No rule matches in this period.", stats_error: "Couldn't load statistics.",
+    th_time: "Time", th_channel: "Channel", th_actor: "Actor", th_target: "Target", th_risk: "Risk", th_decision: "Decision",
+    rules_suffix: " rules", policy_invalid: "invalid",
+    no_activity: "No activity yet — nothing to dampen.", loading: "Loading…",
+    events_error: "Couldn't load the audit log. ", retry: "Retry",
+    load_older: "Load older events", loading_older: "Loading…", no_more_events: "No older events.",
+    recent_sessions: "Recent sessions", no_sessions: "No sessions yet.", sessions_error: "Couldn't load sessions.",
+    settled: "settled", active: "active",
+    detail_title: "Event detail", close: "Close",
+    detail_event_id: "Event ID", detail_time: "Time", detail_session: "Session", detail_actor: "Actor", detail_identity: "Identity",
+    detail_channel: "Channel", detail_action_type: "Action type", detail_target: "Target", detail_raw: "Raw",
+    detail_parsed_args: "Parsed args", detail_risk: "Risk", detail_verdict: "Verdict", detail_resolved_verdict: "Resolved verdict",
+    detail_policy_id: "Policy ID", detail_reason: "Reason",
+    detail_degraded_note: "true — this decision was made under an internal failure, not a real policy match",
+    degraded_suffix: " (degraded)",
+    policy_modal_title: "What Damping protects against",
+    policy_modal_subtitle: "Rule descriptions are the policy file's own canonical text (kept in English) — only this dialog's labels are translated.",
+    policy_loading: "Loading…", policy_error: "Couldn't load the policy.",
+  },
+  zh: {
+    subtitle: "本機儀表板——讀取 ~/.damping/audit.jsonl，資料不會離開這台機器",
+    enforcement_label: "執行狀態", policy_label: "政策", agents_label: "Agent", degraded_label: "降級事件（7天）",
+    agents_none: "尚未接上任何 agent",
+    filter_channel: "管道", filter_risk: "風險", filter_outcome: "結果", filter_keyword: "關鍵字",
+    filter_actor: "Actor", filter_since: "起始時間", filter_from: "從", filter_until: "到", filter_rule: "規則", filter_live: "即時",
+    opt_any: "不限",
+    risk_low: "低", risk_medium: "中", risk_high: "高", risk_critical: "嚴重",
+    outcome_allow: "放行", outcome_deny: "拒絕", outcome_prompt: "詢問", outcome_degraded: "降級",
+    since_all_time: "全部時間", since_1h: "1 小時", since_24h: "24 小時", since_7d: "7 天", since_30d: "30 天", since_custom: "自訂範圍…",
+    placeholder_actor: "例如 claude-code", placeholder_rule: "例如 destructive.rm_rf_protected", placeholder_keyword: "搜尋指令／對象文字",
+    truncated_note: "目前只顯示最近的事件——用「起始時間」縮小範圍可看到其餘的",
+    stream_live: "● 即時中", stream_reconnecting: "○ 重新連線中…",
+    stats_risk_over_time: "風險趨勢", stats_top_rules: "觸發最多次的規則",
+    no_rule_matches: "這段期間沒有規則被觸發。", stats_error: "統計資料載入失敗。",
+    th_time: "時間", th_channel: "管道", th_actor: "Actor", th_target: "對象", th_risk: "風險", th_decision: "結果",
+    rules_suffix: " 條規則", policy_invalid: "政策無效",
+    no_activity: "目前還沒有任何活動——什麼都還沒攔到。", loading: "載入中…",
+    events_error: "稽核紀錄載入失敗。 ", retry: "重試",
+    load_older: "載入更早的事件", loading_older: "載入中…", no_more_events: "沒有更早的事件了。",
+    recent_sessions: "近期 session", no_sessions: "目前沒有 session。", sessions_error: "session 載入失敗。",
+    settled: "已結束", active: "進行中",
+    detail_title: "事件詳情", close: "關閉",
+    detail_event_id: "事件 ID", detail_time: "時間", detail_session: "Session", detail_actor: "Actor", detail_identity: "身分",
+    detail_channel: "管道", detail_action_type: "動作類型", detail_target: "對象", detail_raw: "原始內容",
+    detail_parsed_args: "解析後參數", detail_risk: "風險", detail_verdict: "判定", detail_resolved_verdict: "最終判定",
+    detail_policy_id: "規則 ID", detail_reason: "理由",
+    detail_degraded_note: "true——這個判定是在內部發生問題時做出的，不是真的規則比對結果",
+    degraded_suffix: "（降級）",
+    policy_modal_title: "Damping 防止哪些事情",
+    policy_modal_subtitle: "規則說明是政策檔裡的原文（保持英文）——這個視窗只有標籤本身有翻譯。",
+    policy_loading: "載入中…", policy_error: "政策載入失敗。",
+  },
+};
+
+let lang = localStorage.getItem("damping-lang") || (navigator.language && navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en");
+
+function t(key) {
+  return (I18N[lang] && I18N[lang][key]) || I18N.en[key] || key;
+}
+
+// applyStaticI18n re-labels every element carrying a data-i18n(-placeholder)
+// attribute — called once on load and again on every language switch. This
+// only touches markup that's present from the start (the static shell,
+// table headers, filter form); dynamically-built content (event rows,
+// sessions, chart labels, the policy modal) has its own translation applied
+// wherever it's rendered, since it doesn't exist yet at page-load time.
+function applyStaticI18n() {
+  document.documentElement.lang = lang === "zh" ? "zh-Hant" : "en";
+  document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => { el.placeholder = t(el.dataset.i18nPlaceholder); });
+  document.querySelectorAll(".lang-toggle button").forEach((btn) => {
+    btn.setAttribute("aria-pressed", String(btn.dataset.lang === lang));
+  });
+}
+
+function setLang(l) {
+  if (l !== "en" && l !== "zh") return;
+  lang = l;
+  localStorage.setItem("damping-lang", l);
+  applyStaticI18n();
+  applyStreamStatus(); // onopen/onerror only fire on a state *change*, not on this toggle
+  renderEvents(currentEvents); // re-render risk/decision badge labels
+  loadSessions(); // re-render settled/active badge labels (cheap, small payload)
+  if (cachedRules) renderPolicyModal(cachedRules); // re-render group headers/action badges if already open once
+}
+
+document.querySelectorAll(".lang-toggle button").forEach((btn) => {
+  btn.addEventListener("click", () => setLang(btn.dataset.lang));
+});
 
 function currentFilterParams() {
   const form = document.getElementById("filter-form");
@@ -164,7 +297,8 @@ function fmtTime(iso) {
 
 function decisionLabel(ev) {
   const outcome = (ev.decision && (ev.decision.resolved_verdict || ev.decision.verdict)) || "";
-  return ev.decision && ev.decision.degraded ? outcome + " (degraded)" : outcome;
+  const label = t("outcome_" + outcome);
+  return ev.decision && ev.decision.degraded ? label + t("degraded_suffix") : label;
 }
 
 function renderRow(ev) {
@@ -182,7 +316,7 @@ function renderRow(ev) {
 
   const risk = ev.risk_level || "low";
   const riskEl = row.querySelector('[data-field="risk"]');
-  riskEl.textContent = RISK_LABEL[risk] || risk;
+  riskEl.textContent = t("risk_" + risk);
   riskEl.classList.add(RISK_CLASS[risk] || "badge-low");
 
   const outcome = (ev.decision && (ev.decision.resolved_verdict || ev.decision.verdict)) || "allow";
@@ -237,6 +371,9 @@ function renderRow(ev) {
   return row;
 }
 
+const RISK_CLASS = { low: "badge-low", medium: "badge-medium", high: "badge-high", critical: "badge-critical" };
+const DECISION_CLASS = { allow: "badge-allow", deny: "badge-deny", prompt: "badge-prompt" };
+
 function setActiveRow(row) {
   for (const r of row.parentElement.children) r.setAttribute("tabindex", r === row ? "0" : "-1");
 }
@@ -264,25 +401,25 @@ function renderDetail(ev, triggerEl) {
   detailTrigger = triggerEl || document.activeElement;
   const dl = document.getElementById("detail-fields");
   dl.textContent = "";
-  addDetailField(dl, "Event ID", ev.event_id);
-  addDetailField(dl, "Time", fmtTime(ev.timestamp));
-  addDetailField(dl, "Session", ev.session_id);
-  addDetailField(dl, "Actor", ev.actor);
-  if (ev.identity) addDetailField(dl, "Identity", ev.identity);
-  addDetailField(dl, "Channel", ev.channel);
-  addDetailField(dl, "Action type", ev.action_type);
-  addDetailField(dl, "Target", ev.target);
-  addDetailField(dl, "Raw", ev.raw);
+  addDetailField(dl, t("detail_event_id"), ev.event_id);
+  addDetailField(dl, t("detail_time"), fmtTime(ev.timestamp));
+  addDetailField(dl, t("detail_session"), ev.session_id);
+  addDetailField(dl, t("detail_actor"), ev.actor);
+  if (ev.identity) addDetailField(dl, t("detail_identity"), ev.identity);
+  addDetailField(dl, t("detail_channel"), ev.channel);
+  addDetailField(dl, t("detail_action_type"), ev.action_type);
+  addDetailField(dl, t("detail_target"), ev.target);
+  addDetailField(dl, t("detail_raw"), ev.raw);
   if (ev.parsed_args && Object.keys(ev.parsed_args).length) {
-    addDetailField(dl, "Parsed args", JSON.stringify(ev.parsed_args, null, 2));
+    addDetailField(dl, t("detail_parsed_args"), JSON.stringify(ev.parsed_args, null, 2));
   }
-  addDetailField(dl, "Risk", ev.risk_level);
+  addDetailField(dl, t("detail_risk"), ev.risk_level);
   const d = ev.decision || {};
-  addDetailField(dl, "Verdict", d.verdict || "");
-  if (d.resolved_verdict) addDetailField(dl, "Resolved verdict", d.verdict + " → " + d.resolved_verdict);
-  if (d.policy_id) addDetailField(dl, "Policy ID", d.policy_id);
-  if (d.reason) addDetailField(dl, "Reason", d.reason);
-  if (d.degraded) addDetailField(dl, "Degraded", "true — this decision was made under an internal failure, not a real policy match");
+  addDetailField(dl, t("detail_verdict"), d.verdict || "");
+  if (d.resolved_verdict) addDetailField(dl, t("detail_resolved_verdict"), d.verdict + " → " + d.resolved_verdict);
+  if (d.policy_id) addDetailField(dl, t("detail_policy_id"), d.policy_id);
+  if (d.reason) addDetailField(dl, t("detail_reason"), d.reason);
+  if (d.degraded) addDetailField(dl, t("detail_degraded_note"), "");
   document.getElementById("detail-drawer").classList.remove("hidden");
   document.getElementById("detail-close").focus();
 }
@@ -295,6 +432,93 @@ function closeDetail() {
 document.getElementById("detail-close").addEventListener("click", closeDetail);
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !document.getElementById("detail-drawer").classList.contains("hidden")) closeDetail();
+  if (e.key === "Escape" && !document.getElementById("policy-modal").classList.contains("hidden")) closePolicyModal();
+});
+
+// --- Policy explainer modal ---
+// cachedRules holds /api/policy's response after the first successful
+// fetch — the rule list only changes if the operator hand-edits their
+// policy.yaml while the dashboard is open, which a page reload already
+// covers; refetching on every open would just be a wasted round trip for
+// static-for-the-session content.
+let cachedRules = null;
+let policyModalTrigger = null;
+const RISK_ORDER = ["critical", "high", "medium", "low"];
+
+async function openPolicyModal() {
+  policyModalTrigger = document.activeElement;
+  const modal = document.getElementById("policy-modal");
+  modal.classList.remove("hidden");
+  document.getElementById("policy-modal-close").focus();
+  if (cachedRules) { renderPolicyModal(cachedRules); return; }
+  const body = document.getElementById("policy-modal-body");
+  body.textContent = "";
+  const loading = document.createElement("div");
+  loading.className = "text-slate-500 text-xs";
+  loading.textContent = t("policy_loading");
+  body.appendChild(loading);
+  try {
+    const res = await fetch("/api/policy");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    cachedRules = await res.json();
+    renderPolicyModal(cachedRules);
+  } catch (e) {
+    body.textContent = "";
+    const err = document.createElement("div");
+    err.className = "text-red-400 text-xs";
+    err.textContent = t("policy_error");
+    body.appendChild(err);
+  }
+}
+
+function closePolicyModal() {
+  document.getElementById("policy-modal").classList.add("hidden");
+  if (policyModalTrigger) { policyModalTrigger.focus(); policyModalTrigger = null; }
+}
+
+// renderPolicyModal groups rules by risk tier (critical first — the
+// operator opening this wants to see the highest-stakes protections
+// first, mirroring the risk ordering everywhere else in this dashboard)
+// and shows each rule's real id (the same identifier that appears in
+// `damping log`/the Rule filter above) alongside its canonical
+// description and default action.
+function renderPolicyModal(rules) {
+  const body = document.getElementById("policy-modal-body");
+  body.textContent = "";
+  for (const tier of RISK_ORDER) {
+    const inTier = rules.filter((r) => r.risk === tier);
+    if (inTier.length === 0) continue;
+    const heading = document.createElement("h3");
+    heading.className = "rule-group-title rule-group-" + tier;
+    heading.textContent = t("risk_" + tier) + " (" + inTier.length + ")";
+    body.appendChild(heading);
+    for (const r of inTier) {
+      const row = document.createElement("div");
+      row.className = "rule-row";
+      const head = document.createElement("div");
+      head.className = "rule-row-head";
+      const id = document.createElement("code");
+      id.className = "rule-id";
+      id.textContent = r.id;
+      const action = document.createElement("span");
+      action.className = "badge " + (DECISION_CLASS[r.action] || "badge-allow");
+      action.textContent = t("outcome_" + r.action) || r.action;
+      head.appendChild(id);
+      head.appendChild(action);
+      const desc = document.createElement("p");
+      desc.className = "rule-desc";
+      desc.textContent = r.description;
+      row.appendChild(head);
+      row.appendChild(desc);
+      body.appendChild(row);
+    }
+  }
+}
+
+document.getElementById("summary-policy-btn").addEventListener("click", openPolicyModal);
+document.getElementById("policy-modal-close").addEventListener("click", closePolicyModal);
+document.getElementById("policy-modal").addEventListener("click", (e) => {
+  if (e.target.id === "policy-modal") closePolicyModal(); // click on the backdrop itself, not the panel
 });
 
 let currentEvents = [];
@@ -305,8 +529,9 @@ function renderEvents(events) {
   const state = document.getElementById("events-state");
   body.textContent = "";
   if (events.length === 0) {
-    state.textContent = "No activity yet — nothing to dampen.";
+    state.textContent = t("no_activity");
     state.classList.remove("hidden");
+    document.getElementById("load-older-btn").classList.add("hidden");
     return;
   }
   state.classList.add("hidden");
@@ -314,6 +539,7 @@ function renderEvents(events) {
   for (let i = events.length - 1; i >= 0; i--) body.appendChild(renderRow(events[i]));
   // Exactly one row starts as the roving Tab stop — see setActiveRow.
   if (body.firstElementChild) body.firstElementChild.setAttribute("tabindex", "0");
+  updateLoadOlderButton();
 }
 
 function prependEvent(ev) {
@@ -321,6 +547,10 @@ function prependEvent(ev) {
   if (f.get("channel") && ev.channel !== f.get("channel")) return;
   if (f.get("risk") && ev.risk_level !== f.get("risk")) return;
   if (f.get("actor") && ev.actor !== f.get("actor")) return;
+  if (f.get("keyword")) {
+    const kw = f.get("keyword").toLowerCase();
+    if (!(ev.target || "").toLowerCase().includes(kw) && !(ev.raw || "").toLowerCase().includes(kw)) return;
+  }
   currentEvents.push(ev);
   const body = document.getElementById("events-body");
   document.getElementById("events-state").classList.add("hidden");
@@ -332,6 +562,65 @@ function prependEvent(ev) {
   // table was empty before (nothing to steal focus from yet).
   if (wasEmpty) row.setAttribute("tabindex", "0");
 }
+
+// --- "Load older" pagination ---
+// The initial /api/events fetch (loadEvents, below) is always the most
+// recent page — the one view every prior version of this dashboard had,
+// capped at defaultEventsLimit with no way to see anything older short of
+// narrowing Since. loadOlderEvents extends that same page backward: it
+// fetches strictly-older events using the oldest currently-loaded event's
+// own Timestamp as an exclusive cursor (core/audit.Filter.Before), then
+// prepends them into currentEvents (they're older, so they belong before
+// the existing ascending-chronological array) and appends their rows to
+// the BOTTOM of the visible table (which renders most-recent-first
+// top-to-bottom, so "older" always belongs at the bottom).
+let loadingOlder = false;
+
+function updateLoadOlderButton() {
+  const btn = document.getElementById("load-older-btn");
+  if (currentEvents.length === 0) { btn.classList.add("hidden"); return; }
+  btn.classList.remove("hidden");
+  btn.disabled = loadingOlder;
+  btn.textContent = loadingOlder ? t("loading_older") : t("load_older");
+}
+
+async function loadOlderEvents() {
+  if (loadingOlder || currentEvents.length === 0) return;
+  loadingOlder = true;
+  updateLoadOlderButton();
+  try {
+    const params = currentFilterParams();
+    params.set("before", currentEvents[0].timestamp);
+    const res = await fetch("/api/events?" + params.toString());
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const older = await res.json();
+    if (older.length === 0) {
+      loadingOlder = false;
+      const btn = document.getElementById("load-older-btn");
+      btn.disabled = true;
+      btn.textContent = t("no_more_events");
+      return;
+    }
+    const body = document.getElementById("events-body");
+    // older is ascending (oldest..newest of the new page); appending them
+    // to the bottom of a most-recent-first table means the NEWEST of this
+    // older batch must land first (right after the existing rows), so
+    // iterate descending.
+    for (let i = older.length - 1; i >= 0; i--) body.appendChild(renderRow(older[i]));
+    currentEvents = older.concat(currentEvents);
+  } catch (e) {
+    // Leave the button re-enabled so the operator can just try again —
+    // this is the same "Retry" instinct the main events-load error state
+    // already offers, just without a dedicated inline message here since
+    // the existing rows are still valid and shouldn't be replaced by an
+    // error state.
+  } finally {
+    loadingOlder = false;
+    updateLoadOlderButton();
+  }
+}
+
+document.getElementById("load-older-btn").addEventListener("click", loadOlderEvents);
 
 async function loadSummary() {
   const el = {
@@ -346,10 +635,10 @@ async function loadSummary() {
     const s = await res.json();
     el.enabled.textContent = s.enabled ? "ON" : "OFF";
     el.enabled.className = "summary-value " + (s.enabled ? "text-teal-400" : "text-slate-500");
-    el.policy.textContent = s.policy_error ? "invalid" : s.rule_count + " rules";
+    el.policy.textContent = s.policy_error ? t("policy_invalid") : s.rule_count + t("rules_suffix");
     el.policy.className = "summary-value " + (s.policy_error ? "text-red-400" : "");
     el.policy.title = s.policy_error || s.policy_path;
-    el.agents.textContent = (s.agents && s.agents.length) ? s.agents.join(", ") : "none registered";
+    el.agents.textContent = (s.agents && s.agents.length) ? s.agents.join(", ") : t("agents_none");
     el.degraded.textContent = s.degraded_error ? "?" : String(s.degraded_count_7d);
     el.degraded.className = "summary-value " + (s.degraded_error ? "text-red-400" : "");
     el.degraded.title = s.degraded_error || "";
@@ -368,7 +657,7 @@ async function loadSessions() {
     if (!sessions || sessions.length === 0) {
       const empty = document.createElement("div");
       empty.className = "text-slate-600 text-xs";
-      empty.textContent = "No sessions yet.";
+      empty.textContent = t("no_sessions");
       list.appendChild(empty);
       return;
     }
@@ -377,7 +666,7 @@ async function loadSessions() {
       const card = tpl.content.firstElementChild.cloneNode(true);
       card.querySelector('[data-field="actor"]').textContent = sess.actor + " · " + sess.session_id;
       const badge = card.querySelector('[data-field="settled"]');
-      badge.textContent = sess.settled ? "settled" : "active";
+      badge.textContent = sess.settled ? t("settled") : t("active");
       badge.classList.add(sess.settled ? "badge-allow" : "badge-high");
       DampingCharts.sparkline(card.querySelector('[data-field="sparkline"]'), sess.points || []);
       list.appendChild(card);
@@ -386,15 +675,16 @@ async function loadSessions() {
     list.textContent = "";
     const err = document.createElement("div");
     err.className = "text-red-400 text-xs";
-    err.textContent = "Couldn't load sessions.";
+    err.textContent = t("sessions_error");
     list.appendChild(err);
   }
 }
 
 async function loadEvents() {
   const state = document.getElementById("events-state");
-  state.textContent = "Loading…";
+  state.textContent = t("loading");
   state.classList.remove("hidden");
+  document.getElementById("load-older-btn").classList.add("hidden");
   try {
     const res = await fetch("/api/events?" + currentFilterParams().toString());
     if (!res.ok) throw new Error("HTTP " + res.status);
@@ -403,9 +693,9 @@ async function loadEvents() {
   } catch (e) {
     document.getElementById("events-body").textContent = "";
     document.getElementById("truncated-note").classList.add("hidden"); // a stale note from a previous successful load shouldn't linger through an error state — found in review
-    state.textContent = "Couldn't load the audit log. ";
+    state.textContent = t("events_error");
     const retry = document.createElement("button");
-    retry.textContent = "Retry";
+    retry.textContent = t("retry");
     retry.className = "underline text-teal-400 ml-1";
     retry.onclick = loadEvents;
     state.appendChild(retry);
@@ -426,7 +716,7 @@ async function loadStats() {
       rules.textContent = "";
       const empty = document.createElement("div");
       empty.className = "text-slate-600 text-xs";
-      empty.textContent = "No rule matches in this period.";
+      empty.textContent = t("no_rule_matches");
       rules.appendChild(empty);
     } else {
       DampingCharts.barChart(rules, items);
@@ -436,7 +726,7 @@ async function loadStats() {
     rules.textContent = "";
     const err = document.createElement("div");
     err.className = "text-red-400 text-xs";
-    err.textContent = "Couldn't load statistics.";
+    err.textContent = t("stats_error");
     rules.appendChild(err);
   }
 }
@@ -465,13 +755,32 @@ function scheduleLiveDerivedRefresh() {
 }
 
 let stream = null;
+// streamState tracks the connection state independently of the DOM text
+// currently shown — onopen/onerror only fire on an actual state *change*,
+// so a language toggle while the connection sits steady (the common case)
+// would otherwise leave #stream-status showing whichever language was
+// active the last time the connection actually opened or dropped. setLang
+// re-applies the label from this variable instead of leaving it untouched.
+let streamState = null; // null | "live" | "reconnecting"
+
+function applyStreamStatus() {
+  const statusEl = document.getElementById("stream-status");
+  if (streamState === "live") {
+    statusEl.textContent = t("stream_live");
+    statusEl.className = "text-xs text-teal-400";
+  } else if (streamState === "reconnecting") {
+    statusEl.textContent = t("stream_reconnecting");
+    statusEl.className = "text-xs text-amber-400";
+  } else {
+    statusEl.textContent = "";
+  }
+}
 
 function startStream() {
   if (stream) stream.close();
-  const statusEl = document.getElementById("stream-status");
   stream = new EventSource("/api/events/stream?" + currentFilterParams().toString());
-  stream.onopen = () => { statusEl.textContent = "● live"; statusEl.className = "text-xs text-teal-400"; };
-  stream.onerror = () => { statusEl.textContent = "○ reconnecting…"; statusEl.className = "text-xs text-amber-400"; };
+  stream.onopen = () => { streamState = "live"; applyStreamStatus(); };
+  stream.onerror = () => { streamState = "reconnecting"; applyStreamStatus(); };
   stream.onmessage = (e) => {
     try {
       prependEvent(JSON.parse(e.data));
@@ -482,14 +791,15 @@ function startStream() {
 
 function stopStream() {
   if (stream) { stream.close(); stream = null; }
-  document.getElementById("stream-status").textContent = "";
+  streamState = null;
+  applyStreamStatus();
 }
 
-// Debounced so typing in the Actor field doesn't fire a fetch and tear
-// down/reopen the SSE connection on every keystroke — a review flagged the
-// undebounced version as wasteful (not incorrect: each old connection did
-// close cleanly before the next opened), but an 11-character name meant 11
-// fetches and 11 SSE reconnects for one intended filter change.
+// Debounced so typing in the Actor/Keyword fields doesn't fire a fetch and
+// tear down/reopen the SSE connection on every keystroke — a review flagged
+// the undebounced version as wasteful (not incorrect: each old connection
+// did close cleanly before the next opened), but an 11-character name meant
+// 11 fetches and 11 SSE reconnects for one intended filter change.
 let filterDebounce = null;
 document.getElementById("filter-form").addEventListener("input", () => {
   clearTimeout(filterDebounce);
@@ -507,6 +817,7 @@ document.getElementById("since-select").addEventListener("change", (e) => {
   document.querySelectorAll(".custom-range-field").forEach(el => el.classList.toggle("hidden", !isCustom));
 });
 
+applyStaticI18n();
 loadSummary();
 loadSessions();
 loadEvents();

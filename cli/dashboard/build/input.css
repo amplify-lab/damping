@@ -42,4 +42,50 @@
   .bar-track { @apply flex-1 h-3 rounded bg-slate-800 overflow-hidden; }
   .bar-fill { @apply h-full rounded bg-teal-500; }
   .bar-count { @apply text-slate-400 w-8 text-right shrink-0; }
+
+  /* summary-card-button: the same visual card as summary-card, but an
+     actual <button> (Policy) that opens the rule-explainer modal — needs
+     its own hover/focus affordance so it reads as clickable, unlike the
+     other three plain-info cards it sits beside. Written out fully rather
+     than @apply-ing summary-card itself, since @apply resolving a
+     same-layer custom class (as opposed to a raw utility) isn't a
+     dependency Tailwind v4's CSS-only config guarantees an order for. */
+  .summary-card-button { @apply rounded border border-slate-800 bg-slate-900/50 p-3 text-left w-full cursor-pointer hover:border-slate-700 hover:bg-slate-900/80 focus:outline-none focus:ring-1 focus:ring-teal-500 transition-colors; }
+
+  .load-older-btn { @apply w-full py-2 text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-900/40 border-t border-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors; }
+
+  /* lang-toggle: two-state EN/中文 switch in the header, styled as a small
+     segmented control rather than a dropdown — only two options exist and a
+     visible pair of buttons makes the current choice legible at a glance. */
+  .lang-toggle { @apply flex text-xs rounded border border-slate-800 overflow-hidden ml-auto; }
+  .lang-toggle button { @apply px-2 py-1 text-slate-500 hover:text-slate-300 transition-colors; }
+  .lang-toggle button[aria-pressed="true"] { @apply bg-slate-800 text-slate-200; }
+
+  /* modal-overlay/modal-panel: a centered dialog (distinct from
+     detail-drawer's right-side slide-out, which suits one event's fixed
+     field list) — the policy explainer's content is a scrollable list of
+     up to dozens of rules, better served by a wide, tall centered panel. */
+  .modal-overlay { @apply fixed inset-0 bg-slate-950/70 flex items-start sm:items-center justify-center p-4 z-20 overflow-y-auto; }
+  .modal-panel { @apply bg-slate-900 border border-slate-800 rounded max-w-2xl w-full my-8 sm:my-0 max-h-[85vh] flex flex-col; }
+  .modal-header { @apply flex justify-between items-center px-4 py-3 border-b border-slate-800 shrink-0; }
+  .modal-body { @apply p-4 overflow-y-auto flex flex-col gap-4; }
+
+  .rule-group-title { @apply text-xs uppercase tracking-wide font-medium mt-2 first:mt-0; }
+  /* rule-group-{tier}: the policy modal picks one of these by string-
+     concatenating "rule-group-" + tier in JS (renderPolicyModal), which is
+     why this exists as our own named class rather than a raw Tailwind
+     color utility built the same way — Tailwind's scanner can only emit
+     CSS for utility class names it finds as complete literal tokens in a
+     scanned source file, and a dynamically-concatenated string like
+     "text-" + "red" + "-300" is invisible to it. Colors mirror the
+     existing badge-{tier} scale one-for-one (critical=red, high=amber,
+     medium=yellow, low=teal). */
+  .rule-group-critical { @apply text-red-300; }
+  .rule-group-high { @apply text-amber-300; }
+  .rule-group-medium { @apply text-yellow-300; }
+  .rule-group-low { @apply text-teal-300; }
+  .rule-row { @apply flex flex-col gap-1 py-2 border-b border-slate-900 last:border-0; }
+  .rule-row-head { @apply flex items-center gap-2 flex-wrap; }
+  .rule-id { @apply font-mono text-xs text-slate-300; }
+  .rule-desc { @apply text-xs text-slate-400 leading-relaxed; }
 }

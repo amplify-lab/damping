@@ -359,6 +359,81 @@ func TestFilter_Matches_ActionType(t *testing.T) {
 	}
 }
 
+func TestFilter_Matches_Before(t *testing.T) {
+	now := time.Now()
+	e := sampleEvent(event.ChannelCLI, event.RiskLow, decision.Allow)
+	e.Timestamp = now
+
+	if !(Filter{Before: now.Add(time.Minute)}).Matches(e) {
+		t.Error("expected an event strictly before Before to match")
+	}
+	// Deliberately exclusive, unlike Until: an event exactly AT the cursor
+	// must not match, or a "load older" fetch using the oldest already-shown
+	// event's own Timestamp as its cursor would re-fetch that same event.
+	if (Filter{Before: now}).Matches(e) {
+		t.Error("expected an event exactly at Before not to match (exclusive, unlike Until)")
+	}
+	if (Filter{Before: now.Add(-time.Minute)}).Matches(e) {
+		t.Error("expected an event after Before not to match")
+	}
+}
+
+func TestFilter_Matches_Keyword(t *testing.T) {
+	e := sampleEvent(event.ChannelCLI, event.RiskCritical, decision.Deny)
+	e.Target = "~/.claude"
+	e.Raw = "cd ~/projects/fangchan-xiuwei-v3 && rm -rf ~/.claude"
+
+	cases := []struct {
+		name string
+		kw   string
+		want bool
+	}{
+		{"matches Target", "claude", true},
+		{"matches Raw only", "fangchan", true},
+		{"case-insensitive", "FANGCHAN", true},
+		{"no match", "nonexistent-project", false},
+		{"empty keyword matches everything (no-op filter)", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := (Filter{Keyword: tc.kw}).Matches(e); got != tc.want {
+				t.Errorf("Filter{Keyword: %q}.Matches(e) = %v, want %v", tc.kw, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseFilter_PassesThroughKeyword(t *testing.T) {
+	f, err := ParseFilter(FilterQuery{Keyword: "fangchan"})
+	if err != nil {
+		t.Fatalf("ParseFilter: %v", err)
+	}
+	if f.Keyword != "fangchan" {
+		t.Errorf("expected Keyword %q, got %q", "fangchan", f.Keyword)
+	}
+}
+
+func TestParseFilter_AcceptsAbsoluteRFC3339ForBefore(t *testing.T) {
+	// A dashboard "load older" cursor is always an absolute timestamp (the
+	// oldest already-shown event's own Timestamp), never a relative
+	// duration — this pins that the RFC3339 branch of parseTimeBound is
+	// exercised for Before specifically, not just Since/Until.
+	ts := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	f, err := ParseFilter(FilterQuery{Before: ts.Format(time.RFC3339)})
+	if err != nil {
+		t.Fatalf("ParseFilter: %v", err)
+	}
+	if !f.Before.Equal(ts) {
+		t.Errorf("expected Before %v, got %v", ts, f.Before)
+	}
+}
+
+func TestParseFilter_InvalidBeforeErrors(t *testing.T) {
+	if _, err := ParseFilter(FilterQuery{Before: "not-a-time"}); err == nil {
+		t.Error("expected an error for an invalid Before value")
+	}
+}
+
 func TestLimitMostRecent_KeepsLastN(t *testing.T) {
 	events := make([]event.ActionEvent, 5)
 	for i := range events {

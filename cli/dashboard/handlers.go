@@ -81,6 +81,8 @@ func parseFilterQuery(r *http.Request) (audit.Filter, error) {
 		Until:      q.Get("until"),
 		PolicyID:   q.Get("policy_id"),
 		ActionType: q.Get("action_type"),
+		Keyword:    q.Get("keyword"),
+		Before:     q.Get("before"),
 	})
 }
 
@@ -200,6 +202,27 @@ func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "event: error\ndata: %s\n\n", msg) // #nosec G705 -- msg is Follow's own internal error text (file I/O/JSON-marshal failures), never attacker-supplied, and is never rendered as HTML by this dashboard's client-side JS (see index.html)
 		flusher.Flush()
 	}
+}
+
+// handlePolicy serves the active policy's rule list — id/description/risk/
+// action per rule, straight off policy.Config.Rules (core/policy/config.go's
+// RuleConfig now carries json tags for exactly this) — for the dashboard's
+// "what does this actually protect against" explainer, opened from the
+// summary strip's rule-count card. A separate endpoint from /api/summary
+// (which only needs the *count*) since the full rule list is a distinct,
+// larger payload only the explainer view needs to fetch, and only once —
+// the client caches it rather than refetching on every open.
+func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
+	cfg, err := policy.LoadConfig(s.cfg.PolicyPath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("loading policy: %v", err), http.StatusInternalServerError)
+		return
+	}
+	rules := cfg.Rules
+	if rules == nil {
+		rules = []policy.RuleConfig{} // never render as JSON null
+	}
+	writeJSON(w, rules)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

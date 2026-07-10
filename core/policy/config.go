@@ -53,11 +53,14 @@ const (
 )
 
 // RuleConfig describes one policy rule's identity and default disposition.
+// JSON tags exist so the local dashboard's /api/policy endpoint can
+// marshal a Config's Rules directly — see cli/dashboard/handlers.go's
+// handlePolicy — without a second, parallel struct to keep in sync.
 type RuleConfig struct {
-	ID          string           `yaml:"id"`
-	Description string           `yaml:"description"`
-	Risk        event.RiskLevel  `yaml:"risk"`
-	Action      decision.Verdict `yaml:"action"`
+	ID          string           `yaml:"id" json:"id"`
+	Description string           `yaml:"description" json:"description"`
+	Risk        event.RiskLevel  `yaml:"risk" json:"risk"`
+	Action      decision.Verdict `yaml:"action" json:"action"`
 }
 
 // LoadConfig reads and parses a policy YAML file from disk.

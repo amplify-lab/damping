@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -138,6 +139,22 @@ type Filter struct {
 	Outcome    string // matches event.Verdict values, or "degraded"
 	PolicyID   string
 	ActionType event.ActionType
+
+	// Keyword, if non-empty, requires a case-insensitive substring match
+	// against Target or Raw — the free-text search a fixed-field filter
+	// like Actor/PolicyID can't answer ("show me anything mentioning
+	// fangchan-xiuwei"). Unlike every other field above, this one has no
+	// exact-match reading at all; it exists specifically to search content,
+	// not identity.
+	Keyword string
+
+	// Before, if non-zero, requires a STRICTLY earlier Timestamp — deliberately
+	// exclusive, unlike Until's inclusive "at or before" semantics, so a
+	// dashboard "load older" cursor built from the oldest already-shown
+	// event's own Timestamp never re-fetches that same event as a duplicate.
+	// Since/Until answer "what happened in this time range"; Before answers
+	// "what's older than what I've already got."
+	Before time.Time
 }
 
 // Matches reports whether e satisfies every non-zero field of f.
@@ -163,6 +180,12 @@ func (f Filter) Matches(e event.ActionEvent) bool {
 	if f.ActionType != "" && e.ActionType != f.ActionType {
 		return false
 	}
+	if !f.Before.IsZero() && !e.Timestamp.Before(f.Before) {
+		return false
+	}
+	if f.Keyword != "" && !keywordMatches(f.Keyword, e) {
+		return false
+	}
 	if f.Outcome != "" {
 		if f.Outcome == "degraded" {
 			if !e.Decision.Degraded {
@@ -173,6 +196,16 @@ func (f Filter) Matches(e event.ActionEvent) bool {
 		}
 	}
 	return true
+}
+
+// keywordMatches reports whether kw occurs, case-insensitively, in e.Target
+// or e.Raw — Target is usually the more useful match (a short path/command
+// name), but Raw carries the full command line/tool-call payload, so a
+// search for a substring that only appears deep in a long shell script
+// (e.g. a project path buried inside a multi-line heredoc) still finds it.
+func keywordMatches(kw string, e event.ActionEvent) bool {
+	kw = strings.ToLower(kw)
+	return strings.Contains(strings.ToLower(e.Target), kw) || strings.Contains(strings.ToLower(e.Raw), kw)
 }
 
 // FilterQuery is the raw string form of a Filter, as it arrives from CLI
@@ -190,6 +223,8 @@ type FilterQuery struct {
 	Until      string // same vocabulary as Since
 	PolicyID   string
 	ActionType string
+	Keyword    string
+	Before     string // same vocabulary as Since/Until; in practice always an absolute timestamp — a "load older" cursor is built from an already-seen event's own Timestamp, never a relative duration
 }
 
 // ParseFilter builds a Filter from the same string vocabulary every surface
@@ -212,6 +247,7 @@ func ParseFilter(q FilterQuery) (Filter, error) {
 		Outcome:    q.Outcome,
 		PolicyID:   q.PolicyID,
 		ActionType: event.ActionType(q.ActionType),
+		Keyword:    q.Keyword,
 	}
 	if q.Since != "" {
 		t, err := parseTimeBound(q.Since)
@@ -226,6 +262,13 @@ func ParseFilter(q FilterQuery) (Filter, error) {
 			return Filter{}, fmt.Errorf("until: %w", err)
 		}
 		f.Until = t
+	}
+	if q.Before != "" {
+		t, err := parseTimeBound(q.Before)
+		if err != nil {
+			return Filter{}, fmt.Errorf("before: %w", err)
+		}
+		f.Before = t
 	}
 	return f, nil
 }
