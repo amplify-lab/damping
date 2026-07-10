@@ -71,7 +71,7 @@ damping log --follow               # 像 tail -f 一樣即時盯著看
 damping dashboard                  # 預設綁在 127.0.0.1:4243
 ```
 
-<img src="docs/assets/dashboard-demo.png" alt="damping dashboard showing a filterable event table with per-session risk sparklines, mixing CLI and MCP channel events across all four risk tiers" width="700">
+<img src="docs/assets/dashboard-demo-zh-tw.png" alt="damping 儀表板的繁體中文介面，顯示可篩選的事件表格、每個 session 的風險走勢圖，混合了 CLI 與 MCP 兩種管道、涵蓋全部四個風險等級的事件" width="700">
 
 *（這張是拿灌了測試資料的本機紀錄實際跑出來的畫面，不是示意圖。兩種管道、四種風險等級、allow/deny/prompt 三種結果、兩個不同 agent 全部混在一起——這正是重點：一張表就搞定，不用每個工具各自開一個。）*
 
