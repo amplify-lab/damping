@@ -39,17 +39,36 @@ func Analyze(raw string) ([]policy.Facts, error) {
 		return nil, fmt.Errorf("shell: parsing: %w", err)
 	}
 	var out []policy.Facts
-	walkStmts(file.Stmts, raw, &out)
+	walkStmts(file.Stmts, raw, &out, 0)
 	return out, nil
 }
 
-func walkStmts(stmts []*syntax.Stmt, raw string, out *[]policy.Facts) {
+// maxReinterpretDepth bounds how many times Analyze will re-parse a string
+// that some already-parsed command would itself execute as shell (a heredoc
+// body fed to `sh`, an `sh -c` script, an `eval` argument). Each such string
+// is strictly shorter than the text it came from, so the recursion always
+// terminates on its own — but only after a depth proportional to the input
+// length, and Analyze runs on fully untrusted, adversarially-crafted input by
+// design (see FuzzAnalyze's doc comment, and docs/threat-model.md §3). A
+// deeply nested `sh -c "sh -c \"sh -c ...\""` payload would otherwise be able
+// to exhaust the goroutine stack and panic the `damping hook` subprocess.
+// Depth 8 is far beyond any real script's nesting and cheap to enforce.
+const maxReinterpretDepth = 8
+
+func walkStmts(stmts []*syntax.Stmt, raw string, out *[]policy.Facts, depth int) {
 	for _, s := range stmts {
-		collectRedirectWrites(s, raw, out)
-		collectRedirectSubstitutions(s, raw, out)
-		if s.Cmd != nil {
-			walkCmd(s.Cmd, raw, out)
-		}
+		walkStmt(s, raw, out, depth)
+	}
+}
+
+func walkStmt(s *syntax.Stmt, raw string, out *[]policy.Facts, depth int) {
+	if s == nil {
+		return
+	}
+	collectRedirectWrites(s, raw, out)
+	collectRedirectSubstitutions(s, raw, out, depth)
+	if s.Cmd != nil {
+		walkCmd(s.Cmd, raw, out, depth)
 	}
 }
 
@@ -103,62 +122,135 @@ var shellReinterpretCommands = map[string]bool{
 // interpreter, the whole heredoc body is re-parsed and walked as its own
 // script — see features/dangerous_command.feature, "destructive command
 // hidden inside a heredoc fed to a shell interpreter".
-func collectRedirectSubstitutions(s *syntax.Stmt, raw string, out *[]policy.Facts) {
+func collectRedirectSubstitutions(s *syntax.Stmt, raw string, out *[]policy.Facts, depth int) {
 	var cmdName string
 	if c, ok := s.Cmd.(*syntax.CallExpr); ok && len(c.Args) > 0 {
-		cmdName, _ = staticWordValue(c.Args[0])
+		// The receiving command is resolved through the same wrapper
+		// unwrapping everything else uses, so "sudo bash <<EOF" reinterprets
+		// its heredoc body exactly as a bare "bash <<EOF" already did.
+		if words := unwrapCommandPrefixes(literalArgs(c.Args)); len(words) > 0 {
+			cmdName = words[0]
+		}
 	}
 	for _, r := range s.Redirs {
 		if r.Word != nil {
-			walkWordSubstitutions(r.Word, raw, out)
+			walkWordSubstitutions(r.Word, raw, out, depth)
 		}
 		if r.Hdoc == nil {
 			continue
 		}
-		walkWordSubstitutions(r.Hdoc, raw, out)
+		walkWordSubstitutions(r.Hdoc, raw, out, depth)
 		if !shellReinterpretCommands[cmdName] {
 			continue
 		}
 		body, ok := staticWordValue(r.Hdoc)
-		if !ok || strings.TrimSpace(body) == "" {
+		if !ok {
 			continue
 		}
-		parser := syntax.NewParser(syntax.KeepComments(true))
-		file, err := parser.Parse(strings.NewReader(body), "")
-		if err != nil {
-			continue
-		}
-		walkStmts(file.Stmts, raw, out)
+		reinterpretScript(body, raw, out, depth)
 	}
+}
+
+// reinterpretScript re-parses a string that the surrounding command will
+// itself execute as shell — a heredoc body fed to an interpreter, an
+// `sh -c` script, an `eval` argument — and walks it as its own script, so a
+// destructive command inside it is caught by the ordinary rules rather than
+// hidden inside one opaque string literal. Depth-bounded; see
+// maxReinterpretDepth.
+func reinterpretScript(script, raw string, out *[]policy.Facts, depth int) {
+	if depth >= maxReinterpretDepth || strings.TrimSpace(script) == "" {
+		return
+	}
+	parser := syntax.NewParser(syntax.KeepComments(true))
+	file, err := parser.Parse(strings.NewReader(script), "")
+	if err != nil {
+		return
+	}
+	walkStmts(file.Stmts, raw, out, depth+1)
+}
+
+// embeddedShellScripts returns the argument strings an already-unwrapped
+// command will execute as shell code in its own right: an interpreter's
+// `-c` script (`bash -c "rm -rf ~/"`, including clustered spellings like
+// `bash -lc`) and everything `eval` is handed (`eval "rm -rf ~/"`, and the
+// unquoted `eval rm -rf ~/`, whose words the shell re-joins before parsing).
+//
+// Before this existed, cli/shell re-parsed only heredoc bodies, so wrapping
+// any command in `sh -c '...'` — the single most obvious way to hide one —
+// presented Facts.Command as "sh" with the whole payload as one inert string
+// argument, and every rule in core/policy silently no-opped. Found by an
+// adversarial review of the 2026-07 agent-asset expansion.
+func embeddedShellScripts(words []string) []string {
+	if len(words) < 2 {
+		return nil
+	}
+	if words[0] == "eval" {
+		// eval concatenates its arguments with a space and executes the
+		// result. An unresolvable argument makes the whole script unknowable,
+		// so nothing is reinterpreted (the command still reaches the rules as
+		// an ordinary "eval" call).
+		for _, a := range words[1:] {
+			if a == "" {
+				return nil
+			}
+		}
+		return []string{strings.Join(words[1:], " ")}
+	}
+	if !shellReinterpretCommands[words[0]] {
+		return nil
+	}
+	for i, a := range words[1:] {
+		if !isDashCFlag(a) {
+			continue
+		}
+		script := words[1:][i+1:]
+		if len(script) == 0 || script[0] == "" {
+			return nil
+		}
+		// Only the first operand is the script; anything after it becomes
+		// $0/$1... for the script, not more code.
+		return []string{script[0]}
+	}
+	return nil
+}
+
+// isDashCFlag reports whether a word is an interpreter's -c flag, either on
+// its own or inside a short-option cluster ("-lc", "-ec"). A long option
+// ("--norc") never carries -c's meaning.
+func isDashCFlag(a string) bool {
+	if len(a) < 2 || a[0] != '-' || a[1] == '-' {
+		return false
+	}
+	return strings.ContainsRune(a[1:], 'c')
 }
 
 // walkWordSubstitutions descends into a word looking for embedded command or
 // process substitution — no matter where the word appears (argument,
 // assignment value, redirect target) — and walks the embedded statements as
 // if they were their own top-level script.
-func walkWordSubstitutions(w *syntax.Word, raw string, out *[]policy.Facts) {
+func walkWordSubstitutions(w *syntax.Word, raw string, out *[]policy.Facts, depth int) {
 	if w == nil {
 		return
 	}
 	for _, part := range w.Parts {
-		walkPartSubstitutions(part, raw, out)
+		walkPartSubstitutions(part, raw, out, depth)
 	}
 }
 
-func walkPartSubstitutions(part syntax.WordPart, raw string, out *[]policy.Facts) {
+func walkPartSubstitutions(part syntax.WordPart, raw string, out *[]policy.Facts, depth int) {
 	switch p := part.(type) {
 	case *syntax.CmdSubst:
-		walkStmts(p.Stmts, raw, out)
+		walkStmts(p.Stmts, raw, out, depth)
 	case *syntax.ProcSubst:
-		walkStmts(p.Stmts, raw, out)
+		walkStmts(p.Stmts, raw, out, depth)
 	case *syntax.DblQuoted:
 		for _, inner := range p.Parts {
-			walkPartSubstitutions(inner, raw, out)
+			walkPartSubstitutions(inner, raw, out, depth)
 		}
 	}
 }
 
-func walkCmd(cmd syntax.Command, raw string, out *[]policy.Facts) {
+func walkCmd(cmd syntax.Command, raw string, out *[]policy.Facts, depth int) {
 	switch c := cmd.(type) {
 	case *syntax.CallExpr:
 		// Command/process substitution executes at word-evaluation time
@@ -169,47 +261,123 @@ func walkCmd(cmd syntax.Command, raw string, out *[]policy.Facts) {
 		// an argument, not the command name".
 		for _, a := range c.Assigns {
 			if a.Value != nil {
-				walkWordSubstitutions(a.Value, raw, out)
+				walkWordSubstitutions(a.Value, raw, out, depth)
 			}
 		}
 		for _, a := range c.Args {
-			walkWordSubstitutions(a, raw, out)
+			walkWordSubstitutions(a, raw, out, depth)
 		}
-		if f, ok := factsFromCall(c, raw); ok {
+		if len(c.Args) == 0 {
+			return
+		}
+		words := unwrapCommandPrefixes(literalArgs(c.Args))
+		// `sh -c "..."` / `eval "..."` execute their argument as shell code.
+		// Walk it as its own script so the ordinary rules see the real
+		// command, not one opaque string.
+		for _, script := range embeddedShellScripts(words) {
+			reinterpretScript(script, raw, out, depth)
+		}
+		if f, ok := factsFromWords(words, raw); ok {
 			*out = append(*out, f)
 		}
 	case *syntax.BinaryCmd:
 		if c.Op == syntax.Pipe || c.Op == syntax.PipeAll {
+			// The pipeline as a whole, for the pipeline-shape rules
+			// (curl|sh, base64|sh, secret exfiltration).
 			if f, ok := factsFromPipeline(c, raw); ok {
 				*out = append(*out, f)
-				return
 			}
+			// ...and every stage on its own. A pipeline's Facts carries only
+			// the stage *names* (PipelineCmds), never any stage's arguments,
+			// so without this every argument-inspecting rule was bypassed by
+			// appending a harmless pipe: `rm -rf ~/ | cat` was allowed
+			// outright. Found by an adversarial review of the 2026-07
+			// agent-asset expansion.
+			walkPipelineStages(c, raw, out, depth)
+			return
 		}
-		// && / || (or a pipe we couldn't fully interpret): each side may
-		// still contain its own destructive call, so keep descending.
-		if c.X != nil && c.X.Cmd != nil {
-			walkCmd(c.X.Cmd, raw, out)
-		}
-		if c.Y != nil && c.Y.Cmd != nil {
-			walkCmd(c.Y.Cmd, raw, out)
-		}
+		// && / || : each side may still contain its own destructive call.
+		walkStmt(c.X, raw, out, depth)
+		walkStmt(c.Y, raw, out, depth)
 	case *syntax.Block:
-		walkStmts(c.Stmts, raw, out)
+		walkStmts(c.Stmts, raw, out, depth)
 	case *syntax.Subshell:
-		walkStmts(c.Stmts, raw, out)
+		walkStmts(c.Stmts, raw, out, depth)
 	case *syntax.IfClause:
 		for cur := c; cur != nil; cur = cur.Else {
-			walkStmts(cur.Cond, raw, out)
-			walkStmts(cur.Then, raw, out)
+			walkStmts(cur.Cond, raw, out, depth)
+			walkStmts(cur.Then, raw, out, depth)
 		}
 	case *syntax.WhileClause:
-		walkStmts(c.Cond, raw, out)
-		walkStmts(c.Do, raw, out)
+		walkStmts(c.Cond, raw, out, depth)
+		walkStmts(c.Do, raw, out, depth)
 	case *syntax.ForClause:
-		walkStmts(c.Do, raw, out)
+		walkStmts(c.Do, raw, out, depth)
 	case *syntax.FuncDecl:
-		if c.Body != nil && c.Body.Cmd != nil {
-			walkCmd(c.Body.Cmd, raw, out)
+		if c.Body != nil {
+			walkStmt(c.Body, raw, out, depth)
 		}
+	case *syntax.TimeClause:
+		// "time rm -rf ~/" — time is a reserved word, not a command word, so
+		// mvdan/sh gives it its own node rather than a CallExpr whose first
+		// argument is "time". Without this case the timed statement was never
+		// walked at all and every rule silently no-opped.
+		walkStmt(c.Stmt, raw, out, depth)
+	case *syntax.CoprocClause:
+		walkStmt(c.Stmt, raw, out, depth)
+	case *syntax.CaseClause:
+		walkWordSubstitutions(c.Word, raw, out, depth)
+		for _, item := range c.Items {
+			for _, p := range item.Patterns {
+				walkWordSubstitutions(p, raw, out, depth)
+			}
+			walkStmts(item.Stmts, raw, out, depth)
+		}
+	case *syntax.DeclClause:
+		// "declare v=$(rm -rf ~/)" — the substitution executes regardless of
+		// what the declared variable is ever used for.
+		for _, a := range c.Args {
+			if a.Value != nil {
+				walkWordSubstitutions(a.Value, raw, out, depth)
+			}
+		}
+	case *syntax.TestClause:
+		// "[[ -n $(rm -rf ~/) ]]" — same reasoning as DeclClause.
+		walkTestExpr(c.X, raw, out, depth)
+	}
+}
+
+// walkTestExpr descends a "[[ ... ]]" expression tree looking for the words
+// that may carry command substitution.
+func walkTestExpr(x syntax.TestExpr, raw string, out *[]policy.Facts, depth int) {
+	switch t := x.(type) {
+	case *syntax.Word:
+		walkWordSubstitutions(t, raw, out, depth)
+	case *syntax.UnaryTest:
+		walkTestExpr(t.X, raw, out, depth)
+	case *syntax.BinaryTest:
+		walkTestExpr(t.X, raw, out, depth)
+		walkTestExpr(t.Y, raw, out, depth)
+	case *syntax.ParenTest:
+		walkTestExpr(t.X, raw, out, depth)
+	}
+}
+
+// walkPipelineStages walks each stage of a pipeline as its own statement.
+// mvdan/sh nests "a | b | c" as BinaryCmd(BinaryCmd(a, b), c), so the nested
+// pipe nodes are flattened here rather than re-entering walkCmd — that would
+// emit a redundant Facts value for every sub-pipeline prefix.
+func walkPipelineStages(c *syntax.BinaryCmd, raw string, out *[]policy.Facts, depth int) {
+	for _, side := range []*syntax.Stmt{c.X, c.Y} {
+		if side == nil || side.Cmd == nil {
+			continue
+		}
+		if inner, ok := side.Cmd.(*syntax.BinaryCmd); ok && (inner.Op == syntax.Pipe || inner.Op == syntax.PipeAll) {
+			collectRedirectWrites(side, raw, out)
+			collectRedirectSubstitutions(side, raw, out, depth)
+			walkPipelineStages(inner, raw, out, depth)
+			continue
+		}
+		walkStmt(side, raw, out, depth)
 	}
 }
