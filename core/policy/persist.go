@@ -86,6 +86,69 @@ func AppendAlwaysPattern(path string, verdict decision.Verdict, pattern string) 
 	return atomicfile.Write(path, out, 0o600)
 }
 
+// SetUILanguage sets (or updates) the top-level ui_language field in the
+// policy YAML file at path — `damping init` calls this once the operator's
+// language choice is resolved (interactively, or via --lang), so the same
+// choice applies to every future TTY prompt and `policy test` run against
+// this file without needing --force (which would overwrite everything
+// else). Uses the same yaml.Node surgery AppendAlwaysPattern above does,
+// for the same reason: this file's own comments explain the matcher model
+// and must not be silently dropped by an unmarshal-then-marshal round trip.
+func SetUILanguage(path, lang string) error {
+	switch lang {
+	case "en", "zh-TW":
+	default:
+		return fmt.Errorf("policy: cannot set ui_language to %q (want \"en\" or \"zh-TW\")", lang)
+	}
+
+	raw, err := os.ReadFile(path) // #nosec G304 -- path is the local user's own policy file (~/.damping default or their own --config flag), not an attacker-influenced path; no cross-trust-boundary traversal risk
+	if err != nil {
+		return fmt.Errorf("policy: reading %s: %w", path, err)
+	}
+
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return fmt.Errorf("policy: parsing %s: %w", path, err)
+	}
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return fmt.Errorf("policy: %s is not a YAML mapping document", path)
+	}
+	root := doc.Content[0]
+
+	if existing := findMappingValue(root, "ui_language"); existing != nil {
+		existing.Value = lang
+	} else {
+		// No ui_language key yet — insert it right after "version" so a
+		// human skimming the file finds it near the top, next to the other
+		// document-level settings, not buried after protected_paths/rules.
+		insertAfterKey(root, "version", "ui_language", lang)
+	}
+
+	out, err := yaml.Marshal(&doc)
+	if err != nil {
+		return fmt.Errorf("policy: encoding %s: %w", path, err)
+	}
+	return atomicfile.Write(path, out, 0o600)
+}
+
+// insertAfterKey splices a new "key: value" scalar pair into mapping's
+// Content right after the pair whose key matches afterKey, or at the very
+// end if afterKey isn't found (still correct, just less tidily placed).
+func insertAfterKey(mapping *yaml.Node, afterKey, key, value string) {
+	newPair := []*yaml.Node{
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: value},
+	}
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == afterKey {
+			insertAt := i + 2
+			mapping.Content = append(mapping.Content[:insertAt], append(newPair, mapping.Content[insertAt:]...)...)
+			return
+		}
+	}
+	mapping.Content = append(mapping.Content, newPair...)
+}
+
 func alwaysKeyFor(v decision.Verdict) (string, error) {
 	switch v {
 	case decision.Allow:

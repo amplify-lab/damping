@@ -4,6 +4,7 @@ import (
 	"github.com/spf13/cobra"
 
 	mcpadapter "github.com/amplify-lab/damping/cli/adapter/mcp"
+	"github.com/amplify-lab/damping/cli/i18n"
 	"github.com/amplify-lab/damping/core/policy"
 )
 
@@ -52,7 +53,7 @@ func newMCPWrapCmd() *cobra.Command {
 				logDegraded(cmd, writer, hasAuditSink, "unknown", "mcp-client", "constructing audit writer: no audit sink available; MCP tool calls for this session will not be recorded")
 			}
 
-			return mcpadapter.Wrap(cmd.Context(), args, engine, policyPath, writer, "mcp-client")
+			return mcpadapter.Wrap(cmd.Context(), args, engine, policyPath, i18n.ResolveLang(cfg.UILanguage), writer, "mcp-client")
 		},
 	}
 }

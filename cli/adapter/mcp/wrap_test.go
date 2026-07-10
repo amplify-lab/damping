@@ -15,6 +15,7 @@ import (
 
 	gosdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/amplify-lab/damping/cli/i18n"
 	"github.com/amplify-lab/damping/cli/paths"
 	"github.com/amplify-lab/damping/cli/ui"
 	"github.com/amplify-lab/damping/core/audit"
@@ -71,7 +72,7 @@ func setupWrap(t *testing.T, engine *policy.Engine, policyPath string, writer *a
 	startFakeRealServer(t, ctx, upstreamServerSide)
 
 	go func() {
-		_ = wrapTransport(ctx, upstreamDampingSide, downstreamDampingSide, engine, policyPath, writer, "test-client")
+		_ = wrapTransport(ctx, upstreamDampingSide, downstreamDampingSide, engine, policyPath, i18n.LangEN, writer, "test-client")
 	}()
 
 	client := gosdk.NewClient(&gosdk.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
@@ -178,14 +179,14 @@ func TestResolvePrompt_PersistsAlwaysAllowChoice(t *testing.T) {
 	defer func() { newTTYPrompter = orig }()
 
 	var out bytes.Buffer
-	newTTYPrompter = func() (ui.Prompter, func(), error) {
+	newTTYPrompter = func(lang i18n.Lang) (ui.Prompter, func(), error) {
 		return ui.TTYPrompter{In: strings.NewReader("A\n"), Out: &out}, func() {}, nil
 	}
 
 	policyPath := testPolicyPath(t)
 	overlay := &alwaysOverlay{}
 	d := decision.Decision{Verdict: decision.Prompt, PolicyID: "mcp.destructive_tool_call"}
-	resolved := resolvePrompt(policyPath, overlay, "delete_all {}", d)
+	resolved := resolvePrompt(policyPath, i18n.LangEN, overlay, "delete_all {}", d)
 
 	if resolved.Outcome() != decision.Allow {
 		t.Fatalf("expected the resolved verdict to be Allow, got %v", resolved.Outcome())
@@ -231,7 +232,7 @@ func TestResolvePrompt_ConcurrentCallsForSameRawOnlyPromptOnce(t *testing.T) {
 	defer func() { newTTYPrompter = orig }()
 
 	var promptCount int32
-	newTTYPrompter = func() (ui.Prompter, func(), error) {
+	newTTYPrompter = func(lang i18n.Lang) (ui.Prompter, func(), error) {
 		atomic.AddInt32(&promptCount, 1)
 		return ui.TTYPrompter{In: strings.NewReader("A\n"), Out: io.Discard}, func() {}, nil
 	}
@@ -246,7 +247,7 @@ func TestResolvePrompt_ConcurrentCallsForSameRawOnlyPromptOnce(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			results[i] = resolvePrompt(policyPath, overlay, "delete_all {}", decision.Decision{Verdict: decision.Prompt})
+			results[i] = resolvePrompt(policyPath, i18n.LangEN, overlay, "delete_all {}", decision.Decision{Verdict: decision.Prompt})
 		}(i)
 	}
 	wg.Wait()
@@ -269,13 +270,13 @@ func TestResolvePrompt_FailedPersistNotifiesAndLeavesOverlayUntouched(t *testing
 	defer func() { newTTYPrompter = orig }()
 
 	var out bytes.Buffer
-	newTTYPrompter = func() (ui.Prompter, func(), error) {
+	newTTYPrompter = func(lang i18n.Lang) (ui.Prompter, func(), error) {
 		return ui.TTYPrompter{In: strings.NewReader("A\n"), Out: &out}, func() {}, nil
 	}
 
 	overlay := &alwaysOverlay{}
 	d := decision.Decision{Verdict: decision.Prompt}
-	resolved := resolvePrompt(filepath.Join(t.TempDir(), "does-not-exist.yaml"), overlay, "delete_all {}", d)
+	resolved := resolvePrompt(filepath.Join(t.TempDir(), "does-not-exist.yaml"), i18n.LangEN, overlay, "delete_all {}", d)
 
 	if resolved.Outcome() != decision.Allow {
 		t.Fatalf("expected the resolved verdict to still be Allow even though persisting failed, got %v", resolved.Outcome())
@@ -293,12 +294,12 @@ func TestResolvePrompt_NoNoticeForOnceChoices(t *testing.T) {
 	defer func() { newTTYPrompter = orig }()
 
 	var out bytes.Buffer
-	newTTYPrompter = func() (ui.Prompter, func(), error) {
+	newTTYPrompter = func(lang i18n.Lang) (ui.Prompter, func(), error) {
 		return ui.TTYPrompter{In: strings.NewReader("a\n"), Out: &out}, func() {}, nil
 	}
 
 	d := decision.Decision{Verdict: decision.Prompt}
-	resolvePrompt(testPolicyPath(t), &alwaysOverlay{}, "read_thing {}", d)
+	resolvePrompt(testPolicyPath(t), i18n.LangEN, &alwaysOverlay{}, "read_thing {}", d)
 
 	if strings.Contains(out.String(), "couldn't save") || strings.Contains(out.String(), "isn't remembered") {
 		t.Fatalf("did not expect any persistence notice for a plain 'allow once' choice, got:\n%s", out.String())
@@ -308,12 +309,12 @@ func TestResolvePrompt_NoNoticeForOnceChoices(t *testing.T) {
 func TestResolvePrompt_NoTTYDefaultsToDeny(t *testing.T) {
 	orig := newTTYPrompter
 	defer func() { newTTYPrompter = orig }()
-	newTTYPrompter = func() (ui.Prompter, func(), error) {
+	newTTYPrompter = func(lang i18n.Lang) (ui.Prompter, func(), error) {
 		return nil, nil, io.ErrClosedPipe
 	}
 
 	d := decision.Decision{Verdict: decision.Prompt}
-	resolved := resolvePrompt(testPolicyPath(t), &alwaysOverlay{}, "delete_all {}", d)
+	resolved := resolvePrompt(testPolicyPath(t), i18n.LangEN, &alwaysOverlay{}, "delete_all {}", d)
 	if resolved.Outcome() != decision.Deny {
 		t.Fatalf("expected deny-by-default when no controlling terminal is available, got %v", resolved.Outcome())
 	}
@@ -336,7 +337,7 @@ func TestWrap_PersistsAlwaysAllowChoiceForRestOfSession(t *testing.T) {
 
 	orig := newTTYPrompter
 	defer func() { newTTYPrompter = orig }()
-	newTTYPrompter = func() (ui.Prompter, func(), error) {
+	newTTYPrompter = func(lang i18n.Lang) (ui.Prompter, func(), error) {
 		return ui.TTYPrompter{In: strings.NewReader("A\n"), Out: io.Discard}, func() {}, nil
 	}
 
@@ -351,7 +352,7 @@ func TestWrap_PersistsAlwaysAllowChoiceForRestOfSession(t *testing.T) {
 	// A second, independent call for the exact same tool+args must now be
 	// silently allowed via the in-memory overlay — proven by never invoking
 	// the prompter again.
-	newTTYPrompter = func() (ui.Prompter, func(), error) {
+	newTTYPrompter = func(lang i18n.Lang) (ui.Prompter, func(), error) {
 		t.Fatal("prompter must not be invoked once the exact call is in the always-allow overlay")
 		return ui.TTYPrompter{}, func() {}, nil
 	}
@@ -379,7 +380,7 @@ func TestWrap_PersistsAlwaysDenyChoiceForRestOfSession(t *testing.T) {
 
 	orig := newTTYPrompter
 	defer func() { newTTYPrompter = orig }()
-	newTTYPrompter = func() (ui.Prompter, func(), error) {
+	newTTYPrompter = func(lang i18n.Lang) (ui.Prompter, func(), error) {
 		return ui.TTYPrompter{In: strings.NewReader("D\n"), Out: io.Discard}, func() {}, nil
 	}
 
@@ -394,7 +395,7 @@ func TestWrap_PersistsAlwaysDenyChoiceForRestOfSession(t *testing.T) {
 	// A second, independent call for the exact same tool+args must now be
 	// silently denied via the in-memory overlay — proven by never invoking
 	// the prompter again.
-	newTTYPrompter = func() (ui.Prompter, func(), error) {
+	newTTYPrompter = func(lang i18n.Lang) (ui.Prompter, func(), error) {
 		t.Fatal("prompter must not be invoked once the exact call is in the always-deny overlay")
 		return ui.TTYPrompter{}, func() {}, nil
 	}

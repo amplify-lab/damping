@@ -9,6 +9,7 @@ import (
 
 	hookadapter "github.com/amplify-lab/damping/cli/adapter/hook"
 	"github.com/amplify-lab/damping/cli/enforcement"
+	"github.com/amplify-lab/damping/cli/i18n"
 	"github.com/amplify-lab/damping/cli/paths"
 	"github.com/amplify-lab/damping/cli/ui"
 	"github.com/amplify-lab/damping/core/audit"
@@ -241,7 +242,7 @@ func runHook(cmd *cobra.Command, hookEvent string) error {
 	}
 
 	if d.Verdict == decision.Prompt {
-		prompter, closeTTY, err := newTTYPrompter()
+		prompter, closeTTY, err := newTTYPrompter(i18n.ResolveLang(cfg.UILanguage))
 		if err != nil {
 			// No controlling terminal available (e.g. a background/CI
 			// execution context) — resolve per cfg.NonInteractivePromptFallback

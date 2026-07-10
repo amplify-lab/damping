@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/amplify-lab/damping/cli/i18n"
 	"github.com/amplify-lab/damping/core/decision"
 )
 
@@ -46,18 +47,28 @@ type Prompter interface {
 // uppercase is "always" (persisted by the caller into the policy file's
 // always_allow/always_deny list — see cli/cmd/hook.go and
 // core/policy.AppendAlwaysPattern).
+//
+// Lang controls which language the prompt's own labels ("Command:",
+// "Rule:", "[a] Allow once"...) and the rule's Reason text render in — see
+// cli/i18n. The zero value (Lang("")) is not a real language; every real
+// construction site resolves a concrete i18n.Lang first (i18n.ResolveLang)
+// and cli/i18n.Prompt/Reason both fall back to English for an unrecognized
+// value regardless, so a zero-value TTYPrompter (as every existing test in
+// this file already constructs) still renders correctly in English.
 type TTYPrompter struct {
-	In  io.Reader
-	Out io.Writer
+	In   io.Reader
+	Out  io.Writer
+	Lang i18n.Lang
 }
 
 func (p TTYPrompter) Confirm(raw string, d decision.Decision) Resolution {
-	fmt.Fprintf(p.Out, "\n⚠  Damping intercepted a destructive command\n\n")
-	fmt.Fprintf(p.Out, "  Command: %s\n", raw)
-	fmt.Fprintf(p.Out, "  Rule:    %s\n", d.PolicyID)
-	fmt.Fprintf(p.Out, "  Reason:  %s\n\n", d.Reason)
-	fmt.Fprintf(p.Out, "  [a] Allow once   [A] Always allow this exact command\n")
-	fmt.Fprintf(p.Out, "  [d] Deny once    [D] Always deny this exact command\n")
+	s := i18n.Prompt(p.Lang)
+	fmt.Fprintf(p.Out, "\n%s\n\n", s.Intercepted)
+	fmt.Fprintf(p.Out, "  %s%s\n", s.CommandLabel, raw)
+	fmt.Fprintf(p.Out, "  %s%s\n", s.RuleLabel, d.PolicyID)
+	fmt.Fprintf(p.Out, "  %s%s\n\n", s.ReasonLabel, i18n.Reason(d.PolicyID, p.Lang, d.Reason))
+	fmt.Fprintf(p.Out, "  %s\n", s.AllowLine)
+	fmt.Fprintf(p.Out, "  %s\n", s.DenyLine)
 
 	scanner := bufio.NewScanner(p.In)
 	for {
@@ -80,7 +91,7 @@ func (p TTYPrompter) Confirm(raw string, d decision.Decision) Resolution {
 		case "D":
 			return Resolution{Verdict: decision.Deny, Persist: true}
 		default:
-			fmt.Fprintln(p.Out, "please enter 'a', 'A', 'd', or 'D'")
+			fmt.Fprintln(p.Out, s.InvalidInput)
 		}
 	}
 }

@@ -65,6 +65,76 @@ func TestAppendAlwaysPattern_AppendsAndPreservesComments(t *testing.T) {
 	}
 }
 
+func TestSetUILanguage_InsertsWhenAbsentAndPreservesComments(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policy.yaml")
+	if err := os.WriteFile(path, []byte(fixtureWithComments), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SetUILanguage(path, "zh-TW"); err != nil {
+		t.Fatalf("SetUILanguage: %v", err)
+	}
+
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+
+	if !strings.Contains(got, "ui_language: zh-TW") {
+		t.Fatalf("expected ui_language: zh-TW in the file, got:\n%s", got)
+	}
+	if !strings.Contains(got, "top-level header comment — must survive") {
+		t.Fatalf("expected the header comment to survive the edit, got:\n%s", got)
+	}
+	if !strings.Contains(got, "comment right before always_allow — must survive") {
+		t.Fatalf("expected the comment near always_allow to survive the edit, got:\n%s", got)
+	}
+
+	cfg, err := ParseConfig(out)
+	if err != nil {
+		t.Fatalf("edited file no longer parses as valid config: %v", err)
+	}
+	if cfg.UILanguage != "zh-TW" {
+		t.Fatalf("expected UILanguage %q, got %q", "zh-TW", cfg.UILanguage)
+	}
+}
+
+func TestSetUILanguage_UpdatesExistingValueInPlace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policy.yaml")
+	if err := os.WriteFile(path, []byte(fixtureWithComments), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetUILanguage(path, "zh-TW"); err != nil {
+		t.Fatalf("first SetUILanguage: %v", err)
+	}
+	if err := SetUILanguage(path, "en"); err != nil {
+		t.Fatalf("second SetUILanguage: %v", err)
+	}
+
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+	if strings.Count(got, "ui_language:") != 1 {
+		t.Fatalf("expected exactly one ui_language key after switching languages twice, got:\n%s", got)
+	}
+	if !strings.Contains(got, "ui_language: en") {
+		t.Fatalf("expected the value to have been updated to en, got:\n%s", got)
+	}
+}
+
+func TestSetUILanguage_RejectsUnknownLanguage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policy.yaml")
+	if err := os.WriteFile(path, []byte(fixtureWithComments), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetUILanguage(path, "fr"); err == nil {
+		t.Fatal("expected an error for an unrecognized language")
+	}
+}
+
 func TestAppendAlwaysPattern_AppendsToAlwaysDeny(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "policy.yaml")
 	if err := os.WriteFile(path, []byte(fixtureWithComments), 0o600); err != nil {

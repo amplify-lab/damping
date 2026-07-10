@@ -187,6 +187,36 @@ noninteractive_prompt_fallback:
 	}
 }
 
+func TestParseConfig_UILanguageDefaultsToEmpty(t *testing.T) {
+	cfg, err := ParseConfig([]byte("version: 1\n"))
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.UILanguage != "" {
+		t.Errorf("expected UILanguage to default to empty (auto-detect at render time), got %q", cfg.UILanguage)
+	}
+}
+
+func TestParseConfig_AcceptsKnownUILanguages(t *testing.T) {
+	for _, lang := range []string{"en", "zh-TW"} {
+		t.Run(lang, func(t *testing.T) {
+			cfg, err := ParseConfig([]byte("version: 1\nui_language: " + lang + "\n"))
+			if err != nil {
+				t.Fatalf("expected ui_language %q to parse, got: %v", lang, err)
+			}
+			if cfg.UILanguage != lang {
+				t.Errorf("expected UILanguage %q, got %q", lang, cfg.UILanguage)
+			}
+		})
+	}
+}
+
+func TestParseConfig_RejectsUnknownUILanguage(t *testing.T) {
+	if _, err := ParseConfig([]byte("version: 1\nui_language: fr\n")); err == nil {
+		t.Fatal("expected an error for an unrecognized ui_language")
+	}
+}
+
 // --- features/dangerous_command.feature, translated 1:1 into Go tests ---
 
 func TestEvaluate_BlocksHomeDirectoryDeletion(t *testing.T) {

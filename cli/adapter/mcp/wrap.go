@@ -31,6 +31,7 @@ import (
 	gosdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/amplify-lab/damping/cli/enforcement"
+	"github.com/amplify-lab/damping/cli/i18n"
 	"github.com/amplify-lab/damping/cli/ui"
 	"github.com/amplify-lab/damping/core/audit"
 	"github.com/amplify-lab/damping/core/decision"
@@ -50,13 +51,17 @@ const (
 // disconnects or ctx is cancelled. policyPath is the same policy.yaml engine
 // was already loaded from — resolvePrompt needs it directly to persist an
 // "always allow/deny" choice back into the file (see alwaysOverlay's doc
-// comment for why an in-memory overlay is layered on top of that).
-func Wrap(ctx context.Context, serverCmd []string, engine policy.Evaluator, policyPath string, writer *audit.Writer, actor string) error {
+// comment for why an in-memory overlay is layered on top of that). lang is
+// the display language every TTY prompt this session raises renders in —
+// resolved once by the caller (cli/cmd/mcp.go, via i18n.ResolveLang(cfg.
+// UILanguage)) rather than re-resolved per call, since it can't change
+// mid-session without a config reload this long-lived process doesn't do.
+func Wrap(ctx context.Context, serverCmd []string, engine policy.Evaluator, policyPath string, lang i18n.Lang, writer *audit.Writer, actor string) error {
 	if len(serverCmd) == 0 {
 		return fmt.Errorf("mcp: no server command given (usage: damping mcp wrap -- <server-command...>)")
 	}
 	subprocess := exec.CommandContext(ctx, serverCmd[0], serverCmd[1:]...) // #nosec G204 -- serverCmd is the local user's own `damping mcp wrap -- <server-command>` argument, the explicit point of this command, not attacker-influenced input
-	return wrapTransport(ctx, &gosdk.CommandTransport{Command: subprocess}, &gosdk.StdioTransport{}, engine, policyPath, writer, actor)
+	return wrapTransport(ctx, &gosdk.CommandTransport{Command: subprocess}, &gosdk.StdioTransport{}, engine, policyPath, lang, writer, actor)
 }
 
 // wrapTransport is Wrap's transport-agnostic core: connect upstream (to the
@@ -64,7 +69,7 @@ func Wrap(ctx context.Context, serverCmd []string, engine policy.Evaluator, poli
 // (to the outer client). Split out from Wrap so tests can substitute
 // mcp.NewInMemoryTransports() pairs instead of a real subprocess + this
 // process's own stdio — see wrap_test.go.
-func wrapTransport(ctx context.Context, upstream, downstream gosdk.Transport, engine policy.Evaluator, policyPath string, writer *audit.Writer, actor string) error {
+func wrapTransport(ctx context.Context, upstream, downstream gosdk.Transport, engine policy.Evaluator, policyPath string, lang i18n.Lang, writer *audit.Writer, actor string) error {
 	client := gosdk.NewClient(&gosdk.Implementation{Name: implementationName, Version: implementationVersion}, nil)
 	cs, err := client.Connect(ctx, upstream, nil)
 	if err != nil {
@@ -92,7 +97,7 @@ func wrapTransport(ctx context.Context, upstream, downstream gosdk.Transport, en
 		if err != nil {
 			return fmt.Errorf("mcp: listing tools from wrapped server: %w", err)
 		}
-		registerForwardingTool(server, cs, tool, engine, policyPath, overlay, writer, actor)
+		registerForwardingTool(server, cs, tool, engine, policyPath, lang, overlay, writer, actor)
 	}
 
 	return server.Run(ctx, downstream)
@@ -101,7 +106,7 @@ func wrapTransport(ctx context.Context, upstream, downstream gosdk.Transport, en
 // registerForwardingTool re-exposes one discovered tool on server, gating
 // every call through engine/writer before forwarding it to cs (the client
 // session connected to the real wrapped server).
-func registerForwardingTool(server *gosdk.Server, cs *gosdk.ClientSession, tool *gosdk.Tool, engine policy.Evaluator, policyPath string, overlay *alwaysOverlay, writer *audit.Writer, actor string) {
+func registerForwardingTool(server *gosdk.Server, cs *gosdk.ClientSession, tool *gosdk.Tool, engine policy.Evaluator, policyPath string, lang i18n.Lang, overlay *alwaysOverlay, writer *audit.Writer, actor string) {
 	inputSchema := tool.InputSchema
 	if inputSchema == nil {
 		// Server.AddTool panics if InputSchema is nil or not type "object" —
@@ -137,7 +142,7 @@ func registerForwardingTool(server *gosdk.Server, cs *gosdk.ClientSession, tool 
 		} else {
 			d = engine.Evaluate(facts)
 			if d.Verdict == decision.Prompt {
-				d = resolvePrompt(policyPath, overlay, facts.Raw, d)
+				d = resolvePrompt(policyPath, lang, overlay, facts.Raw, d)
 			}
 		}
 
@@ -214,7 +219,7 @@ var newTTYPrompter = ui.OpenTTYPrompter
 // that cross-process race is a documented, lower-priority known limitation.
 var ttyPromptMu sync.Mutex
 
-func resolvePrompt(policyPath string, overlay *alwaysOverlay, raw string, d decision.Decision) decision.Decision {
+func resolvePrompt(policyPath string, lang i18n.Lang, overlay *alwaysOverlay, raw string, d decision.Decision) decision.Decision {
 	ttyPromptMu.Lock()
 	defer ttyPromptMu.Unlock()
 
@@ -233,7 +238,7 @@ func resolvePrompt(policyPath string, overlay *alwaysOverlay, raw string, d deci
 		return d
 	}
 
-	prompter, closeTTY, err := newTTYPrompter()
+	prompter, closeTTY, err := newTTYPrompter(lang)
 	if err != nil {
 		d.Resolve(decision.Deny)
 		d.Reason = "no controlling terminal available to ask; denied by default: " + d.Reason

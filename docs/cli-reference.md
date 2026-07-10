@@ -49,9 +49,22 @@ Damping v0.1.0 — one-time setup
 Run `damping doctor` any time to re-verify this setup.
 ```
 
-Flags: `--agent claude-code|cursor|codex|all` (default `all`, only touches detected agents), `--force` (overwrite existing policy/hook entries — this is the one flag that controls both, not hook entries alone), `--dry-run` (print what would change, write nothing; the closing line becomes "Setup complete (dry run) —" with no demo call-to-action, since nothing was actually installed to try).
+Flags: `--agent claude-code|cursor|codex|all` (default `all`, only touches detected agents), `--force` (overwrite existing policy/hook entries — this is the one flag that controls both, not hook entries alone), `--dry-run` (print what would change, write nothing; the closing line becomes "Setup complete (dry run) —" with no demo call-to-action, since nothing was actually installed to try), `--lang en|zh-TW` (see below).
 
 Target: install → first interception demo in under 3 minutes (per the original plan's UX bar).
+
+**Display language (2026-07)**: on a fresh install (or any run where `ui_language` isn't already set in the policy file), `init` asks once — interactively, if stdin is a real terminal:
+
+```
+Language / 語言:
+  [1] English (default)
+  [2] 中文（繁體）
+>
+```
+
+— and writes the answer into `ui_language` in the just-written (or already-existing) `policy.yaml`, via `core/policy.SetUILanguage` (the same comment-preserving `yaml.Node` surgery `AppendAlwaysPattern` uses, not a full unmarshal/marshal round trip that would silently drop the file's own explanatory comments). A non-interactive run (piped `curl install.sh | sh`, CI) is never blocked waiting for an answer that will never come — it resolves nothing and leaves `ui_language` unset, which means the display language is still auto-detected live from `$LANG`/`$LC_ALL` on every render (`cli/i18n.ResolveLang`), just not pinned into the file. `--lang en|zh-TW` sets it explicitly and non-interactively either way — the scriptable path, and the only one that can change an *already-configured* choice without `--force` (which would overwrite everything else in the file).
+
+This preference controls two render sites: the TTY confirmation prompt (`cli/ui`, §12 below) and `damping policy test`'s output — **not** the audit log, compliance reports, or `Decision.Reason` itself, which stay English always (see `core/policy.Config.UILanguage`'s own doc comment for why). Rule-by-rule translation coverage lives in `cli/i18n`, keyed by rule id, with an unconditional fallback to the real English `Reason` for any rule id not yet translated — a rule shipping without a same-day translation is a non-event, not a bug (`cli/i18n/i18n_test.go`'s completeness check makes new gaps visible at build time without ever blocking a merge on translating them immediately). As of this writing, all 27 default rules have zh-TW translations.
 
 ## 4. `damping doctor`
 
@@ -210,11 +223,17 @@ $ damping dashboard
 Dashboard running at http://127.0.0.1:4243 (Ctrl+C to stop)
 ```
 
-A small local HTTP server rendering the same `~/.damping/audit.jsonl` `damping log` reads, in a browser — a dark-themed summary strip, a filterable event table (with a rule-id filter and a time-range picker: quick presets or a custom from/until `datetime-local` pair), a risk-over-time stacked bar chart and a top-triggered-rules bar chart (both computed over the full matching history, not just the events table's own capped page — see `/api/stats` below), a per-session risk sparkline panel, a live tail via Server-Sent Events, and a row-click detail view. The sessions/stats panels refresh the moment a new event arrives over the same SSE connection the events table already has open (debounced, so a burst of events triggers one refresh, not one per event) rather than waiting on their own poll timer — a plain `setInterval(..., 60000)` still runs underneath as a safety net for the one gap that can't cover (an SSE reconnect resumes tailing from whatever's new at reconnect time, so an event during a brief disconnect never arrives as a live message at all), but in the common case the whole dashboard, not just the event table, updates within about half a second of something actually happening (the full `ActionEvent`: raw command/call, parsed args, matched policy_id, and the resolved verdict for a resolved prompt as a single "verdict → resolved verdict" line, not a timeline — `decision.Decision` has no timestamps for when a prompt was raised vs. resolved, only the two verdict values — the same fields `damping log show <event_id>` prints), all served from `cli/dashboard` with no separate frontend build (vanilla JS, a Tailwind-compiled stylesheet checked into the repo and embedded via `go:embed`).
+A small local HTTP server rendering the same `~/.damping/audit.jsonl` `damping log` reads, in a browser — a dark-themed summary strip, a filterable event table (channel/risk/outcome/keyword/actor/rule-id filters plus a time-range picker: quick presets or a custom from/until `datetime-local` pair), a risk-over-time stacked bar chart and a top-triggered-rules bar chart (both computed over the full matching history, not just the events table's own capped page — see `/api/stats` below), a per-session risk sparkline panel, a live tail via Server-Sent Events, and a row-click detail view. The sessions/stats panels refresh the moment a new event arrives over the same SSE connection the events table already has open (debounced, so a burst of events triggers one refresh, not one per event) rather than waiting on their own poll timer — a plain `setInterval(..., 60000)` still runs underneath as a safety net for the one gap that can't cover (an SSE reconnect resumes tailing from whatever's new at reconnect time, so an event during a brief disconnect never arrives as a live message at all), but in the common case the whole dashboard, not just the event table, updates within about half a second of something actually happening (the full `ActionEvent`: raw command/call, parsed args, matched policy_id, and the resolved verdict for a resolved prompt as a single "verdict → resolved verdict" line, not a timeline — `decision.Decision` has no timestamps for when a prompt was raised vs. resolved, only the two verdict values — the same fields `damping log show <event_id>` prints), all served from `cli/dashboard` with no separate frontend build (vanilla JS, a Tailwind-compiled stylesheet checked into the repo and embedded via `go:embed`).
+
+**Keyword search and pagination** (2026-07): the events table's `Keyword` filter is a case-insensitive substring match against `Target` *or* `Raw` (`core/audit.Filter.Keyword`) — the free-text search a fixed-field filter like Actor/Rule can't answer, since it also finds a match buried in a long multi-line command that the truncated Target column doesn't show. A "Load older events" button below the table extends the initial (most-recent, `defaultEventsLimit`-capped) page backward using the oldest currently-loaded event's own Timestamp as an exclusive cursor (`?before=<RFC3339 timestamp>`, `core/audit.Filter.Before` — deliberately exclusive, unlike `Until`'s inclusive "at or before," so the boundary event is never re-fetched as a duplicate on the next click).
+
+**Policy explainer**: clicking the summary strip's "Policy" card opens a modal listing every active rule (`GET /api/policy`, straight off `policy.Config.Rules`), grouped by risk tier (critical first), each with its id, canonical description, and default action.
+
+**Bilingual UI (EN/繁體中文)**: a language toggle in the header switches every UI-chrome string (labels, headers, buttons, empty/error states) via a client-side dictionary, defaulting to the browser's own language and persisted in `localStorage`. Deliberately scoped to chrome only — a rule's `Description` (and every audit record's `Target`/`Raw`/`Reason`) stays exactly as written in `policy.yaml`/the audit log, a single canonical English source of truth the compliance report and the OPA/Go engine equivalence tests already depend on. The dashboard's own translation dictionary is independent of, and does not share code with, the CLI-side one — see §3's "Display language" and §12 for `damping init --lang`/the TTY prompt's own separate (now implemented) translation layer in `cli/i18n`, which follows the identical chrome-only principle for the same reason.
 
 **This is not Phase 4.** `docs/ux-dashboard-spec.md` describes a separate, not-yet-built team dashboard — React+TS, Cloudflare-hosted, SSO auth, cross-member team sync — genuinely blocked on Tim picking a Cloudflare account and an auth vendor. `damping dashboard` needs none of that: no auth, no network calls beyond serving its own page, binds to `127.0.0.1` only by default. It borrows that spec's visual language (dark theme, risk-as-temperature color, the damped-oscillation sparkline motif) and its "CLI/dashboard vocabulary parity" principle (§4 of that spec) — the same `core/audit.ParseFilter` that parses `damping log --risk critical` also parses `?risk=critical` on `/api/events`.
 
-Flags: `--port` (default `4243`), `--host` (default `127.0.0.1` — passing anything else prints an explicit warning that the audit log becomes reachable, unauthenticated, from wherever that address is reachable). Routes: `GET /` (the page), `GET /static/dashboard.css` (the compiled stylesheet), `GET /static/charts.js` (the shared, hand-rolled chart primitives — sparkline/stacked-bar/bar-list, all built via DOM/SVG-namespace APIs, no `innerHTML`), `GET /api/summary`, `GET /api/sessions`, `GET /api/events` (same filters as `damping log`: `channel`, `risk`, `actor`, `outcome`, `since`, `until`, `policy_id`, `action_type`, `limit`), `GET /api/events/stream` (Server-Sent Events, same filters minus `limit`), `GET /api/stats` (risk-over-time buckets, top-triggered-rules counts, and allow/deny/degraded totals — same filter vocabulary as `/api/events`, but always computed over `core/audit.ReadAll`'s full matching result, never the events table's own `defaultEventsLimit`, so a long history never silently undercounts a summary chart).
+Flags: `--port` (default `4243`), `--host` (default `127.0.0.1` — passing anything else prints an explicit warning that the audit log becomes reachable, unauthenticated, from wherever that address is reachable). Routes: `GET /` (the page), `GET /static/dashboard.css` (the compiled stylesheet), `GET /static/charts.js` (the shared, hand-rolled chart primitives — sparkline/stacked-bar/bar-list, all built via DOM/SVG-namespace APIs, no `innerHTML`), `GET /api/summary`, `GET /api/sessions`, `GET /api/policy` (the active policy's full rule list — id/description/risk/action — for the summary strip's rule explainer), `GET /api/events` (same filters as `damping log` plus two dashboard-only additions: `channel`, `risk`, `actor`, `outcome`, `since`, `until`, `policy_id`, `action_type`, `limit`, `keyword` (substring match against Target/Raw), `before` (exclusive Timestamp cursor for "load older" pagination)), `GET /api/events/stream` (Server-Sent Events, same filters minus `limit`/`before`), `GET /api/stats` (risk-over-time buckets, top-triggered-rules counts, and allow/deny/degraded totals — same filter vocabulary as `/api/events`, but always computed over `core/audit.ReadAll`'s full matching result, never the events table's own `defaultEventsLimit`, so a long history never silently undercounts a summary chart).
 
 `/api/events`'s `limit` differs from `damping log --limit` in one respect: the CLI's own default is `0` (unbounded — a terminal user can scroll or pipe), but this endpoint defaults to 200 when `limit` is omitted entirely, since its response gets re-rendered as DOM rows in a live browser tab on every filter change rather than streamed to a pager. An explicit `?limit=0` still means unlimited, matching the CLI's vocabulary exactly. Whenever the default (or an explicit) limit actually drops events, the response carries an `X-Damping-Truncated: true` header and the page shows a small inline note — per `docs/ux-dashboard-spec.md` §4's "never silently drop data," even a sane default shouldn't trim history without saying so.
 
@@ -303,7 +322,23 @@ MCP tool-call interception — the exact same template and wording (still "exact
 >
 ```
 
-**Invalid input**: typing anything other than `a`/`A`/`d`/`D` (including just pressing Enter with no input) reprints the literal line `please enter 'a', 'A', 'd', or 'D'` and re-prompts with `> ` again — it does not exit or default to any verdict.
+**Language (2026-07)**: every line above is shown in whichever language `policy.Config.UILanguage` resolves to (`cli/i18n.ResolveLang` — the explicit config value, or auto-detected from `$LANG`/`$LC_ALL`, defaulting to English; see §3's "Display language"). In `zh-TW`, the same prompt reads:
+
+```
+⚠  Damping 攔截了一個具破壞性的指令
+
+  指令：rm -rf ~/
+  規則：destructive.rm_rf_protected
+  理由：遞迴＋強制刪除你的家目錄、檔案系統根目錄、政策設定的受保護路徑，或系統關鍵目錄（/etc、/usr、/var 等）——可能摧毀無法復原的資料，甚至讓整台機器故障
+
+  [a] 只放行這一次   [A] 永遠放行這個指令
+  [d] 只擋這一次     [D] 永遠擋掉這個指令
+>
+```
+
+Only the chrome (the four labels, the `[a]`/`[A]`/`[d]`/`[D]` line, the invalid-input message) and — separately — the matched rule's `Reason`, translated via a per-rule-id lookup table (`cli/i18n/rules_zh_tw.go`), change with language. A rule id with no entry there yet falls back to its real English `Reason` rather than showing nothing.
+
+**Invalid input**: typing anything other than `a`/`A`/`d`/`D` (including just pressing Enter with no input) reprints the literal line `please enter 'a', 'A', 'd', or 'D'` (translated the same way as everything else above) and re-prompts with `> ` again — it does not exit or default to any verdict.
 
 **Closed/EOF input stream**: if stdin closes before a human answers (e.g. a non-interactive or backgrounded execution context), the prompt returns Deny immediately and silently — no message is printed explaining why. This is a deliberate fail-closed default, not an oversight: it treats an ambiguous "nobody actually answered" state as a denial rather than risk silently letting a destructive command through.
 
@@ -514,6 +549,16 @@ always_deny: []
 ```
 
 Full rule-matching grammar (command/flags/args/pipeline shape matchers) lives in code as `core/policy` matures past the initial hardcoded V1 rule set — this file is the **behavioral** contract (what ships, what risk tier, what default action), not the internal matcher DSL, which is free to evolve as long as `damping policy test` output stays stable.
+
+## 13.0 `ui_language` (optional, absent from the shipped default until `damping init` sets it)
+
+```yaml
+ui_language: zh-TW
+```
+
+`damping init` resolves and writes this once (interactively, via `--lang`, or leaves it unset for a non-interactive install — see §3's "Display language"); hand-editing via `damping policy edit` works too. Recognized values: `en` or `zh-TW`; anything else fails `damping policy validate`/`LoadConfig`. Absent (the default) means "auto-detect from `$LANG`/`$LC_ALL` at every render, defaulting to English" rather than a fixed choice baked into the file.
+
+This is a **display preference**, not a policy-matching concern — it controls only the TTY confirmation prompt (§12) and `damping policy test`'s output. It does not affect which rules fire, `Decision.Reason`'s actual (always-English) content, the audit log, or compliance reports. It lives in this file rather than a separate settings file only because `damping init` already owns writing/updating this one.
 
 ## 13.1 `noninteractive_prompt_fallback` (opt-in, absent from the shipped default)
 

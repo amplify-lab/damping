@@ -44,6 +44,29 @@ type Config struct {
 	// Values must be "allow" or "deny" (never "prompt" — there's no human to
 	// re-ask), enforced by Validate.
 	NonInteractivePromptFallback map[event.RiskLevel]decision.Verdict `yaml:"noninteractive_prompt_fallback,omitempty"`
+
+	// UILanguage is the operator's preferred display language for the two
+	// places this binary renders human-facing text directly rather than
+	// just logging it: the TTY confirmation prompt (cli/ui) and `damping
+	// policy test`'s output. Recognized values: "" (unset — the renderer
+	// auto-detects from $LANG/$LC_ALL at render time, defaulting to
+	// English) or "zh-TW". `damping init` resolves and writes this once,
+	// interactively or via --lang (see core/policy.SetUILanguage, which
+	// edits an existing file in place without disturbing anything else in
+	// it).
+	//
+	// This is a display/rendering preference, not a policy-matching
+	// concern — it deliberately lives in this Config rather than a
+	// separate settings file only because `damping init` already owns
+	// writing/updating this one file. It does NOT affect Decision.Reason,
+	// the audit log, or compliance reports, which stay English always:
+	// core/policy/opa_equivalence_test.go's byte-identical-Reason
+	// assertion, core/compliance's report formatting, and every existing
+	// consumer of ActionEvent already depend on Reason being a single
+	// canonical English string. Translation happens only in cli/i18n, at
+	// the last-mile render step in cli/ui and cli/cmd/policy.go — this
+	// field is merely the stored preference those call sites consult.
+	UILanguage string `yaml:"ui_language,omitempty"`
 }
 
 // EngineNative and EngineOPA are the recognized values for Config.Engine.
@@ -139,6 +162,16 @@ func (c Config) Validate() error {
 		default:
 			return fmt.Errorf("policy: noninteractive_prompt_fallback[%q] has invalid verdict %q (want %q or %q)", risk, verdict, decision.Allow, decision.Deny)
 		}
+	}
+	switch c.UILanguage {
+	case "", "en", "zh-TW":
+	default:
+		// This list is the one place core/policy knows about UI languages —
+		// it cannot import cli/i18n (whose Lang constants mirror these same
+		// two values) since core and cli are separate Go modules and core
+		// can never depend on cli. Keep this switch's cases in sync with
+		// cli/i18n.Lang by convention if a language is ever added.
+		return fmt.Errorf("policy: unknown ui_language %q (want \"en\" or \"zh-TW\")", c.UILanguage)
 	}
 	return nil
 }

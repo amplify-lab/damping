@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/amplify-lab/damping/cli/enforcement"
+	"github.com/amplify-lab/damping/cli/i18n"
 	"github.com/amplify-lab/damping/cli/paths"
 	"github.com/amplify-lab/damping/cli/ui"
 	"github.com/amplify-lab/damping/core/audit"
@@ -151,6 +152,217 @@ func TestInit_WritesPolicyAndRegistersClaudeHook(t *testing.T) {
 	}
 	if !strings.Contains(statusOut, "Sync:    disabled") {
 		t.Fatalf("expected sync to be reported disabled (team tier is Phase 4, not implemented), got: %s", statusOut)
+	}
+}
+
+// --- 2026-07 ui_language / damping init --lang expansion ---
+
+func TestResolveInitLanguage_ExplicitFlagAlwaysWins(t *testing.T) {
+	var out bytes.Buffer
+	// currentUILanguage is already "en" — the flag must still override it,
+	// since --lang is the scriptable path that must never require --force
+	// just to change a display preference on an already-set-up machine.
+	got, err := resolveInitLanguage("zh-TW", "en", &out, strings.NewReader(""))
+	if err != nil {
+		t.Fatalf("resolveInitLanguage: %v", err)
+	}
+	if got != "zh-TW" {
+		t.Errorf("expected the explicit flag to win, got %q", got)
+	}
+}
+
+func TestResolveInitLanguage_RejectsInvalidFlag(t *testing.T) {
+	var out bytes.Buffer
+	if _, err := resolveInitLanguage("fr", "", &out, strings.NewReader("")); err == nil {
+		t.Fatal("expected an error for an unrecognized --lang value")
+	}
+}
+
+func TestResolveInitLanguage_SkipsWhenAlreadyConfigured(t *testing.T) {
+	var out bytes.Buffer
+	orig := isInteractiveTTY
+	defer func() { isInteractiveTTY = orig }()
+	isInteractiveTTY = func() bool {
+		t.Fatal("must not even check TTY-ness once a language is already configured — a re-run for an unrelated reason must not risk blocking")
+		return false
+	}
+	got, err := resolveInitLanguage("", "zh-TW", &out, strings.NewReader(""))
+	if err != nil {
+		t.Fatalf("resolveInitLanguage: %v", err)
+	}
+	if got != "" {
+		t.Errorf("expected no re-resolution once already configured, got %q", got)
+	}
+}
+
+func TestResolveInitLanguage_NonInteractiveResolvesToNothing(t *testing.T) {
+	var out bytes.Buffer
+	orig := isInteractiveTTY
+	defer func() { isInteractiveTTY = orig }()
+	isInteractiveTTY = func() bool { return false }
+
+	got, err := resolveInitLanguage("", "", &out, strings.NewReader(""))
+	if err != nil {
+		t.Fatalf("resolveInitLanguage: %v", err)
+	}
+	if got != "" {
+		t.Errorf("expected a non-interactive, never-configured install to resolve nothing (stays auto-detected at render time), got %q", got)
+	}
+	if out.Len() != 0 {
+		t.Errorf("expected no prompt printed in a non-interactive session, got: %s", out.String())
+	}
+}
+
+func TestResolveInitLanguage_InteractivePromptsAndParsesChoice2(t *testing.T) {
+	var out bytes.Buffer
+	orig := isInteractiveTTY
+	defer func() { isInteractiveTTY = orig }()
+	isInteractiveTTY = func() bool { return true }
+
+	got, err := resolveInitLanguage("", "", &out, strings.NewReader("2\n"))
+	if err != nil {
+		t.Fatalf("resolveInitLanguage: %v", err)
+	}
+	if got != "zh-TW" {
+		t.Errorf("expected \"2\" to resolve to zh-TW, got %q", got)
+	}
+	if !strings.Contains(out.String(), "Language / 語言") {
+		t.Errorf("expected the bilingual prompt to be printed, got: %s", out.String())
+	}
+}
+
+func TestResolveInitLanguage_InteractiveDefaultsToEnglishOnEmptyInput(t *testing.T) {
+	var out bytes.Buffer
+	orig := isInteractiveTTY
+	defer func() { isInteractiveTTY = orig }()
+	isInteractiveTTY = func() bool { return true }
+
+	got, err := resolveInitLanguage("", "", &out, strings.NewReader("\n"))
+	if err != nil {
+		t.Fatalf("resolveInitLanguage: %v", err)
+	}
+	if got != "en" {
+		t.Errorf("expected a bare Enter to default to en, got %q", got)
+	}
+}
+
+func TestResolveInitLanguage_InteractiveDefaultsToEnglishOnUnrecognizedInput(t *testing.T) {
+	var out bytes.Buffer
+	orig := isInteractiveTTY
+	defer func() { isInteractiveTTY = orig }()
+	isInteractiveTTY = func() bool { return true }
+
+	got, err := resolveInitLanguage("", "", &out, strings.NewReader("nonsense\n"))
+	if err != nil {
+		t.Fatalf("resolveInitLanguage: %v", err)
+	}
+	if got != "en" {
+		t.Errorf("expected unrecognized input to default to en (not re-prompt — getting this wrong is cosmetic, not a safety question), got %q", got)
+	}
+}
+
+func TestResolveInitLanguage_InteractiveDefaultsToEnglishOnClosedInput(t *testing.T) {
+	var out bytes.Buffer
+	orig := isInteractiveTTY
+	defer func() { isInteractiveTTY = orig }()
+	isInteractiveTTY = func() bool { return true }
+
+	got, err := resolveInitLanguage("", "", &out, strings.NewReader(""))
+	if err != nil {
+		t.Fatalf("resolveInitLanguage: %v", err)
+	}
+	if got != "en" {
+		t.Errorf("expected input closing mid-prompt to default to en, got %q", got)
+	}
+}
+
+// TestInit_LangFlagWritesUILanguage is the full end-to-end path through the
+// real `init` command (not just resolveInitLanguage in isolation): --lang
+// zh-TW on a fresh install must land in the written policy.yaml, and
+// `damping policy test` against that same file must render its Reason in
+// Chinese afterward — proving the whole chain (init -> SetUILanguage ->
+// LoadConfig -> i18n.ResolveLang -> i18n.Reason) actually connects.
+func TestInit_LangFlagWritesUILanguage(t *testing.T) {
+	setupTestEnv(t)
+
+	if _, _, err := run(t, "", "init", "--lang", "zh-TW"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	policyPath, err := resolvePolicyPath()
+	if err != nil {
+		t.Fatalf("resolvePolicyPath: %v", err)
+	}
+	cfg, err := policy.LoadConfig(policyPath)
+	if err != nil {
+		t.Fatalf("loading written policy: %v", err)
+	}
+	if cfg.UILanguage != "zh-TW" {
+		t.Fatalf("expected ui_language: zh-TW in the written policy file, got %q", cfg.UILanguage)
+	}
+
+	testOut, _, err := run(t, "", "policy", "test", "rm -rf ~/")
+	if err == nil {
+		t.Fatal("expected policy test to exit non-zero for a prompt-tier command")
+	}
+	if !strings.Contains(testOut, "遞迴") {
+		t.Fatalf("expected the Chinese translation of destructive.rm_rf_protected's reason, got: %s", testOut)
+	}
+}
+
+// TestInit_NonInteractiveWithoutLangFlagLeavesUILanguageUnset is the
+// end-to-end control for the piped-install path (`curl install.sh | sh`
+// follow-up, a CI provisioning step). `run`'s stdin is always a
+// strings.Reader — cobra's own SetIn — but isInteractiveTTY checks the
+// real *process's* os.Stdin, which SetIn does not affect at all, so this
+// explicitly overrides it rather than depending on whatever this test
+// binary's own stdin happens to be in whatever environment runs it.
+func TestInit_NonInteractiveWithoutLangFlagLeavesUILanguageUnset(t *testing.T) {
+	setupTestEnv(t)
+	orig := isInteractiveTTY
+	defer func() { isInteractiveTTY = orig }()
+	isInteractiveTTY = func() bool { return false }
+
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	policyPath, err := resolvePolicyPath()
+	if err != nil {
+		t.Fatalf("resolvePolicyPath: %v", err)
+	}
+	cfg, err := policy.LoadConfig(policyPath)
+	if err != nil {
+		t.Fatalf("loading written policy: %v", err)
+	}
+	if cfg.UILanguage != "" {
+		t.Fatalf("expected ui_language to stay unset for a non-interactive install with no --lang, got %q", cfg.UILanguage)
+	}
+}
+
+// TestInit_RerunWithoutLangDoesNotOverwriteAnExistingChoice proves the
+// "already answered, don't ask again" guard through the full command too,
+// not just resolveInitLanguage's own unit test.
+func TestInit_RerunWithoutLangDoesNotOverwriteAnExistingChoice(t *testing.T) {
+	setupTestEnv(t)
+
+	if _, _, err := run(t, "", "init", "--lang", "zh-TW"); err != nil {
+		t.Fatalf("first init: %v", err)
+	}
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("second init: %v", err)
+	}
+
+	policyPath, err := resolvePolicyPath()
+	if err != nil {
+		t.Fatalf("resolvePolicyPath: %v", err)
+	}
+	cfg, err := policy.LoadConfig(policyPath)
+	if err != nil {
+		t.Fatalf("loading written policy: %v", err)
+	}
+	if cfg.UILanguage != "zh-TW" {
+		t.Fatalf("expected the original zh-TW choice to survive an unrelated re-run, got %q", cfg.UILanguage)
 	}
 }
 
@@ -1274,7 +1486,7 @@ func TestHook_PersistsAlwaysAllowPattern(t *testing.T) {
 	orig := newTTYPrompter
 	defer func() { newTTYPrompter = orig }()
 
-	newTTYPrompter = func() (ui.Prompter, func(), error) {
+	newTTYPrompter = func(lang i18n.Lang) (ui.Prompter, func(), error) {
 		return ui.TTYPrompter{In: strings.NewReader("A\n"), Out: io.Discard}, func() {}, nil
 	}
 
@@ -1286,7 +1498,7 @@ func TestHook_PersistsAlwaysAllowPattern(t *testing.T) {
 	// A second, independent evaluation of the exact same command must now
 	// resolve to a plain allow via the persisted pattern — proven by never
 	// invoking the prompter again.
-	newTTYPrompter = func() (ui.Prompter, func(), error) {
+	newTTYPrompter = func(lang i18n.Lang) (ui.Prompter, func(), error) {
 		t.Fatal("prompter must not be invoked once the exact command is in always_allow")
 		return ui.TTYPrompter{}, func() {}, nil
 	}
@@ -1303,7 +1515,7 @@ func TestHook_PersistsAlwaysDenyPattern(t *testing.T) {
 
 	orig := newTTYPrompter
 	defer func() { newTTYPrompter = orig }()
-	newTTYPrompter = func() (ui.Prompter, func(), error) {
+	newTTYPrompter = func(lang i18n.Lang) (ui.Prompter, func(), error) {
 		return ui.TTYPrompter{In: strings.NewReader("D\n"), Out: io.Discard}, func() {}, nil
 	}
 
@@ -1313,7 +1525,7 @@ func TestHook_PersistsAlwaysDenyPattern(t *testing.T) {
 		t.Fatalf("expected the always-deny resolution to deny the command (Code:2), got %v", err)
 	}
 
-	newTTYPrompter = func() (ui.Prompter, func(), error) {
+	newTTYPrompter = func(lang i18n.Lang) (ui.Prompter, func(), error) {
 		t.Fatal("prompter must not be invoked once the exact command is in always_deny")
 		return ui.TTYPrompter{}, func() {}, nil
 	}

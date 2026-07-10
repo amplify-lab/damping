@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/amplify-lab/damping/cli/adapter/hook"
+	"github.com/amplify-lab/damping/cli/i18n"
 	"github.com/amplify-lab/damping/core/decision"
 	"github.com/amplify-lab/damping/core/policy"
 )
@@ -99,11 +100,12 @@ func newPolicyTestCmd() *cobra.Command {
 			}
 
 			w := cmd.OutOrStdout()
+			lang := i18n.ResolveLang(cfg.UILanguage)
 			switch d.Verdict {
 			case decision.Deny:
-				fmt.Fprintf(w, "→ Would DENY (rule: %s, reason: %s)\n", d.PolicyID, d.Reason)
+				fmt.Fprintf(w, "→ Would DENY (rule: %s, reason: %s)\n", d.PolicyID, i18n.Reason(d.PolicyID, lang, d.Reason))
 			case decision.Prompt:
-				fmt.Fprintf(w, "→ Would PROMPT (rule: %s, reason: %s)\n", d.PolicyID, d.Reason)
+				fmt.Fprintf(w, "→ Would PROMPT (rule: %s, reason: %s)\n", d.PolicyID, i18n.Reason(d.PolicyID, lang, d.Reason))
 			default:
 				fmt.Fprintln(w, "→ Would ALLOW")
 			}
