@@ -85,16 +85,45 @@ damping mcp wrap -- npx @some-org/example-mcp-server
 
 Damping discovers the real server's tools, re-exposes them unchanged, and runs every call through the exact same policy engine and audit log as your terminal — before forwarding it on. Nothing about the wrapped server's behavior changes from the client's point of view except that a destructive tool call can now be intercepted, exactly like a shell command.
 
-### 5. Everyday commands
+## Command reference
 
-```
-damping status                     # is it on, which policy, which agents are wired up
-damping doctor                     # health check — hook registration, policy validity, degraded-mode history
-damping policy test "rm -rf ~/"     # dry-run a command against your policy, no side effects
-damping off --for 30m               # pause enforcement (the only sanctioned way to disable it — see docs/threat-model.md §4)
-```
+Every command below also accepts a global `--config PATH` flag to point at a policy file other than the default (`~/.damping/policy.yaml`). This is the everyday surface — every flag, in full, is documented in [`docs/cli-reference.md`](docs/cli-reference.md).
 
-Full command reference: [`docs/cli-reference.md`](docs/cli-reference.md).
+**Setup & status**
+
+| Command | What it does |
+| --- | --- |
+| `damping init` | One-time setup — detects Claude Code / Cursor / Codex, installs the default policy, registers hooks. Never overwrites an existing policy file; `damping init --force` refreshes it to the current default (overwrites the whole file) |
+| `damping status` | Is it on, which policy file, which agents are actually wired up |
+| `damping doctor` | Health check — hook registration, policy validity, degraded-mode history. Exit code 4 if anything's wrong — the one command worth scripting into an onboarding check or CI |
+| `damping on` | Re-enable enforcement |
+| `damping off [--for 30m]` | Pause enforcement — the only sanctioned way to disable Damping (see [`docs/threat-model.md`](docs/threat-model.md) §4) |
+| `damping version` | Print the installed version |
+
+**Policy**
+
+| Command | What it does |
+| --- | --- |
+| `damping policy list` | List every active rule, its risk level, and its default action |
+| `damping policy test "rm -rf ~/"` | Dry-run a command against the policy — no side effects. Exits `3` if it would prompt or deny, `0` if it would allow |
+| `damping policy edit` | Open the policy file in `$EDITOR` |
+| `damping policy validate` | Validate the policy file's schema — no side effects |
+
+**Audit trail**
+
+| Command | What it does |
+| --- | --- |
+| `damping log` | Replay the audit trail. Filter with `--risk`, `--channel`, `--since`/`--until`, `--outcome`, `--policy-id`, `--actor`; `--follow` to tail it live; `--json` for scripting |
+| `damping log show EVENT_ID` | The full record for one event |
+| `damping dashboard [--port] [--host]` | Local, zero-setup web view of the same audit log — binds to `127.0.0.1:4243` by default |
+| `damping compliance-report demo` | Preview of the eventual enterprise compliance report — synthetic data, no real deployment needed |
+| `damping compliance-report export` | The same report over your real local audit log — `--format markdown\|text\|json\|html` |
+
+**MCP**
+
+| Command | What it does |
+| --- | --- |
+| `damping mcp wrap -- CMD [args...]` | Wrap a real MCP server so its tool calls go through the same policy engine and audit log as your terminal |
 
 ## Deploying Damping
 
@@ -162,6 +191,7 @@ Every rule below exists because of a real, documented incident — not a hypothe
 | On 2025-12-05, a threat actor published the malicious crates `finch-rust` (impersonating the legitimate `finch` crate) and `sha-rust` (a credential-exfiltration payload) directly to crates.io, before the crates.io team disabled the account and deleted both crates the same day ([Rust Blog](https://blog.rust-lang.org/2025/12/05/crates.io-malicious-crates-finch-rust-and-sha-rust/)). | `destructive.cargo_publish_unreviewed` |
 | In August 2019, an attacker who compromised a maintainer's RubyGems.org account used it to gem-push four malicious versions (1.6.10–1.6.13) of the popular `rest-client` gem, one of which (1.6.13) contained a credential-exfiltrating and cryptomining backdoor — CVE-2019-15224 ([GitHub issue](https://github.com/rest-client/rest-client/issues/713)). | `destructive.gem_push_unreviewed` |
 | Socket's Threat Research Team documented the npm package `mysql-dumpdiscord` (plus companion PyPI/RubyGems packages) reading `.env`/`config.json`/`ayarlar.json` and POSTing their contents as JSON to a hard-coded Discord incoming-webhook URL, part of a broader campaign weaponizing Discord webhooks as low-cost, unauthenticated C2/exfil infrastructure across npm, PyPI, and RubyGems ([Socket](https://socket.dev/blog/weaponizing-discord-for-command-and-control)). | `destructive.webhook_exfiltration` |
+| A user of the skills CLI (the `npx skills` agent-skills manager) reported that its global remove-all command — `--all` is documented shorthand for `--skill '*' --agent '*' -y`, so every skill, every agent, no confirmation — deleted every directory in the shared global skills store, *including hand-authored skills the CLI never installed*, recoverable only because their content happened to survive in unrelated session logs ([vercel-labs/skills #604](https://github.com/vercel-labs/skills/issues/604), fixed upstream by PR #609; a second data-loss bug of the same shape was [#287](https://github.com/vercel-labs/skills/issues/287)). An AI agent "cleaning up" with this one command wipes an asset collection the user may have curated for months. | `destructive.agent_asset_mass_removal` — also covers `claude plugin marketplace remove` (cascades to every plugin sourced from it), `claude plugin uninstall --prune`, and `claude project purge --all`, each verified against the real `claude` CLI. And `~/.claude`, `.claude`, `~/.codex`, `~/.cursor` are now in the default `protected_paths`, so `rm -rf`/`find -delete`/redirect-writes against an agent's own skills/memory/config directories are critical-tier too (`destructive.rm_rf_protected`, the new `destructive.find_delete_protected`, `destructive.write_protected_path`) — and reading `~/.claude/.credentials.json` and shipping it off-machine now trips `destructive.secret_exfiltration` |
 
 Cryptocurrency/wallet operations specifically: the credential-exfiltration path above is real and directly targets Claude Code/Cursor today (TrapDoor). Directly intercepting a wallet-transfer command itself (`cast send`, `solana transfer`, ...) is a narrower, Web3-specific scenario with thinner evidence on this exact product surface — tracked as a possible future addition, not shipped today, and deliberately not oversold here.
 
@@ -171,14 +201,15 @@ Cryptocurrency/wallet operations specifically: the credential-exfiltration path 
 
 Everything below is implemented and covered by passing tests — not aspirational:
 
-- CLI shell-command interception, with real AST parsing (not regex), across 25 default rules (destructive deletes, force pushes, destructive SQL/Mongo/Redis, recursive permission changes, unvetted install pipelines, encoded payloads, sandbox-bypass paths, infra-as-code destroy/unreviewed-apply, destructive git history operations, secret exfiltration, kubectl/cloud-CLI bulk deletes, raw block-device writes, unreviewed crates.io/RubyGems publishes, chat-webhook exfiltration, and more) — see [`docs/threat-model.md`](docs/threat-model.md) and the "Real incidents this defends against" section above for the full list and the real-world incidents behind each one.
-- Claude Code's `Write`/`Edit`/`MultiEdit` tool calls get the same treatment as `Bash` — 3 of the 25 rules above catch a dangerous *file write* (agent permission escalation, git-hook persistence, npm lifecycle-script injection), not just a dangerous command. Claude Code only today; see [`docs/cli-reference.md`](docs/cli-reference.md) §11 for exactly why Cursor and Codex aren't covered yet.
+- CLI shell-command interception, with real AST parsing (not regex), across 27 default rules (destructive deletes, force pushes, destructive SQL/Mongo/Redis, recursive permission changes, unvetted install pipelines, encoded payloads, sandbox-bypass paths, infra-as-code destroy/unreviewed-apply, destructive git history operations, secret exfiltration, kubectl/cloud-CLI bulk deletes, raw block-device writes, unreviewed crates.io/RubyGems publishes, chat-webhook exfiltration, bulk removal of the agent's own installed skills/plugins/project memory, `find -delete` against protected paths, and more) — see [`docs/threat-model.md`](docs/threat-model.md) and the "Real incidents this defends against" section above for the full list and the real-world incidents behind each one.
+- Every rule above now sees through common evasion shapes, not just the literal command typed: a command wrapper (`sudo`/`env`/`nohup`/`timeout`/`exec`/`nice`/`time`/...), an interpreter's `-c` script or `eval` argument, every stage of a pipeline (`rm -rf ~/ | cat` used to slip past entirely, since a pipeline's own Facts carried no per-stage arguments), and compound-command forms (`case`, `declare`, `[[ ... ]]`, `time`, `coproc`) the AST walk didn't previously descend into. See [`docs/threat-model.md`](docs/threat-model.md)'s "Known bypass techniques" table for the specifics — and what's still honestly open (e.g. `xargs`-sourced operands, tilde-path normalization against an already-absolute `Write` tool target).
+- Claude Code's `Write`/`Edit`/`MultiEdit` tool calls get the same treatment as `Bash` — 3 of the 27 rules above catch a dangerous *file write* (agent permission escalation, git-hook persistence, npm lifecycle-script injection), not just a dangerous command. Claude Code only today; see [`docs/cli-reference.md`](docs/cli-reference.md) §11 for exactly why Cursor and Codex aren't covered yet.
 - `damping mcp wrap` — the same policy engine and audit log, for MCP tool calls too, not just your terminal.
 - A local `damping dashboard` (screenshot above) and `damping log` for replaying the full audit trail across both channels — with a risk-over-time chart, a top-triggered-rules breakdown, and a time-range/rule-id filter, both computed over the full audit history, not just the visible table.
 - An embedded OPA/Rego policy engine as a selectable alternative to the default Go-native one.
 - `damping compliance-report demo` / `export` — an early, honestly-scoped preview of the eventual enterprise compliance report: `demo` needs no real deployment (a synthetic 30-day dataset built entirely from real, shipped rules), `export` runs the same report over your actual local audit log, in markdown/text/JSON/self-contained-HTML (with inline charts). Explicitly not the full Phase 5 enterprise feature (no on-prem deployment, no AD/LDAP identity binding, no PostgreSQL) — see [`docs/cli-reference.md`](docs/cli-reference.md) §7.1.
 - `noninteractive_prompt_fallback` — an opt-in policy setting that resolves a `prompt`-tier rule by risk tier when no controlling terminal is available to ask a human (e.g. an unattended background agent), instead of the previously-unconditional deny.
-- 170 BDD (Gherkin) scenarios, all wired to real code and passing, not just documentation.
+- 258 BDD (Gherkin) scenarios, all wired to real code and passing, not just documentation — including a permanent regression suite for every command-wrapper, interpreter-`-c`, pipeline-stage, and compound-command bypass ever found against this rule set.
 - Cross-platform release engineering (Homebrew, one-line install script, GitHub Releases for linux/darwin × amd64/arm64).
 
 Not yet built: Phase 3's full enterprise Gateway (OAuth 2.1, confused-deputy defense), Phase 4's Cloudflare-based team dashboard, Phase 5's enterprise/compliance tier. Engineering-level detail on everything above lives in [`CLAUDE.md`](CLAUDE.md), not here.

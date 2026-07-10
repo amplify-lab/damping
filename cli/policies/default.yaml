@@ -34,6 +34,23 @@ protected_paths:
   - ~/.config/solana
   - ~/.foundry/keystores
   - ~/.ethereum/keystore
+  # Added by the 2026-07 agent-asset-protection expansion: the AI agents'
+  # own config/asset directories — installed skills, subagents, commands,
+  # plugins, MCP registrations, settings, and per-project session/memory
+  # state. Claude Code's ~/.claude also holds .credentials.json (OAuth
+  # tokens), so these entries do double duty: rm/write protection AND
+  # destructive.secret_exfiltration coverage. Protecting the directory
+  # root wholesale (not carving out per-subdir) mirrors the existing
+  # ~/.ssh / ~/.aws convention; the accepted cost is one extra prompt if
+  # an agent deliberately clears a regenerable cache subdir. A real
+  # incident grounds this: Claude Code's own process silently deleting
+  # user-managed files from ~/.claude/agents/ (anthropics/claude-code
+  # issue #41415), and the skills-CLI mass-wipe incident behind
+  # destructive.agent_asset_mass_removal (vercel-labs/skills #604).
+  - ~/.claude
+  - .claude
+  - ~/.codex
+  - ~/.cursor
 
 allowlisted_install_domains:
   - damping.dev
@@ -191,6 +208,25 @@ rules:
   - id: destructive.webhook_exfiltration
     description: curl or wget sending POST data (or an uploaded file) to a Discord/Slack/Microsoft Teams incoming-webhook URL — a low-cost, unauthenticated exfiltration/C2 channel
     risk: high
+    action: prompt
+
+  # --- 2026-07 agent-asset-protection expansion ---
+  # See core/policy/rules_agentasset.go's doc comments for the evidence
+  # behind each of these (vercel-labs/skills issues #604/#287; the claude
+  # CLI's own --help output, verified against the real binary v2.1.206).
+  # The protected_paths additions above (~/.claude, .claude, ~/.codex,
+  # ~/.cursor) are the other half of this expansion: they re-tier
+  # rm -rf / redirect-write / exfiltration against those directories
+  # through the existing rules at zero new matching logic.
+
+  - id: destructive.agent_asset_mass_removal
+    description: Bulk removal of the agent's own installed assets in one shot — skills remove --all or a '*' wildcard (documented shorthand for every skill, every agent, no confirmation, whether run as skills, npx/bunx skills, or pnpm/yarn dlx skills), claude plugin marketplace remove (cascades to every plugin sourced from it), claude plugin uninstall --prune, or claude project purge --all (deletes transcripts/tasks/file-history for every project) — none of these have an undo
+    risk: critical
+    action: prompt
+
+  - id: destructive.find_delete_protected
+    description: find <path> -delete targeting your home directory, the filesystem root, a configured protected path, or a well-known system directory — the same catastrophic-target set as destructive.rm_rf_protected, reached through find instead of rm
+    risk: critical
     action: prompt
 
 # mcp.write_tool_unscoped_identity is implemented (core/policy/rules.go) but

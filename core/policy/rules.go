@@ -51,6 +51,10 @@ var matchers = map[string]matcher{
 	"destructive.cargo_publish_unreviewed": matchCargoPublishUnreviewed,
 	"destructive.gem_push_unreviewed":      matchGemPushUnreviewed,
 	"destructive.webhook_exfiltration":     matchWebhookExfiltration,
+
+	// 2026-07 agent-asset-protection expansion (rules_agentasset.go).
+	"destructive.agent_asset_mass_removal": matchAgentAssetMassRemoval,
+	"destructive.find_delete_protected":    matchFindDeleteProtected,
 }
 
 // RedirectWritePlaceholder is what cli/shell sets Facts.Command to when it

@@ -200,11 +200,66 @@ func matchSecretExfiltration(f Facts, cfg Config) bool {
 	return false
 }
 
+// rawContainsSensitivePath reports whether raw mentions one of the protected
+// paths *at a path boundary*, rather than as an incidental substring of a
+// longer name.
+//
+// The boundary check exists because protected_paths gained short, common
+// entries in the 2026-07 agent-asset expansion — and ".claude" is also a
+// substring of Anthropic's own documentation domain, "docs.claude.com" (and
+// of any "*.claude.ai" host). With a bare strings.Contains, an entirely
+// ordinary command that reads nothing local at all —
+//
+//	curl -s https://docs.claude.com/quickstart | ssh build-host 'cat >> log'
+//
+// — was flagged as critical-tier credential exfiltration. Found by an
+// adversarial review; see features/dangerous_command.feature, "Fetching a
+// public Anthropic docs page is not credential exfiltration".
+//
+// Only the character *before* a match is constrained: a protected path is a
+// prefix, so ".env" must keep matching ".env.local", and "~/.ssh" must keep
+// matching "~/.ssh/id_rsa". Accepted, disclosed residual: "/app/.environment"
+// still matches the ".env" entry, since ".env" does begin at a "/" boundary
+// there — the same text-level tradeoff this rule's pipeline branch already
+// makes by reading paths out of Raw rather than out of a per-stage argv.
 func rawContainsSensitivePath(raw string, protected []string) bool {
 	for _, p := range protected {
-		if strings.Contains(raw, p) {
+		if containsAtPathBoundary(raw, p) {
 			return true
 		}
 	}
 	return false
+}
+
+// containsAtPathBoundary reports whether p occurs in raw at a position where
+// the preceding character cannot be part of a longer file or host name — so a
+// match at the start of raw, or after "/", a space, or a quote, counts, while
+// "docs.claude.com" does not count as containing the path ".claude". Mirrored
+// exactly by policy.rego's contains_at_path_boundary/is_name_byte.
+func containsAtPathBoundary(raw, p string) bool {
+	if p == "" {
+		return false
+	}
+	for i := 0; i+len(p) <= len(raw); {
+		idx := strings.Index(raw[i:], p)
+		if idx < 0 {
+			return false
+		}
+		at := i + idx
+		if at == 0 || !isNameByte(raw[at-1]) {
+			return true
+		}
+		i = at + 1
+	}
+	return false
+}
+
+// isNameByte reports whether b can appear inside a file or host name, and so
+// disqualifies the position after it from being the start of a path.
+func isNameByte(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
+		return true
+	}
+	return b == '.' || b == '-' || b == '_'
 }

@@ -184,7 +184,25 @@ is_short_flag_cluster(a) if {
 
 matches contains "destructive.write_protected_path" if {
 	input.facts.command == "<redirect-write>"
+	not is_agent_authoring_write(input.facts.target)
 	in_protected_paths(input.facts.target)
+}
+
+# is_agent_authoring_write mirrors rules_shell.go's function of the same name:
+# an agent's own commands/skills/agents/rules directories hold content the user
+# and agent author constantly, usually via a heredoc. They are in
+# protected_paths so that *deleting* them is catastrophic-tier, not so that
+# writing into them prompts. settings*.json and hooks/ are deliberately absent
+# from the subdirectory list — a write there is escalation/persistence, not
+# authoring.
+agent_config_dir_names := [".claude", ".codex", ".cursor"]
+
+agent_authoring_subdirs := ["commands", "skills", "agents", "rules"]
+
+is_agent_authoring_write(target) if {
+	some dir in agent_config_dir_names
+	some sub in agent_authoring_subdirs
+	contains(target, concat("", [dir, "/", sub, "/"]))
 }
 
 # --- destructive.dynamic_command_construction ---
@@ -482,9 +500,23 @@ matches contains "destructive.git_history_destructive" if {
 secret_exfil_network_sinks := {"curl", "wget", "nc", "ncat", "ssh", "scp"}
 data_upload_flags := {"-d", "--data", "--data-binary", "--data-raw", "-F", "--form"}
 
+# raw_contains_sensitive_path mirrors rules_expansion.go's function of the
+# same name: a protected path counts only where it begins at a path boundary,
+# so ".claude" is not "found" inside the host name "docs.claude.com". Only the
+# preceding character is constrained — protected paths are prefixes, and
+# ".env" must keep matching ".env.local".
 raw_contains_sensitive_path if {
 	some p in input.config.protected_paths
-	contains(input.facts.raw, p)
+	p != ""
+	some i in indexof_n(input.facts.raw, p)
+	is_path_boundary(input.facts.raw, i)
+}
+
+is_path_boundary(_, 0)
+
+is_path_boundary(raw, i) if {
+	i > 0
+	not regex.match(`[a-zA-Z0-9._-]`, substring(raw, i - 1, 1))
 }
 
 egress_domain_allowlisted if {
@@ -740,3 +772,159 @@ matches contains "destructive.webhook_exfiltration" if {
 	regex.match(webhook_url_pattern, input.facts.raw)
 	webhook_has_data_flag
 }
+
+# --- 2026-07 agent-asset-protection expansion — rules_agentasset.go ---
+# See rules_agentasset.go's doc comments for the grounding evidence
+# (vercel-labs/skills issues #604/#287; the real claude CLI's --help output,
+# v2.1.206). Every helper here mirrors its Go counterpart exactly —
+# core/policy/opa_equivalence_test.go asserts both engines never diverge.
+
+# --- destructive.agent_asset_mass_removal ---
+
+matches contains "destructive.agent_asset_mass_removal" if {
+	input.facts.command == "skills"
+	skills_mass_remove(input.facts.args)
+}
+
+matches contains "destructive.agent_asset_mass_removal" if {
+	input.facts.command in {"npx", "bunx"}
+	idx := runner_package_index(input.facts.args)
+	runner_package_name(input.facts.args[idx]) == "skills"
+	skills_mass_remove(array.slice(input.facts.args, idx + 1, count(input.facts.args)))
+}
+
+matches contains "destructive.agent_asset_mass_removal" if {
+	# Only pnpm/yarn's dlx subcommand runs a fetched package the way npx
+	# does — `pnpm remove <dep>` / `yarn remove <dep>` are ordinary project
+	# dependency management and must never reach the skills check.
+	input.facts.command in {"pnpm", "yarn"}
+	count(input.facts.args) > 0
+	input.facts.args[0] == "dlx"
+	rest := array.slice(input.facts.args, 1, count(input.facts.args))
+	idx := runner_package_index(rest)
+	runner_package_name(rest[idx]) == "skills"
+	skills_mass_remove(array.slice(rest, idx + 1, count(rest)))
+}
+
+matches contains "destructive.agent_asset_mass_removal" if {
+	input.facts.command == "claude"
+	count(input.facts.args) >= 3
+	input.facts.args[0] in {"plugin", "plugins"}
+	input.facts.args[1] == "marketplace"
+	input.facts.args[2] in {"remove", "rm"}
+}
+
+matches contains "destructive.agent_asset_mass_removal" if {
+	input.facts.command == "claude"
+	count(input.facts.args) >= 2
+	input.facts.args[0] in {"plugin", "plugins"}
+	input.facts.args[1] in {"uninstall", "remove"}
+	"--prune" in array.slice(input.facts.args, 2, count(input.facts.args))
+}
+
+matches contains "destructive.agent_asset_mass_removal" if {
+	input.facts.command == "claude"
+	count(input.facts.args) >= 2
+	input.facts.args[0] == "project"
+	input.facts.args[1] == "purge"
+	rest := array.slice(input.facts.args, 2, count(input.facts.args))
+	"--all" in rest
+	not "--dry-run" in rest
+}
+
+# skills_mass_remove mirrors rules_agentasset.go's isSkillsMassRemove: the
+# remove/rm subcommand in fixed first position plus either the --all
+# shorthand or a '*' wildcard operand. A single named removal never matches.
+skills_mass_remove(args) if {
+	count(args) > 0
+	args[0] in {"remove", "rm"}
+	"--all" in array.slice(args, 1, count(args))
+}
+
+skills_mass_remove(args) if {
+	count(args) > 0
+	args[0] in {"remove", "rm"}
+	"*" in array.slice(args, 1, count(args))
+}
+
+# runner_package_index / runner_package_name mirror rules_agentasset.go's
+# runnerWrappedInvocation: the package word is the first argument that is
+# neither a flag nor a value-consuming flag's value (one-position lookback,
+# same shape as is_damping_flag_or_value above), with any @version/@tag
+# suffix stripped — a scoped "@org/pkg" name keeps its leading "@" and so
+# never equals a bare known package name.
+runner_value_flags := {"-p", "--package", "-c", "--call"}
+
+runner_package_index(args) := idx if {
+	candidates := [i |
+		some i, a in args
+		not startswith(a, "-")
+		not is_runner_flag_value(args, i)
+	]
+	count(candidates) > 0
+	idx := candidates[0]
+}
+
+is_runner_flag_value(args, i) if {
+	i > 0
+	args[i - 1] in runner_value_flags
+}
+
+runner_package_name(word) := name if {
+	idx := indexof(word, "@")
+	idx > 0
+	name := substring(word, 0, idx)
+}
+
+runner_package_name(word) := word if {
+	indexof(word, "@") <= 0
+}
+
+# --- destructive.find_delete_protected ---
+# The same catastrophic-target set as destructive.rm_rf_protected, reached
+# through `find <path> -delete` instead of rm — helper checks and precedence
+# (protected wins outright; regenerable/temp targets are only carved out of
+# the system-critical check) mirror matchFindDeleteProtected exactly.
+
+# An operand the parser could not resolve to a literal collapses to "" — for a
+# verb as destructive as -delete, an unprovable target is never assumed safe.
+# Mirrors matchFindDeleteProtected's `if target == ""` branch.
+matches contains "destructive.find_delete_protected" if {
+	input.facts.command == "find"
+	"-delete" in input.facts.args
+	some target in find_path_operands
+	target == ""
+}
+
+matches contains "destructive.find_delete_protected" if {
+	input.facts.command == "find"
+	"-delete" in input.facts.args
+	some target in find_path_operands
+	is_filesystem_or_home_root(target)
+}
+
+matches contains "destructive.find_delete_protected" if {
+	input.facts.command == "find"
+	"-delete" in input.facts.args
+	some target in find_path_operands
+	in_protected_paths(target)
+}
+
+matches contains "destructive.find_delete_protected" if {
+	input.facts.command == "find"
+	"-delete" in input.facts.args
+	some target in find_path_operands
+	not is_regenerable_target(target)
+	is_system_critical_path(target)
+}
+
+# find's starting-point path operands: every argument before the first
+# "-"-prefixed token, where find's own expression begins. Mirrors
+# rules_agentasset.go's findPathOperands (is_rm_flag is the same
+# "-"-prefixed-but-not-bare-dash test both need).
+find_path_operands := array.slice(input.facts.args, 0, find_expression_start)
+
+find_expression_start := min([i |
+	some i, a in input.facts.args
+	is_rm_flag(a)
+])

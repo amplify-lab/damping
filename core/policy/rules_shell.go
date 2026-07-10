@@ -165,8 +165,54 @@ func rmPathOperands(args []string) []string {
 	return out
 }
 
+// agentConfigDirNames / agentAuthoringSubdirs together describe the
+// subdirectories of an AI agent's own config directory whose entire purpose
+// is holding user- or agent-authored *content* files: slash commands, skills,
+// subagent definitions, editor rules. Creating one is the single most
+// ordinary constructive act in an agentic session, and it is very often done
+// with a Bash heredoc (`cat > .claude/commands/foo.md <<'EOF'`) rather than a
+// Write tool call, precisely because heredocs avoid escaping problems.
+//
+// Those config directories entered protected_paths in the 2026-07 agent-asset
+// expansion so that *deleting* them would be catastrophic-tier — not so that
+// *writing into* them would prompt. Without this carve-out, that one config
+// change would have made routine authoring prompt at critical tier: exactly
+// the false-positive class docs/threat-model.md says gets a tool like this
+// uninstalled. Found by an adversarial review before it ever shipped.
+//
+// Deliberately NOT carved out, because a write there is a genuine escalation
+// or persistence vector rather than ordinary authoring: settings.json /
+// settings.local.json (destructive.agent_permission_escalation covers the
+// Write-tool path; this rule is what covers the shell-redirect path), and
+// anything under a hooks/ directory (shell scripts the agent runs
+// automatically).
+//
+// Disclosed gap, unchanged by this carve-out rather than introduced by it:
+// planting a malicious instruction file in one of these authoring directories
+// is a real prompt-injection persistence vector Damping does not detect today.
+// It didn't before these paths were protected either, so this restores the
+// prior behavior rather than regressing it — a content-inspecting rule for
+// authored skill/command files is a scoped future addition, tracked in
+// docs/threat-model.md §3.
+var agentConfigDirNames = []string{".claude", ".codex", ".cursor"}
+var agentAuthoringSubdirs = []string{"commands", "skills", "agents", "rules"}
+
+func isAgentAuthoringWrite(target string) bool {
+	for _, dir := range agentConfigDirNames {
+		for _, sub := range agentAuthoringSubdirs {
+			if strings.Contains(target, dir+"/"+sub+"/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func matchWriteProtectedPath(f Facts, cfg Config) bool {
 	if f.Command != RedirectWritePlaceholder {
+		return false
+	}
+	if isAgentAuthoringWrite(f.Target) {
 		return false
 	}
 	return inProtectedPaths(f.Target, cfg.ProtectedPaths)

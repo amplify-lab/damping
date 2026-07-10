@@ -85,16 +85,45 @@ damping mcp wrap -- npx @some-org/example-mcp-server
 
 Damping 會把真實伺服器的工具原封不動列出來，但每次呼叫都先經過跟終端機一模一樣的政策引擎跟稽核紀錄，過關了才轉送過去。從 client 那邊看，包出來的伺服器行為完全沒變，唯一差別是危險的工具呼叫現在也擋得住了，跟擋一個 shell 指令是同一套邏輯。
 
-### 5. 平常用得到的指令
+## 指令速查表
 
-```
-damping status                     # 現在有沒有開、用哪個政策、接了哪些 agent
-damping doctor                     # 健檢——hook 有沒有掛好、政策檔正不正常、有沒有降級模式紀錄
-damping policy test "rm -rf ~/"     # 拿一個指令乾跑一次看政策怎麼判，不會真的動手
-damping off --for 30m               # 暫停執行（唯一官方支援的停用方式，原因寫在 docs/threat-model.md §4）
-```
+下面每個指令都還能加一個全域的 `--config PATH` 旗標，指定用別的政策檔（預設是 `~/.damping/policy.yaml`）。這裡列的是平常會用到的——每個旗標的完整說明在 [`docs/cli-reference.md`](docs/cli-reference.md)。
 
-完整指令列表在 [`docs/cli-reference.md`](docs/cli-reference.md)。
+**安裝、狀態**
+
+| 指令 | 做什麼 |
+| --- | --- |
+| `damping init` | 一次性設定——自動偵測 Claude Code / Cursor / Codex，裝上預設政策，把 hook 接好。不會覆蓋已經存在的政策檔；想強制刷新成目前版本的預設值就用 `damping init --force`（會整份覆蓋掉） |
+| `damping status` | 現在有沒有開、用哪個政策檔、實際接了哪些 agent |
+| `damping doctor` | 健檢——hook 有沒有掛好、政策檔正不正常、有沒有降級模式紀錄。出包會回傳 exit code 4——這是唯一適合寫進 onboarding 檢查清單或 CI 的指令 |
+| `damping on` | 重新開啟執行 |
+| `damping off [--for 30m]` | 暫停執行——唯一官方支援的停用方式（原因見 [`docs/threat-model.md`](docs/threat-model.md) §4） |
+| `damping version` | 印出目前裝的版本 |
+
+**政策**
+
+| 指令 | 做什麼 |
+| --- | --- |
+| `damping policy list` | 列出目前生效的每一條規則，風險等級跟預設動作 |
+| `damping policy test "rm -rf ~/"` | 拿一個指令乾跑一次看政策怎麼判，不會真的動手。會被問或被擋就回傳 exit code `3`，會放行就回傳 `0` |
+| `damping policy edit` | 用 `$EDITOR` 打開政策檔 |
+| `damping policy validate` | 檢查政策檔的格式對不對，不會真的動手 |
+
+**稽核紀錄**
+
+| 指令 | 做什麼 |
+| --- | --- |
+| `damping log` | 把稽核紀錄重播出來。可以用 `--risk`、`--channel`、`--since`/`--until`、`--outcome`、`--policy-id`、`--actor` 篩選；`--follow` 像 tail -f 一樣即時盯著看；`--json` 適合寫腳本用 |
+| `damping log show EVENT_ID` | 看某一筆事件的完整紀錄 |
+| `damping dashboard [--port] [--host]` | 本機的網頁介面看同一份稽核紀錄，完全不用另外設定——預設綁在 `127.0.0.1:4243` |
+| `damping compliance-report demo` | 日後企業版合規報表的早期預覽——用合成資料，不用真的部署什麼 |
+| `damping compliance-report export` | 拿你自己本機真正的稽核紀錄跑出同一份報表——`--format markdown\|text\|json\|html` |
+
+**MCP**
+
+| 指令 | 做什麼 |
+| --- | --- |
+| `damping mcp wrap -- CMD [args...]` | 把一個真正的 MCP 伺服器包起來，讓它的工具呼叫走跟終端機一模一樣的政策引擎跟稽核紀錄 |
 
 ## 怎麼部署
 
@@ -162,6 +191,7 @@ $ damping log --channel mcp
 | 2025 年 12 月 5 日，有人把冒充正牌 `finch` 的惡意套件 `finch-rust`，還有偷憑證用的 `sha-rust`，直接發布到 crates.io 上——crates.io 團隊當天就把帳號停權、兩個套件都刪了（[Rust Blog](https://blog.rust-lang.org/2025/12/05/crates.io-malicious-crates-finch-rust-and-sha-rust/)）。 | `destructive.cargo_publish_unreviewed` |
 | 2019 年 8 月，有人入侵了某個維護者的 RubyGems.org 帳號，拿去發布了四個惡意版本（1.6.10–1.6.13）的熱門套件 `rest-client`，其中 1.6.13 版藏了偷憑證兼挖礦的後門——CVE-2019-15224（[GitHub issue](https://github.com/rest-client/rest-client/issues/713)）。 | `destructive.gem_push_unreviewed` |
 | Socket 的威脅研究團隊抓到 npm 套件 `mysql-dumpdiscord`（還有配套的 PyPI/RubyGems 套件）會偷讀 `.env`/`config.json`/`ayarlar.json`，再包成 JSON 送到寫死的 Discord webhook 網址——這是一整波把 Discord webhook 當成免費、不用驗證的 C2/外洩管道的攻擊行動，橫跨 npm、PyPI、RubyGems 三個生態系（[Socket](https://socket.dev/blog/weaponizing-discord-for-command-and-control)）。 | `destructive.webhook_exfiltration` |
+| 有個 skills CLI（就是 `npx skills` 那個管理 agent skills 的工具）的使用者回報：它的全域移除指令——`--all` 官方文件寫明就是 `--skill '*' --agent '*' -y` 的縮寫，也就是每個 skill、每個 agent、完全不問你——把共用 skills 目錄裡**每一個**資料夾都刪了，連使用者自己手寫、CLI 根本沒裝過的 skills 也一起帶走，最後是靠內容碰巧留在別的 session log 裡才救回來（[vercel-labs/skills #604](https://github.com/vercel-labs/skills/issues/604)，上游用 PR #609 修掉；同型的資料遺失 bug 還有一個 [#287](https://github.com/vercel-labs/skills/issues/287)）。AI agent 一句「幫你清乾淨」，就可能把你累積好幾個月的 skills 一次抹掉。 | `destructive.agent_asset_mass_removal`——同一條規則也管 `claude plugin marketplace remove`（會連鎖移除該 marketplace 來的所有 plugin）、`claude plugin uninstall --prune`、`claude project purge --all`，每一個都是對著真的 `claude` CLI 驗證過的。另外 `~/.claude`、`.claude`、`~/.codex`、`~/.cursor` 現在都進了預設的 `protected_paths`，所以對 agent 自己的 skills/記憶/設定目錄下手的 `rm -rf`/`find -delete`/重導向寫入，通通升級成 critical 級（`destructive.rm_rf_protected`、新的 `destructive.find_delete_protected`、`destructive.write_protected_path`）——連讀 `~/.claude/.credentials.json` 再往外送，也會觸發 `destructive.secret_exfiltration` |
 
 特別提一下加密貨幣/錢包這塊：上面講的憑證外洩路徑是真的存在，而且現在就直接衝著 Claude Code/Cursor 來（TrapDoor 那個）。至於直接攔截轉帳指令本身（`cast send`、`solana transfer` 這類）則是更窄、更 Web3 專屬的情境，證據沒那麼多——列為以後可能會做的項目，現在還沒做，這裡也不誇大講。
 
@@ -171,14 +201,15 @@ $ damping log --channel mcp
 
 以下這些都已經做完、有測試在把關——不是畫大餅，是現在的實際狀況：
 
-- CLI shell 指令攔截，用的是真正的 AST 解析，不是正規表達式硬湊，涵蓋 25 條預設規則（破壞性刪除、強制推送、破壞性 SQL/Mongo/Redis 操作、遞迴權限變更、沒查核的安裝 pipeline、編碼過的 payload、沙箱繞過路徑、infra-as-code 的 destroy/沒審查就 apply、破壞性的 git 歷史操作、憑證外洩、kubectl/雲端 CLI 大量刪除、對整顆裝置的原始寫入、沒審查的 crates.io/RubyGems 發布、聊天軟體 webhook 外洩，還有更多）——完整清單跟每一條背後的真實事故，見 [`docs/threat-model.md`](docs/threat-model.md) 跟上面「這些是它要防的真實事故」那節。
-- Claude Code 的 `Write`/`Edit`/`MultiEdit` 工具呼叫，現在跟 `Bash` 一樣會被顧到——上面 25 條規則裡有 3 條專門抓危險的*檔案寫入*（agent 權限升級、git-hook 埋後門、npm 生命週期腳本注入），不只是抓危險指令而已。目前只支援 Claude Code；Cursor 跟 Codex 為什麼還沒做，原因寫在 [`docs/cli-reference.md`](docs/cli-reference.md) §11。
+- CLI shell 指令攔截，用的是真正的 AST 解析，不是正規表達式硬湊，涵蓋 27 條預設規則（破壞性刪除、強制推送、破壞性 SQL/Mongo/Redis 操作、遞迴權限變更、沒查核的安裝 pipeline、編碼過的 payload、沙箱繞過路徑、infra-as-code 的 destroy/沒審查就 apply、破壞性的 git 歷史操作、憑證外洩、kubectl/雲端 CLI 大量刪除、對整顆裝置的原始寫入、沒審查的 crates.io/RubyGems 發布、聊天軟體 webhook 外洩、一口氣清光 agent 自己裝的 skills/plugin/專案記憶、對受保護路徑下手的 `find -delete`，還有更多）——完整清單跟每一條背後的真實事故，見 [`docs/threat-model.md`](docs/threat-model.md) 跟上面「這些是它要防的真實事故」那節。
+- 上面每一條規則現在都看得穿常見的規避手法，不是只認你打出來的字面指令：`sudo`/`env`/`nohup`/`timeout`/`exec`/`nice`/`time` 這類指令包裝前綴、直譯器的 `-c` 腳本或 `eval` 參數、管線裡的每一段（以前 `rm -rf ~/ | cat` 會整個溜過去，因為管線自己的 Facts 沒帶任何一段的參數）、還有 `case`、`declare`、`[[ ... ]]`、`time`、`coproc` 這些 AST 解析原本沒走進去的複合指令語法。細節跟現在還沒解決、老實講清楚的部分（像是 `xargs` 從 stdin 帶進來的操作對象、`Write` 工具吃到的絕對路徑跟 tilde 寫法的正規化），見 [`docs/threat-model.md`](docs/threat-model.md) 的「已知繞過手法」表格。
+- Claude Code 的 `Write`/`Edit`/`MultiEdit` 工具呼叫，現在跟 `Bash` 一樣會被顧到——上面 27 條規則裡有 3 條專門抓危險的*檔案寫入*（agent 權限升級、git-hook 埋後門、npm 生命週期腳本注入），不只是抓危險指令而已。目前只支援 Claude Code；Cursor 跟 Codex 為什麼還沒做，原因寫在 [`docs/cli-reference.md`](docs/cli-reference.md) §11。
 - `damping mcp wrap`——同一套政策引擎、同一份稽核紀錄，MCP 工具呼叫也一樣管，不只是終端機。
 - 本機的 `damping dashboard`（畫面如上）跟 `damping log`，可以把兩種管道的完整稽核紀錄重播出來——還有風險趨勢圖、觸發最多次的規則排行，以及時間區間/規則 ID 篩選，這兩個圖表都是算在完整歷史紀錄上，不是只看畫面上那幾筆而已。
 - 內建 OPA/Rego 政策引擎，可以當作預設 Go 引擎之外的另一個選擇。
 - `damping compliance-report demo` / `export`——對日後企業版合規報表的一個早期預覽，而且老實講清楚範圍：`demo` 不用真的部署什麼（用真實、已經在跑的規則湊出一份合成的 30 天資料），`export` 則是拿你自己本機真正的稽核紀錄跑出同一份報表，支援 markdown/text/JSON，還有自帶圖表的 HTML 格式。講清楚這不是完整的 Phase 5 企業版功能（沒有地端部署、沒有 AD/LDAP 身分綁定、沒有 PostgreSQL）——細節在 [`docs/cli-reference.md`](docs/cli-reference.md) §7.1。
 - `noninteractive_prompt_fallback`——一個要自己開才會生效的設定，讓一條該問人的規則，在旁邊沒有終端機可以問的時候（像是背景跑、沒人盯著的 agent），改成照風險等級決定放行還是擋下，不會再像以前那樣不管三七二十一直接擋掉。
-- 170 個 BDD 情境，全部接到真實程式碼跑得過，不是寫好看的。
+- 258 個 BDD 情境，全部接到真實程式碼跑得過，不是寫好看的——其中包含一整套永久迴歸測試，涵蓋歷來被發現能繞過規則的每一種寫法（指令包裝前綴、直譯器的 `-c` 腳本、管線分段、複合指令語法）。
 - 跨平台的發布流程（Homebrew、一行安裝指令、linux/darwin 的 amd64/arm64 都有 GitHub Release）。
 
 還沒做的：Phase 3 完整的企業版 Gateway（OAuth 2.1、防止 confused-deputy）、Phase 4 用 Cloudflare 做的團隊儀表板、Phase 5 的企業/合規層級。上面每一項的工程細節都寫在 [`CLAUDE.md`](CLAUDE.md) 裡，這裡不重複講。

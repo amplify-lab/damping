@@ -566,6 +566,7 @@ func TestAnalyze_PipelineStagesAreEvaluatedIndividually(t *testing.T) {
 		{"cat /etc/hosts | rm -rf ~/", "destructive.rm_rf_protected"},
 		{"echo x | sudo rm -rf ~/", "destructive.rm_rf_protected"},
 		{"echo x | tee log | rm -rf ~/", "destructive.rm_rf_protected"},
+		{"find ~/.claude -delete | cat", "destructive.find_delete_protected"},
 		{"echo x | bash -c 'rm -rf ~/'", "destructive.rm_rf_protected"},
 	} {
 		t.Run(tc.raw, func(t *testing.T) {
