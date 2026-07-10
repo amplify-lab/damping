@@ -6,7 +6,7 @@ Damping is a security tool. If it has a vulnerability, that's not an embarrassme
 
 Please do **not** open a public GitHub issue for a security vulnerability. Instead:
 
-- Email **tim@playplus.com.tw** (interim contact — `damping.dev` is now registered, see `docs/00-統一開發計畫（定案版）.md` §二; a dedicated `security@damping.dev` alias can replace this once set up) with a description of the issue, steps to reproduce, and (if applicable) a proof-of-concept command/policy that demonstrates a bypass.
+- Email **tim@slima.ai** (interim contact — `damping.dev` is now registered; a dedicated `security@damping.dev` alias can replace this once set up) with a description of the issue, steps to reproduce, and (if applicable) a proof-of-concept command/policy that demonstrates a bypass.
 - If you've found a way to defeat a specific default policy rule (e.g. a new shell-parsing bypass not covered in `docs/threat-model.md` §3), that's exactly the kind of report we want — please include the exact command and which rule you expected to fire.
 
 We aim to acknowledge reports within 72 hours and to ship a fix (plus a permanent regression scenario in `features/`) before any public disclosure.
