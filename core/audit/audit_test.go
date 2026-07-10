@@ -320,6 +320,16 @@ func TestParseFilter_PassesThroughPolicyIDAndActionType(t *testing.T) {
 	}
 }
 
+func TestParseFilter_PassesThroughSessionID(t *testing.T) {
+	f, err := ParseFilter(FilterQuery{SessionID: "sess_1"})
+	if err != nil {
+		t.Fatalf("ParseFilter: %v", err)
+	}
+	if f.SessionID != "sess_1" {
+		t.Errorf("expected SessionID to pass through, got %q", f.SessionID)
+	}
+}
+
 // TestFilter_Matches_Until is Since's mirror image: an event at or before
 // Until matches, one after it does not.
 func TestFilter_Matches_Until(t *testing.T) {
@@ -344,6 +354,18 @@ func TestFilter_Matches_PolicyID(t *testing.T) {
 	}
 	if (Filter{PolicyID: "destructive.git_push_force"}).Matches(e) {
 		t.Error("expected a different PolicyID not to match")
+	}
+}
+
+func TestFilter_Matches_SessionID(t *testing.T) {
+	e := sampleEvent(event.ChannelCLI, event.RiskCritical, decision.Deny)
+	e.SessionID = "sess_target"
+
+	if !(Filter{SessionID: "sess_target"}).Matches(e) {
+		t.Error("expected a matching SessionID to match")
+	}
+	if (Filter{SessionID: "sess_other"}).Matches(e) {
+		t.Error("expected a different SessionID not to match")
 	}
 }
 

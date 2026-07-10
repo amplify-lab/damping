@@ -140,6 +140,12 @@ type Filter struct {
 	PolicyID   string
 	ActionType event.ActionType
 
+	// SessionID, if non-empty, requires an exact match against
+	// ActionEvent.SessionID — the dashboard's "click a session card to see
+	// just its events" filter (cli/dashboard/static/index.html), an exact
+	// identity match like Actor/PolicyID rather than a substring search.
+	SessionID string
+
 	// Keyword, if non-empty, requires a case-insensitive substring match
 	// against Target or Raw — the free-text search a fixed-field filter
 	// like Actor/PolicyID can't answer ("show me anything mentioning
@@ -166,6 +172,9 @@ func (f Filter) Matches(e event.ActionEvent) bool {
 		return false
 	}
 	if f.Actor != "" && e.Actor != f.Actor {
+		return false
+	}
+	if f.SessionID != "" && e.SessionID != f.SessionID {
 		return false
 	}
 	if !f.Since.IsZero() && e.Timestamp.Before(f.Since) {
@@ -225,6 +234,7 @@ type FilterQuery struct {
 	ActionType string
 	Keyword    string
 	Before     string // same vocabulary as Since/Until; in practice always an absolute timestamp — a "load older" cursor is built from an already-seen event's own Timestamp, never a relative duration
+	SessionID  string
 }
 
 // ParseFilter builds a Filter from the same string vocabulary every surface
@@ -248,6 +258,7 @@ func ParseFilter(q FilterQuery) (Filter, error) {
 		PolicyID:   q.PolicyID,
 		ActionType: event.ActionType(q.ActionType),
 		Keyword:    q.Keyword,
+		SessionID:  q.SessionID,
 	}
 	if q.Since != "" {
 		t, err := parseTimeBound(q.Since)

@@ -271,6 +271,34 @@ func TestHandleEvents_FiltersByKeyword(t *testing.T) {
 	}
 }
 
+// TestHandleEvents_FiltersBySessionID is the dashboard-level regression test
+// for clicking a session card in the "Recent sessions" panel: the resulting
+// ?session_id= request must scope the events table to just that session,
+// the same way `damping log --session <id>` (via --actor/--since) already
+// lets a terminal user narrow down manually.
+func TestHandleEvents_FiltersBySessionID(t *testing.T) {
+	s, auditPath := newTestServer(t, policies.Default)
+	w := audit.NewWriter(auditPath)
+	mustAppend := func(e event.ActionEvent) {
+		t.Helper()
+		if err := w.Append(e); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+	mustAppend(sampleEvent("s1", "claude-code", event.ChannelCLI, event.RiskLow, decision.Decision{Verdict: decision.Allow}))
+	mustAppend(sampleEvent("s2", "claude-code", event.ChannelCLI, event.RiskLow, decision.Decision{Verdict: decision.Allow}))
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, newLocalRequest("/api/events?session_id=s2"))
+	var got []event.ActionEvent
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding events: %v", err)
+	}
+	if len(got) != 1 || got[0].SessionID != "s2" {
+		t.Fatalf("expected only s2's event, got %+v", got)
+	}
+}
+
 // TestHandleEvents_BeforeCursorEnablesLoadOlderPagination is the dashboard-
 // level regression test for the "load older" pattern: fetching with
 // ?before=<oldest event already shown> must return the next page back in
@@ -438,10 +466,9 @@ func TestHandleSessions_GroupsAndOrdersMostRecentFirst(t *testing.T) {
 			t.Fatalf("append: %v", err)
 		}
 	}
-	// s1 is active first and is still spiking (its last point is its worst
-	// risk yet); s2 is active more recently and has settled (its last point
-	// is its best) — s2 should sort first by recency, independent of which
-	// one is actually settled.
+	// s1 is active first and its last point is critical (still spiking);
+	// s2 is active more recently and its last point is low — s2 should sort
+	// first by recency, independent of either session's own risk trend.
 	mustAppend(sampleEvent("s1", "claude-code", event.ChannelCLI, event.RiskLow, decision.Decision{Verdict: decision.Allow}))
 	mustAppend(sampleEvent("s1", "claude-code", event.ChannelCLI, event.RiskCritical, decision.Decision{Verdict: decision.Deny}))
 	mustAppend(sampleEvent("s2", "cursor", event.ChannelCLI, event.RiskHigh, decision.Decision{Verdict: decision.Prompt}))
@@ -459,11 +486,11 @@ func TestHandleSessions_GroupsAndOrdersMostRecentFirst(t *testing.T) {
 	if got[0].SessionID != "s2" {
 		t.Fatalf("expected the most-recently-active session (s2) first, got %+v", got)
 	}
-	if !got[0].Settled {
-		t.Fatalf("expected s2 (critical/high -> low) to be settled, got %+v", got[0])
+	if got[0].LatestRisk != event.RiskLow {
+		t.Fatalf("expected s2's latest risk to be low (its last event), got %+v", got[0])
 	}
-	if got[1].Settled {
-		t.Fatalf("expected s1 (low -> critical, still spiking) to NOT be settled, got %+v", got[1])
+	if got[1].LatestRisk != event.RiskCritical {
+		t.Fatalf("expected s1's latest risk to be critical (its last event), got %+v", got[1])
 	}
 }
 
@@ -498,11 +525,11 @@ func TestHandleSessions_OrdersByLastActivityWhenSessionsInterleave(t *testing.T)
 	if len(got) != 2 || got[0].SessionID != "old" {
 		t.Fatalf("expected 'old' (most recently active, despite starting first) sorted first, got %+v", got)
 	}
-	if got[0].Settled {
-		t.Fatalf("expected 'old' (low -> critical, still spiking) to NOT be settled, got %+v", got[0])
+	if got[0].LatestRisk != event.RiskCritical {
+		t.Fatalf("expected 'old's latest risk to be critical (its last event), got %+v", got[0])
 	}
-	if got[1].SessionID != "new" || !got[1].Settled {
-		t.Fatalf("expected 'new' (high -> low, settled) second, got %+v", got[1])
+	if got[1].SessionID != "new" || got[1].LatestRisk != event.RiskLow {
+		t.Fatalf("expected 'new' (latest risk low) second, got %+v", got[1])
 	}
 }
 

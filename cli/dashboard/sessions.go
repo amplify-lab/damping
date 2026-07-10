@@ -30,8 +30,24 @@ const (
 type sessionSpark struct {
 	SessionID string `json:"session_id"`
 	Actor     string `json:"actor"`
-	Points    []int  `json:"points"`  // risk level per event in chronological order: low=1 .. critical=4
-	Settled   bool   `json:"settled"` // true if the most recent point is the lowest risk seen this session — the "flattened" half of the damped-oscillation motif
+	Points    []int  `json:"points"` // risk level per event in chronological order: low=1 .. critical=4
+
+	// LatestRisk is the most recent event's own risk tier — a plain enum
+	// value (never adversarial free text like Target/Raw), so unlike Points
+	// it needs no numeric encoding to stay safe for the client to render
+	// directly. This replaced an earlier "Settled" boolean (whether the
+	// latest point was this session's lowest risk yet) after real user
+	// confusion: a user reported seeing every session in the panel labeled
+	// "已結束"/"ended" and reasonably read that as "is this agent session
+	// still open," which this package has no way to know at all — it only
+	// ever reads the audit log, never live process/connection state. A
+	// single-event session was also *always* "settled" by that definition
+	// (isSettled's own len<2 case), regardless of whether the underlying
+	// session was brand new and very much still running. LatestRisk is
+	// legible on its own terms instead: "the last thing this session did
+	// was low/medium/high/critical risk," rendered as a colored dot the
+	// same way every risk badge elsewhere in this dashboard already is.
+	LatestRisk event.RiskLevel `json:"latest_risk"`
 }
 
 func riskScore(r event.RiskLevel) int {
@@ -74,6 +90,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			ids = append(ids, e.SessionID)
 		}
 		spark.Points = append(spark.Points, riskScore(e.RiskLevel))
+		spark.LatestRisk = e.RiskLevel // events are processed in chronological order, so this ends up holding the last one's
 		lastSeenIdx[e.SessionID] = i
 	}
 
@@ -90,26 +107,8 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		if len(spark.Points) > maxPointsPerSession {
 			spark.Points = spark.Points[len(spark.Points)-maxPointsPerSession:]
 		}
-		spark.Settled = isSettled(spark.Points)
 		sessions = append(sessions, *spark)
 	}
 
 	writeJSON(w, sessions)
-}
-
-// isSettled reports whether the most recent point is at (or below) the
-// lowest risk level seen earlier in the session — the visual/semantic
-// signal docs/ux-dashboard-spec.md §1 calls "a session under policy",
-// distinguishable from one "still spiking".
-func isSettled(points []int) bool {
-	if len(points) < 2 {
-		return true
-	}
-	last := points[len(points)-1]
-	for _, p := range points[:len(points)-1] {
-		if last > p {
-			return false
-		}
-	}
-	return true
 }

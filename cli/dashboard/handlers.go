@@ -83,6 +83,7 @@ func parseFilterQuery(r *http.Request) (audit.Filter, error) {
 		ActionType: q.Get("action_type"),
 		Keyword:    q.Get("keyword"),
 		Before:     q.Get("before"),
+		SessionID:  q.Get("session_id"),
 	})
 }
 

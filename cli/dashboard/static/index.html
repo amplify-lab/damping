@@ -64,6 +64,11 @@
           <input id="live-toggle" type="checkbox" checked>
           <span data-i18n="filter_live">Live</span>
         </label>
+        <input type="hidden" name="session_id" id="session-filter-input">
+        <span id="session-filter-chip" class="session-filter-chip hidden">
+          <span data-i18n="filtered_by_session">Session:</span> <span id="session-filter-label"></span>
+          <button type="button" id="session-filter-clear" data-i18n-aria-label="clear_session_filter" aria-label="Clear session filter">&times;</button>
+        </span>
         <span id="stream-status" class="text-xs text-slate-500" role="status"></span>
         <span id="truncated-note" data-i18n="truncated_note" class="text-xs text-amber-400 hidden" role="status">showing only the most recent events — narrow with Since for the rest</span>
       </form>
@@ -105,7 +110,19 @@
     </section>
 
     <aside aria-label="Recent sessions" class="flex flex-col gap-2">
-      <h2 data-i18n="recent_sessions" class="text-slate-400 text-xs uppercase tracking-wide font-medium">Recent sessions</h2>
+      <div class="relative flex items-center gap-1.5">
+        <h2 data-i18n="recent_sessions" class="text-slate-400 text-xs uppercase tracking-wide font-medium">Recent sessions</h2>
+        <button type="button" id="session-help-btn" class="info-btn" aria-haspopup="true" aria-expanded="false" data-i18n-aria-label="session_help_aria" aria-label="What do the colors mean?">?</button>
+        <div id="session-help-popover" class="info-popover hidden" role="tooltip">
+          <p data-i18n="session_help_body" class="text-xs text-slate-300 mb-2">Dot color is the risk level of that session's most recent action — not whether the session itself is still open (this dashboard only reads the audit log, it can't see live connections).</p>
+          <div class="flex gap-3 text-xs text-slate-500 flex-wrap">
+            <span><span class="legend-dot" style="background:#14b8a6"></span><span data-i18n="risk_low">low</span></span>
+            <span><span class="legend-dot" style="background:#eab308"></span><span data-i18n="risk_medium">medium</span></span>
+            <span><span class="legend-dot" style="background:#f59e0b"></span><span data-i18n="risk_high">high</span></span>
+            <span><span class="legend-dot" style="background:#ef4444"></span><span data-i18n="risk_critical">critical</span></span>
+          </div>
+        </div>
+      </div>
       <div id="sessions-list" class="flex flex-col gap-2"></div>
     </aside>
 
@@ -145,13 +162,13 @@
 </template>
 
 <template id="session-template">
-  <div class="rounded border border-slate-800 p-2">
+  <button type="button" class="session-card" aria-pressed="false">
     <div class="flex items-center justify-between gap-2 text-xs mb-1">
       <span class="font-mono text-slate-300 truncate" data-field="actor"></span>
-      <span class="settled-badge" data-field="settled"></span>
+      <span class="risk-dot" data-field="risk-dot" aria-hidden="true"></span>
     </div>
     <svg data-field="sparkline" viewBox="0 0 100 24" preserveAspectRatio="none" class="w-full h-6"></svg>
-  </div>
+  </button>
 </template>
 
 <script src="/static/charts.js"></script>
@@ -189,7 +206,9 @@ const I18N = {
     events_error: "Couldn't load the audit log. ", retry: "Retry",
     load_older: "Load older events", loading_older: "Loading…", no_more_events: "No older events.",
     recent_sessions: "Recent sessions", no_sessions: "No sessions yet.", sessions_error: "Couldn't load sessions.",
-    settled: "settled", active: "active",
+    session_help_aria: "What do the colors mean?",
+    session_help_body: "Dot color is the risk level of that session's most recent action — not whether the session itself is still open (this dashboard only reads the audit log, it can't see live connections). Click a session to filter the events table to just that session.",
+    filtered_by_session: "Session:", clear_session_filter: "Clear session filter",
     detail_title: "Event detail", close: "Close",
     detail_event_id: "Event ID", detail_time: "Time", detail_session: "Session", detail_actor: "Actor", detail_identity: "Identity",
     detail_channel: "Channel", detail_action_type: "Action type", detail_target: "Target", detail_raw: "Raw",
@@ -222,7 +241,9 @@ const I18N = {
     events_error: "稽核紀錄載入失敗。 ", retry: "重試",
     load_older: "載入更早的事件", loading_older: "載入中…", no_more_events: "沒有更早的事件了。",
     recent_sessions: "近期 session", no_sessions: "目前沒有 session。", sessions_error: "session 載入失敗。",
-    settled: "已結束", active: "進行中",
+    session_help_aria: "顏色代表什麼？",
+    session_help_body: "圓點顏色代表這個 session 最新一筆動作的風險等級——不代表這個 session 現在是否還開著（這個 dashboard 只讀取稽核紀錄，沒辦法得知即時連線狀態）。點選某個 session 可以把下方事件表格過濾成只顯示那個 session。",
+    filtered_by_session: "Session：", clear_session_filter: "清除 session 篩選",
     detail_title: "事件詳情", close: "關閉",
     detail_event_id: "事件 ID", detail_time: "時間", detail_session: "Session", detail_actor: "Actor", detail_identity: "身分",
     detail_channel: "管道", detail_action_type: "動作類型", detail_target: "對象", detail_raw: "原始內容",
@@ -252,6 +273,7 @@ function applyStaticI18n() {
   document.documentElement.lang = lang === "zh" ? "zh-Hant" : "en";
   document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
   document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => { el.placeholder = t(el.dataset.i18nPlaceholder); });
+  document.querySelectorAll("[data-i18n-aria-label]").forEach((el) => { el.setAttribute("aria-label", t(el.dataset.i18nAriaLabel)); });
   document.querySelectorAll(".lang-toggle button").forEach((btn) => {
     btn.setAttribute("aria-pressed", String(btn.dataset.lang === lang));
   });
@@ -264,7 +286,7 @@ function setLang(l) {
   applyStaticI18n();
   applyStreamStatus(); // onopen/onerror only fire on a state *change*, not on this toggle
   renderEvents(currentEvents); // re-render risk/decision badge labels
-  loadSessions(); // re-render settled/active badge labels (cheap, small payload)
+  loadSessions(); // re-render session card aria-labels/help popover text (cheap, small payload)
   if (cachedRules) renderPolicyModal(cachedRules); // re-render group headers/action badges if already open once
 }
 
@@ -433,6 +455,7 @@ document.getElementById("detail-close").addEventListener("click", closeDetail);
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !document.getElementById("detail-drawer").classList.contains("hidden")) closeDetail();
   if (e.key === "Escape" && !document.getElementById("policy-modal").classList.contains("hidden")) closePolicyModal();
+  if (e.key === "Escape" && !document.getElementById("session-help-popover").classList.contains("hidden")) toggleSessionHelp(false);
 });
 
 // --- Policy explainer modal ---
@@ -547,6 +570,7 @@ function prependEvent(ev) {
   if (f.get("channel") && ev.channel !== f.get("channel")) return;
   if (f.get("risk") && ev.risk_level !== f.get("risk")) return;
   if (f.get("actor") && ev.actor !== f.get("actor")) return;
+  if (f.get("session_id") && ev.session_id !== f.get("session_id")) return;
   if (f.get("keyword")) {
     const kw = f.get("keyword").toLowerCase();
     if (!(ev.target || "").toLowerCase().includes(kw) && !(ev.raw || "").toLowerCase().includes(kw)) return;
@@ -647,6 +671,57 @@ async function loadSummary() {
   }
 }
 
+// --- Session card click-to-filter ---
+// currentSessionFilter is tracked separately from the hidden form field's
+// own value so renderSessionSelection can re-apply the "selected" highlight
+// on every loadSessions() call — that function fully rebuilds the sessions
+// list's DOM from scratch on each refresh (periodic timer, language toggle,
+// a new live event), which would otherwise silently drop the highlight.
+let currentSessionFilter = null;
+
+function setSessionFilter(sessionID, label) {
+  currentSessionFilter = sessionID;
+  document.getElementById("session-filter-input").value = sessionID || "";
+  const chip = document.getElementById("session-filter-chip");
+  if (sessionID) {
+    document.getElementById("session-filter-label").textContent = label;
+    chip.classList.remove("hidden");
+  } else {
+    chip.classList.add("hidden");
+  }
+  renderSessionSelection();
+  loadEvents();
+  loadStats();
+  if (document.getElementById("live-toggle").checked) startStream();
+}
+
+function renderSessionSelection() {
+  document.querySelectorAll(".session-card").forEach((card) => {
+    const selected = card.dataset.sessionId === currentSessionFilter;
+    card.classList.toggle("session-card-selected", selected);
+    card.setAttribute("aria-pressed", String(selected));
+  });
+}
+
+document.getElementById("session-filter-clear").addEventListener("click", () => setSessionFilter(null, ""));
+
+// --- "Recent sessions" help popover ---
+const sessionHelpBtn = document.getElementById("session-help-btn");
+const sessionHelpPopover = document.getElementById("session-help-popover");
+
+function toggleSessionHelp(show) {
+  const willShow = show === undefined ? sessionHelpPopover.classList.contains("hidden") : show;
+  sessionHelpPopover.classList.toggle("hidden", !willShow);
+  sessionHelpBtn.setAttribute("aria-expanded", String(willShow));
+}
+
+sessionHelpBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleSessionHelp(); });
+document.addEventListener("click", (e) => {
+  if (!sessionHelpPopover.classList.contains("hidden") && e.target !== sessionHelpBtn && !sessionHelpPopover.contains(e.target)) {
+    toggleSessionHelp(false);
+  }
+});
+
 async function loadSessions() {
   const list = document.getElementById("sessions-list");
   try {
@@ -664,13 +739,24 @@ async function loadSessions() {
     const tpl = document.getElementById("session-template");
     for (const sess of sessions) {
       const card = tpl.content.firstElementChild.cloneNode(true);
-      card.querySelector('[data-field="actor"]').textContent = sess.actor + " · " + sess.session_id;
-      const badge = card.querySelector('[data-field="settled"]');
-      badge.textContent = sess.settled ? t("settled") : t("active");
-      badge.classList.add(sess.settled ? "badge-allow" : "badge-high");
+      const label = sess.actor + " · " + sess.session_id;
+      card.querySelector('[data-field="actor"]').textContent = label;
+      card.title = label;
+      card.dataset.sessionId = sess.session_id;
+
+      const risk = sess.latest_risk || "low";
+      const dot = card.querySelector('[data-field="risk-dot"]');
+      dot.style.background = DampingCharts.RISK_COLORS[risk] || DampingCharts.RISK_COLORS.low;
+      card.setAttribute("aria-label", label + " — " + t("risk_" + risk));
+
       DampingCharts.sparkline(card.querySelector('[data-field="sparkline"]'), sess.points || []);
+      card.addEventListener("click", () => {
+        if (currentSessionFilter === sess.session_id) setSessionFilter(null, "");
+        else setSessionFilter(sess.session_id, label);
+      });
       list.appendChild(card);
     }
+    renderSessionSelection();
   } catch (e) {
     list.textContent = "";
     const err = document.createElement("div");

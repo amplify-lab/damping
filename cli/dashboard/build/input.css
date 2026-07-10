@@ -31,11 +31,38 @@
   .badge-cli { @apply bg-slate-800 text-slate-300; }
   .badge-mcp { @apply bg-indigo-950 text-indigo-300; }
 
-  .settled-badge { @apply text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400; }
-
   .stats-card { @apply rounded border border-slate-800 bg-slate-900/50 p-3 flex flex-col gap-2; }
   .stats-title { @apply text-xs text-slate-500 uppercase tracking-wide font-medium; }
   .legend-dot { @apply inline-block w-2 h-2 rounded-full mr-1 align-middle; }
+
+  /* risk-dot: a session card's at-a-glance status indicator — colored via
+     inline style from the same DampingCharts.RISK_COLORS hex values the
+     risk-over-time chart's own legend-dot already uses, so both readings of
+     "what does this color mean" stay pixel-identical. Sized up from
+     legend-dot (which is a small annotation beside other text) since this
+     is the primary signal on each card, not a caption. */
+  .risk-dot { @apply inline-block w-2.5 h-2.5 rounded-full shrink-0 ring-1 ring-slate-950/60; }
+
+  /* session-card: the "Recent sessions" panel's now-clickable cards (click
+     to scope the events table to just that session — see setSessionFilter
+     in index.html). A plain <button>, not a <div>, so Enter/Space/click all
+     work for free without hand-rolled keydown handling. */
+  .session-card { @apply rounded border border-slate-800 p-2 w-full text-left cursor-pointer hover:border-slate-700 hover:bg-slate-900/40 focus:outline-none focus:ring-1 focus:ring-teal-500 transition-colors; }
+  .session-card-selected { @apply border-teal-600 bg-teal-950/30; }
+
+  /* session-filter-chip: appears in the filter bar only while a session
+     card is selected — the visible, dismissible affordance for a filter
+     that was applied by clicking rather than typing into a form field. */
+  .session-filter-chip { @apply flex items-center gap-1.5 text-xs bg-teal-950/50 text-teal-300 border border-teal-800 rounded px-2 py-1; }
+  .session-filter-chip button { @apply text-teal-400 hover:text-teal-200 leading-none; }
+
+  /* info-btn/info-popover: a small "?" affordance next to a heading whose
+     meaning isn't self-evident from the UI alone (what do the Recent
+     Sessions dot colors mean?) — deliberately a lightweight click-toggled
+     popover, not a full modal-overlay dialog, since the content is one
+     sentence plus a color key, not a scrollable list. */
+  .info-btn { @apply w-4 h-4 rounded-full border border-slate-700 text-slate-500 text-[10px] leading-none flex items-center justify-center hover:border-slate-500 hover:text-slate-300 transition-colors; }
+  .info-popover { @apply absolute z-10 mt-1 w-64 rounded border border-slate-800 bg-slate-900 p-2.5 shadow-lg; }
 
   .bar-row { @apply flex items-center gap-2 text-xs; }
   .bar-label { @apply font-mono text-slate-400 w-48 truncate shrink-0; }
