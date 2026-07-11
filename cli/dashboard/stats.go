@@ -74,11 +74,12 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid filter: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	events, err := audit.ReadAll(s.cfg.AuditPath, f)
+	all, err := s.auditEvents()
 	if err != nil {
 		http.Error(w, "reading audit log: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	events := filterEvents(all, f)
 	writeJSON(w, computeStats(events, f))
 }
 

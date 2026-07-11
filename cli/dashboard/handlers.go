@@ -1,8 +1,10 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -11,9 +13,21 @@ import (
 
 	"github.com/amplify-lab/damping/cli/adapter/agent"
 	"github.com/amplify-lab/damping/cli/enforcement"
+	"github.com/amplify-lab/damping/cli/update"
 	"github.com/amplify-lab/damping/core/audit"
 	"github.com/amplify-lab/damping/core/event"
 	"github.com/amplify-lab/damping/core/policy"
+)
+
+// currentMethod and applyUpdate are handleVersion/handleUpdate's only calls
+// into cli/update, reassigned as package-level vars (rather than called
+// directly) purely so tests can substitute a fake self-update without ever
+// executing a real curl-pipe-sh/brew/powershell command — see
+// TestHandleUpdate_StreamsSuccessDoneFrame in server_test.go. Production
+// code never reassigns these; they always resolve to the real functions.
+var (
+	currentMethod = update.CurrentMethod
+	applyUpdate   = update.Apply
 )
 
 // summary is /api/summary's response shape — the same facts `damping
@@ -57,9 +71,10 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 	// as a field instead (like PolicyError above) rather than failing this
 	// whole request, since the rest of the summary is still valid even if
 	// this one check couldn't complete.
-	if degraded, err := audit.ReadAll(s.cfg.AuditPath, audit.Filter{Outcome: "degraded", Since: time.Now().Add(-7 * 24 * time.Hour)}); err != nil {
+	if events, err := s.auditEvents(); err != nil {
 		out.DegradedError = err.Error()
 	} else {
+		degraded := filterEvents(events, audit.Filter{Outcome: "degraded", Since: time.Now().Add(-7 * 24 * time.Hour)})
 		out.DegradedCount7d = len(degraded)
 	}
 
@@ -113,11 +128,12 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		limit = n
 	}
 
-	events, err := audit.ReadAll(s.cfg.AuditPath, f)
+	all, err := s.auditEvents()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("reading audit log: %v", err), http.StatusInternalServerError)
 		return
 	}
+	events := filterEvents(all, f)
 	limited := audit.LimitMostRecent(events, limit)
 	if len(limited) < len(events) {
 		// docs/ux-dashboard-spec.md §4's "never silently drop data" applies
@@ -224,6 +240,228 @@ func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
 		rules = []policy.RuleConfig{} // never render as JSON null
 	}
 	writeJSON(w, rules)
+}
+
+// versionResponse is /api/version's response shape — the header's version
+// label, its "update available" badge, and the confirmation panel opened
+// from it all render straight off this, without duplicating any of
+// cli/update's own detection logic (see cli/cmd/update.go for the terminal
+// equivalent this mirrors).
+type versionResponse struct {
+	Current         string `json:"current"`
+	Latest          string `json:"latest"`
+	UpdateAvailable bool   `json:"update_available"`
+	GithubURL       string `json:"github_url"`
+	Method          string `json:"method"`
+	Command         string `json:"command"`
+	CanAutoUpdate   bool   `json:"can_auto_update"`
+}
+
+// githubURL is where the header's version label links out to, and the
+// value /api/version reports as github_url.
+const githubURL = "https://github.com/amplify-lab/damping"
+
+// handleVersion reports this install's own update state: the same
+// current/latest/available facts `damping update` already computes
+// (cli/cmd/update.go), plus the exact self-update command
+// currentMethod() would run. No auth beyond the existing Host-header check
+// (unlike POST /api/update below) — this is read-only and reveals nothing
+// an operator with a terminal on this machine couldn't already see by
+// running `damping update` themselves.
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	info := update.Check(r.Context(), s.cfg.Version)
+	method := currentMethod()
+	writeJSON(w, versionResponse{
+		Current:         info.Current,
+		Latest:          info.Latest,
+		UpdateAvailable: info.Available,
+		GithubURL:       githubURL,
+		Method:          method.Kind,
+		// Method.Display() (not a naive Executable+Args join): for "script"/
+		// "windows", Args wraps the real command inside `sh -c "..."` /
+		// `powershell -Command "..."` for exec.Command's own argv-based
+		// invocation, and a plain space-join loses that inner quoting — see
+		// Display's own doc comment in cli/update/method.go. Using it here
+		// keeps the dashboard and `damping update`'s terminal output
+		// (cli/cmd/update.go) always showing the identical command for
+		// identical state, rather than two independent renderings that can
+		// drift.
+		Command:       method.Display(),
+		CanAutoUpdate: info.Available && !method.NeedsElevation,
+	})
+}
+
+// dashboardHeader is the custom header POST /api/update requires before
+// doing anything else at all.
+//
+// This dashboard has NO AUTHENTICATION by design (see this package's own
+// doc comment), and Handler's Host-header check above defends specifically
+// against DNS rebinding — neither stops a plain cross-origin CSRF POST: a
+// malicious webpage open in the same browser, at the same time `damping
+// dashboard` happens to be running, can fire a blind cross-origin
+// fetch/form POST straight at http://127.0.0.1:<port>/api/update with a
+// real, matching Host header (no rebinding involved at all), and a simple
+// POST triggers no CORS preflight on its own. Since this endpoint replaces
+// the user's installed binary, that gap is unacceptable.
+//
+// Requiring this custom header closes it: a custom request header forces
+// the browser to CORS-preflight the request first, and since this server
+// never sends an Access-Control-Allow-Origin header, the browser's own
+// same-origin policy fails that preflight and never sends the real POST at
+// all for a cross-origin caller. This is the same pattern Vite's and
+// webpack-dev-server's local dev servers use to protect themselves from
+// requests originating from any other page open in the browser — it is not
+// optional boilerplate, it is the actual CSRF defense for this endpoint.
+// The re-checks in handleUpdate below (NeedsElevation, the in-flight guard)
+// are real safety nets, but this header is the gate that keeps an
+// arbitrary web page from ever reaching them.
+const dashboardHeader = "X-Damping-Dashboard"
+
+// remoteAddrIsLoopback reports whether remoteAddr — an *http.Request's own
+// RemoteAddr, the actual TCP peer address net/http records for the
+// connection, never anything a client can spoof via a header — is a
+// loopback address. This is POST /api/update's actual defense against the
+// 0.0.0.0 case: if the operator starts `damping dashboard --host 0.0.0.0`
+// (cli/cmd/dashboard.go warns loudly about that choice at startup), the
+// dashboardHeader check above stops a malicious webpage's cross-origin
+// fetch, but does nothing at all against a plain `curl` from another
+// machine on the same network — curl can set any header it likes, no
+// browser/CORS involved. Since this endpoint replaces the user's installed
+// binary, a stranger elsewhere on the LAN reaching it at all is
+// unacceptable, independent of --host: this check runs regardless of what
+// BindHost the server was configured with (unlike checkHostHeader in
+// server.go, which deliberately steps aside once bound to 0.0.0.0).
+func remoteAddrIsLoopback(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr // no port present (unusual, but be lenient) — try the whole value as a bare address
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// updateDoneFrame is the final SSE frame handleUpdate always sends, win or
+// lose — the client's fetch-based reader (index.html cannot use
+// EventSource here; see its own comment on why) treats this as the signal
+// to stop reading and show a terminal success/failure state.
+type updateDoneFrame struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// handleUpdate runs this install's self-update in place and streams its
+// output back as it happens, using exactly the SSE framing
+// handleEventStream already established (same headers, same Flusher check,
+// same "data: <line>\n\n" convention with embedded newlines flattened, same
+// "event: error\ndata: ...\n\n" convention on failure) — plus a final
+// "event: done" frame the client uses to know the stream is over and
+// whether it succeeded.
+//
+// Security-critical: read dashboardHeader's and remoteAddrIsLoopback's doc
+// comments above before touching this function. In order:
+//
+//  1. Reject anything whose RemoteAddr isn't loopback — see
+//     remoteAddrIsLoopback's doc comment for why this must run regardless
+//     of --host.
+//  2. Reject anything without the dashboardHeader header — the CSRF gate
+//     for a same-machine browser; see dashboardHeader's doc comment for why.
+//  3. The request body is never read at all. method (and the command line
+//     derived from it) is always recomputed fresh, server-side, via
+//     currentMethod() — nothing the client could send in a body, query
+//     string, or otherwise ever reaches exec.Command. There is no
+//     command-injection surface on this endpoint.
+//  4. NeedsElevation is re-checked fresh, server-side, right here — never
+//     trusted from any client-sent "I confirmed" signal. The checks above
+//     are the real security gates; this is a correctness backstop against
+//     ever actually running an installer that needs privileges this
+//     process doesn't have.
+//  5. updateInFlight guards against two concurrent runs: a second POST
+//     arriving while one is already applying gets 409 Conflict, never a
+//     second concurrent install.
+func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
+	if !remoteAddrIsLoopback(r.RemoteAddr) {
+		http.Error(w, "damping dashboard: rejected — POST /api/update only accepts requests originating from this machine itself, regardless of --host (see remoteAddrIsLoopback's doc comment in cli/dashboard/handlers.go)", http.StatusForbidden)
+		return
+	}
+	if r.Header.Get(dashboardHeader) != "1" {
+		http.Error(w, "damping dashboard: missing "+dashboardHeader+" header — see handleUpdate's doc comment in cli/dashboard/handlers.go", http.StatusForbidden)
+		return
+	}
+
+	method := currentMethod()
+	if method.NeedsElevation {
+		http.Error(w, "damping dashboard: this install needs elevated privileges to update — damping won't request them on your behalf; run the command shown in the dashboard yourself", http.StatusForbidden)
+		return
+	}
+
+	if !s.updateInFlight.CompareAndSwap(false, true) {
+		http.Error(w, "damping dashboard: an update is already in progress", http.StatusConflict)
+		return
+	}
+	defer s.updateInFlight.Store(false)
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	// context.WithoutCancel: a browser disconnecting mid-update (tab closed,
+	// laptop sleeps, network blip) cancels r.Context() — but this replaces
+	// the running binary on disk, and a half-applied update on cancel is
+	// worse than a client that never sees the result. The update always runs
+	// to completion server-side; streaming its output back stays
+	// best-effort (see sseLineWriter.Write below — writes to a gone client
+	// just fail silently rather than aborting the install).
+	applyErr := applyUpdate(context.WithoutCancel(r.Context()), method, sseLineWriter{w: w, flusher: flusher})
+
+	done := updateDoneFrame{OK: applyErr == nil}
+	if applyErr != nil {
+		msg := strings.ReplaceAll(applyErr.Error(), "\n", " ")
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", msg) // #nosec G705 -- msg is update.Apply's own wrapped error text (installer exit status/I/O failures), never attacker-supplied, and is never rendered as HTML by this dashboard's client-side JS (see index.html)
+		flusher.Flush()
+		done.Error = applyErr.Error()
+	}
+	data, err := json.Marshal(done)
+	if err != nil {
+		data = []byte(`{"ok":false}`)
+	}
+	fmt.Fprintf(w, "event: done\ndata: %s\n\n", data)
+	flusher.Flush()
+}
+
+// sseLineWriter adapts update.Apply's combined stdout+stderr into the same
+// SSE "data: <line>\n\n" framing handleEventStream's own error frame uses —
+// one frame per Write call, flushed immediately, with any newline embedded
+// in a single payload flattened to a space (the SSE spec requires each line
+// of a "data:" payload to carry its own "data:" prefix; left as-is, a
+// multi-line installer output chunk would truncate at the first line
+// break).
+type sseLineWriter struct {
+	w       http.ResponseWriter
+	flusher http.Flusher
+}
+
+func (sw sseLineWriter) Write(p []byte) (int, error) {
+	line := strings.ReplaceAll(string(p), "\n", " ")
+	// Best-effort, deliberately: this is update.Apply's cmd.Stdout, wired
+	// through context.WithoutCancel (handleUpdate) so a disconnected client
+	// never aborts the running update — a write failing here (broken pipe,
+	// client gone) must not propagate as a Write error either, or
+	// exec.Cmd's own stdout-copy goroutine would surface it as a command
+	// failure and the update would be reported as failed even though it's
+	// still running/succeeding server-side. Always reporting success to the
+	// caller (len(p), nil) is what makes that true regardless of whether
+	// anyone is still listening.
+	_, _ = fmt.Fprintf(sw.w, "data: %s\n\n", line)
+	sw.flusher.Flush()
+	return len(p), nil
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

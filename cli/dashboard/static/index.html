@@ -11,7 +11,9 @@
 <header class="border-b border-slate-800 px-4 py-3 flex items-center gap-3">
   <svg width="28" height="16" viewBox="0 0 32 16" aria-hidden="true"><path d="M2 8 Q6 2 10 8 T18 8" fill="none" stroke="#f59e0b" stroke-width="2"/><path d="M18 8 L30 8" fill="none" stroke="#14b8a6" stroke-width="2"/></svg>
   <span class="font-mono text-lg tracking-tight">damping</span>
-  <span data-i18n="subtitle" class="text-slate-500 text-sm">local dashboard — reads ~/.damping/audit.jsonl, nothing leaves this machine</span>
+  <a id="version-link" href="https://github.com/amplify-lab/damping" target="_blank" rel="noopener noreferrer" class="version-link" data-i18n-aria-label="version_link_aria" aria-label="View damping on GitHub (opens in a new tab)"></a>
+  <button type="button" id="update-badge" class="hidden update-badge" aria-haspopup="dialog"><span data-i18n="update_available_badge">update available</span></button>
+  <span data-i18n="subtitle" class="text-slate-500 text-sm">local dashboard — your audit log stays on this machine; the only outbound call is a daily GitHub version check</span>
   <div class="lang-toggle" role="group" aria-label="Language / 語言">
     <button type="button" data-lang="en" aria-pressed="true">EN</button>
     <button type="button" data-lang="zh" aria-pressed="false">中文</button>
@@ -150,6 +152,27 @@
   </div>
 </div>
 
+<div id="update-modal" class="hidden modal-overlay" role="presentation">
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="update-modal-title">
+    <div class="modal-header">
+      <div>
+        <h2 id="update-modal-title" data-i18n="update_modal_title" class="font-mono text-sm text-slate-200">Update damping</h2>
+        <p id="update-modal-subtitle" class="text-xs text-slate-500 mt-0.5 font-mono"></p>
+      </div>
+      <button id="update-modal-close" class="text-slate-400 hover:text-slate-200 text-xl leading-none shrink-0 ml-3" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="update-command-block" class="hidden flex flex-col gap-1">
+        <p data-i18n="update_command_intro" class="text-xs text-slate-400">Run this yourself:</p>
+        <code id="update-command-text" class="update-command"></code>
+      </div>
+      <button type="button" id="update-now-btn" data-i18n="update_now_button" class="hidden update-now-btn">Update now</button>
+      <pre id="update-log" class="hidden update-log" aria-live="polite"></pre>
+      <div id="update-result" class="hidden text-xs" role="status"></div>
+    </div>
+  </div>
+</div>
+
 <template id="row-template">
   <tr class="border-b border-slate-900 last:border-0 hover:bg-slate-900/40 cursor-pointer focus:outline-none focus:ring-1 focus:ring-teal-500" tabindex="-1" role="button" aria-haspopup="dialog">
     <td class="px-3 py-2 whitespace-nowrap text-slate-400 font-mono text-xs" data-field="time"></td>
@@ -186,7 +209,7 @@
 // a distinct, much larger product decision, deliberately not bundled here.
 const I18N = {
   en: {
-    subtitle: "local dashboard — reads ~/.damping/audit.jsonl, nothing leaves this machine",
+    subtitle: "local dashboard — your audit log stays on this machine; the only outbound call is a daily GitHub version check",
     enforcement_label: "Enforcement", policy_label: "Policy", agents_label: "Agents", degraded_label: "Degraded (7d)",
     agents_none: "none registered",
     filter_channel: "Channel", filter_risk: "Risk", filter_outcome: "Outcome", filter_keyword: "Keyword",
@@ -219,9 +242,16 @@ const I18N = {
     policy_modal_title: "What Damping protects against",
     policy_modal_subtitle: "Rule descriptions are the policy file's own canonical text (kept in English) — only this dialog's labels are translated.",
     policy_loading: "Loading…", policy_error: "Couldn't load the policy.",
+    version_link_aria: "View damping on GitHub (opens in a new tab)",
+    update_available_badge: "update available",
+    update_modal_title: "Update damping",
+    update_command_intro: "Run this yourself:",
+    update_now_button: "Update now", update_running: "Updating…",
+    update_success_note: "Updated on disk — but this running dashboard is still the old binary in memory. Stop it (Ctrl+C) and run ‘damping dashboard’ again to use the new version.",
+    update_failure_note: "Update failed. ",
   },
   zh: {
-    subtitle: "本機儀表板——讀取 ~/.damping/audit.jsonl，資料不會離開這台機器",
+    subtitle: "本機儀表板——稽核紀錄留在這台機器上；唯一對外連線是每天一次的 GitHub 版本檢查",
     enforcement_label: "執行狀態", policy_label: "政策", agents_label: "Agent", degraded_label: "降級事件（7天）",
     agents_none: "尚未接上任何 agent",
     filter_channel: "管道", filter_risk: "風險", filter_outcome: "結果", filter_keyword: "關鍵字",
@@ -254,6 +284,13 @@ const I18N = {
     policy_modal_title: "Damping 防止哪些事情",
     policy_modal_subtitle: "規則說明是政策檔裡的原文（保持英文）——這個視窗只有標籤本身有翻譯。",
     policy_loading: "載入中…", policy_error: "政策載入失敗。",
+    version_link_aria: "在 GitHub 上查看 damping（在新分頁開啟）",
+    update_available_badge: "有可用更新",
+    update_modal_title: "更新 damping",
+    update_command_intro: "請自行執行以下指令：",
+    update_now_button: "立即更新", update_running: "更新中…",
+    update_success_note: "硬碟上的檔案已更新——但目前執行中的 dashboard 仍是記憶體裡的舊版本。請按 Ctrl+C 停止後，重新執行「damping dashboard」才能真正使用新版本。",
+    update_failure_note: "更新失敗。",
   },
 };
 
@@ -455,6 +492,7 @@ document.getElementById("detail-close").addEventListener("click", closeDetail);
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !document.getElementById("detail-drawer").classList.contains("hidden")) closeDetail();
   if (e.key === "Escape" && !document.getElementById("policy-modal").classList.contains("hidden")) closePolicyModal();
+  if (e.key === "Escape" && !document.getElementById("update-modal").classList.contains("hidden")) closeUpdateModal();
   if (e.key === "Escape" && !document.getElementById("session-help-popover").classList.contains("hidden")) toggleSessionHelp(false);
 });
 
@@ -543,6 +581,216 @@ document.getElementById("policy-modal-close").addEventListener("click", closePol
 document.getElementById("policy-modal").addEventListener("click", (e) => {
   if (e.target.id === "policy-modal") closePolicyModal(); // click on the backdrop itself, not the panel
 });
+
+// --- Version / self-update ---
+// versionInfo holds /api/version's response after loadVersion's one fetch
+// on page load (same "fetch once, cache, reuse on open" shape as
+// cachedRules above) — the header badge and #update-modal both render off
+// it without a second round trip.
+let versionInfo = null;
+let updateModalTrigger = null;
+
+// updateState tracks the self-update run independently of the modal's own
+// open/closed DOM state — found via review: closing #update-modal mid-run
+// (the fetch/stream reader in runUpdate keeps going in the background
+// regardless) and reopening it used to unconditionally wipe the log and
+// re-enable "Update now", so a second click mid-update was both possible
+// and produced a misleading local "failed" result for an update that was
+// actually still running (the server itself already 409s a second POST —
+// this is purely about the client not lying to the user about it).
+// status: "idle" (nothing started yet) | "running" | "done" (persists,
+// including its log/result, until the page is reloaded).
+const updateState = { status: "idle", log: [], result: null };
+
+async function loadVersion() {
+  const link = document.getElementById("version-link");
+  const badge = document.getElementById("update-badge");
+  try {
+    const res = await fetch("/api/version");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    versionInfo = await res.json();
+    link.textContent = versionInfo.current;
+    link.href = versionInfo.github_url || link.href;
+    badge.classList.toggle("hidden", !versionInfo.update_available);
+  } catch (e) {
+    // The version badge is a nice-to-have, not core dashboard function —
+    // fail quietly (no link text, no badge) rather than add an error state
+    // for a non-essential header element.
+  }
+}
+
+function openUpdateModal() {
+  if (!versionInfo) return;
+  updateModalTrigger = document.activeElement;
+  document.getElementById("update-modal-subtitle").textContent = versionInfo.current + " → " + versionInfo.latest;
+
+  const cmdBlock = document.getElementById("update-command-block");
+  const cmdText = document.getElementById("update-command-text");
+  const nowBtn = document.getElementById("update-now-btn");
+  cmdText.textContent = versionInfo.command;
+
+  if (updateState.status === "idle") {
+    if (versionInfo.can_auto_update) {
+      cmdBlock.classList.add("hidden");
+      nowBtn.classList.remove("hidden");
+      nowBtn.disabled = false;
+      nowBtn.textContent = t("update_now_button");
+    } else {
+      // No button at all when this install needs elevated privileges —
+      // damping never requests them on the user's behalf (see
+      // cli/cmd/update.go's identical reasoning for the terminal command).
+      // The command is shown as selectable text (.update-command's
+      // select-all) for the user to run themselves.
+      cmdBlock.classList.remove("hidden");
+      nowBtn.classList.add("hidden");
+    }
+  } else {
+    // A run is already in progress or has already finished — reopening
+    // must show that state exactly as it is, never reset it back to the
+    // fresh "not started yet" view (see updateState's own doc comment).
+    // Only reachable when can_auto_update was true (that's the only path
+    // that ever moves updateState out of "idle" in the first place).
+    cmdBlock.classList.add("hidden");
+    nowBtn.classList.remove("hidden");
+    nowBtn.disabled = updateState.status === "running";
+    nowBtn.textContent = updateState.status === "running" ? t("update_running") : t("update_now_button");
+  }
+  renderUpdateLog();
+  renderUpdateResult();
+
+  document.getElementById("update-modal").classList.remove("hidden");
+  document.getElementById("update-modal-close").focus();
+}
+
+function closeUpdateModal() {
+  document.getElementById("update-modal").classList.add("hidden");
+  if (updateModalTrigger) { updateModalTrigger.focus(); updateModalTrigger = null; }
+}
+
+// renderUpdateLog/renderUpdateResult render updateState as it stands right
+// now — called both as new lines/results arrive live and from
+// openUpdateModal on every (re)open, so the DOM always matches the state
+// object rather than accumulating text across separate opens.
+function renderUpdateLog() {
+  const log = document.getElementById("update-log");
+  if (updateState.log.length === 0) {
+    log.textContent = "";
+    log.classList.add("hidden");
+    return;
+  }
+  log.textContent = updateState.log.join("\n");
+  log.classList.remove("hidden");
+  log.scrollTop = log.scrollHeight;
+}
+
+function renderUpdateResult() {
+  const result = document.getElementById("update-result");
+  if (!updateState.result) {
+    result.textContent = "";
+    result.className = "hidden text-xs";
+    return;
+  }
+  const { ok, error } = updateState.result;
+  result.className = "text-xs " + (ok ? "update-result-ok" : "update-result-fail");
+  result.textContent = ok ? t("update_success_note") : t("update_failure_note") + (error || "");
+}
+
+function appendUpdateLog(line) {
+  updateState.log.push(line);
+  renderUpdateLog();
+}
+
+function showUpdateResult(ok, errorMsg) {
+  updateState.status = "done";
+  updateState.result = { ok, error: errorMsg };
+  renderUpdateResult();
+}
+
+// handleUpdateFrame parses one SSE frame (everything between two "\n\n"
+// boundaries) the same way EventSource would, by hand — see runUpdate's own
+// comment for why EventSource itself can't be used for this endpoint.
+function handleUpdateFrame(frame) {
+  let eventType = "message";
+  let data = "";
+  for (const line of frame.split("\n")) {
+    if (line.startsWith("event: ")) eventType = line.slice(7);
+    else if (line.startsWith("data: ")) data += (data ? "\n" : "") + line.slice(6);
+  }
+  if (eventType === "done") {
+    let parsed = {};
+    try { parsed = JSON.parse(data); } catch (e) { /* malformed done frame — treat as failure below */ }
+    showUpdateResult(!!parsed.ok, parsed.error);
+    return;
+  }
+  if (eventType === "error") {
+    appendUpdateLog("! " + data);
+    return;
+  }
+  appendUpdateLog(data);
+}
+
+// runUpdate applies the update in place and streams its output live.
+// IMPORTANT: EventSource cannot do POST or send custom headers, so it
+// cannot be used here the way startStream (above) uses it for the live
+// event tail — POST /api/update requires both (see handlers.go's
+// dashboardHeader doc comment for why the header is the actual CSRF
+// defense). fetch + a manual reader over response.body is the only way to
+// both send that header and still consume a streamed response.
+async function runUpdate() {
+  // Guards against a stray second click reaching here at all — the server
+  // would 409 it anyway (see handleUpdate's updateInFlight check), but
+  // firing that request client-side would still surface as a confusing
+  // local "failed" result for an update that is, in fact, still running.
+  if (updateState.status === "running") return;
+
+  const nowBtn = document.getElementById("update-now-btn");
+  updateState.status = "running";
+  updateState.log = [];
+  updateState.result = null;
+  nowBtn.disabled = true;
+  nowBtn.textContent = t("update_running");
+  renderUpdateLog();
+  renderUpdateResult();
+
+  try {
+    const res = await fetch("/api/update", { method: "POST", headers: { "X-Damping-Dashboard": "1" } });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || ("HTTP " + res.status));
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (value) buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) !== -1) {
+        handleUpdateFrame(buf.slice(0, idx));
+        buf = buf.slice(idx + 2);
+      }
+      if (done) break;
+    }
+  } catch (e) {
+    showUpdateResult(false, e.message || String(e));
+  } finally {
+    nowBtn.disabled = false;
+    nowBtn.textContent = t("update_now_button");
+    // Safety net for a stream that ends without ever emitting its own SSE
+    // "done" frame (e.g. the connection itself drops mid-stream) — without
+    // this, updateState could get stuck at "running" forever, permanently
+    // disabling the button on every future reopen even though nothing is
+    // actually in flight anymore.
+    if (updateState.status === "running") updateState.status = "done";
+  }
+}
+
+document.getElementById("update-badge").addEventListener("click", openUpdateModal);
+document.getElementById("update-modal-close").addEventListener("click", closeUpdateModal);
+document.getElementById("update-modal").addEventListener("click", (e) => {
+  if (e.target.id === "update-modal") closeUpdateModal(); // click on the backdrop itself, not the panel
+});
+document.getElementById("update-now-btn").addEventListener("click", runUpdate);
 
 let currentEvents = [];
 
@@ -908,6 +1156,7 @@ loadSummary();
 loadSessions();
 loadEvents();
 loadStats();
+loadVersion();
 startStream();
 // Sessions/stats' primary update path is now scheduleLiveDerivedRefresh
 // (triggered per SSE message, above) — this interval is only the safety

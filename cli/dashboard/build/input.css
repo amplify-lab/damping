@@ -115,4 +115,27 @@
   .rule-row-head { @apply flex items-center gap-2 flex-wrap; }
   .rule-id { @apply font-mono text-xs text-slate-300; }
   .rule-desc { @apply text-xs text-slate-400 leading-relaxed; }
+
+  /* version-link/update-badge: the header's "damping vX.Y.Z" link (opens
+     the public repo in a new tab, see index.html) and the small pill next
+     to it that only appears when /api/version reports update_available —
+     clicking it opens #update-modal, reusing the exact modal-overlay/
+     modal-panel pattern above rather than inventing new dialog styling. */
+  .version-link { @apply font-mono text-xs text-slate-500 hover:text-slate-300 transition-colors; }
+  .update-badge { @apply font-mono text-xs px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800 cursor-pointer hover:bg-amber-900/60 transition-colors; }
+
+  /* update-command/update-now-btn: the two mutually-exclusive ways
+     #update-modal offers to actually apply an update — a real button when
+     can_auto_update is true, or the plain command as selectable text when
+     it's false (elevation required, so damping won't run it unattended). */
+  .update-command { @apply block bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-xs font-mono text-slate-300 whitespace-pre-wrap break-all select-all; }
+  .update-now-btn { @apply rounded bg-teal-600 text-slate-950 text-sm font-medium px-3 py-1.5 hover:bg-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors; }
+
+  /* update-log: the live-appended installer output area, fed by
+     runUpdate's manual SSE-frame parsing (index.html) — a fetch+
+     ReadableStream reader, not EventSource, since EventSource can't POST or
+     send the X-Damping-Dashboard header /api/update requires. */
+  .update-log { @apply bg-slate-950 border border-slate-800 rounded p-2 text-xs font-mono text-slate-400 max-h-48 overflow-y-auto whitespace-pre-wrap; }
+  .update-result-ok { @apply text-teal-300; }
+  .update-result-fail { @apply text-red-400; }
 }

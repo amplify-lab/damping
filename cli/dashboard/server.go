@@ -19,6 +19,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 )
 
 //go:embed static/dashboard.css static/index.html static/charts.js
@@ -37,6 +38,14 @@ type Config struct {
 	// only makes sense while genuinely bound to a fixed local address —
 	// see hostHeaderAllowed's doc comment.
 	BindHost string
+
+	// Version is the running binary's own version string (root.go's
+	// Version var — "dev" for a non-release build). Passed through rather
+	// than read internally so this package stays independent of cli/cmd,
+	// the same reasoning as AuditPath/PolicyPath above. Used by
+	// GET /api/version to report the current/latest/update-available state
+	// the header's version badge renders.
+	Version string
 }
 
 // Server serves the local dashboard's HTTP surface: one HTML shell, one
@@ -44,6 +53,21 @@ type Config struct {
 // JavaScript calls — no separate frontend build step, no Node toolchain.
 type Server struct {
 	cfg Config
+
+	// updateInFlight guards POST /api/update against a second concurrent
+	// run — set with CompareAndSwap before Apply starts, cleared in a
+	// defer once it finishes. A plain bool would race under -race given
+	// this handler can genuinely be invoked concurrently (nothing else
+	// serializes HTTP handlers); atomic.Bool makes the check-and-set a
+	// single atomic operation instead of two.
+	updateInFlight atomic.Bool
+
+	// auditCache caches audit.jsonl's parsed events across requests, keyed
+	// by (size, mtime), so the JSON endpoints that all read the same file
+	// (handleSummary, handleEvents, handleStats, handleSessions) don't each
+	// re-read and re-decode it independently on every poll — see
+	// audit_cache.go's own doc comment for the full reasoning.
+	auditCache auditSnapshot
 }
 
 // NewServer builds a Server for cfg. Call Handler to get the http.Handler
@@ -72,6 +96,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions", s.handleSessions)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/events/stream", s.handleEventStream)
+	mux.HandleFunc("GET /api/version", s.handleVersion)
+	mux.HandleFunc("POST /api/update", s.handleUpdate)
 	return checkHostHeader(s.cfg.BindHost, mux)
 }
 

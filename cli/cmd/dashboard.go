@@ -9,6 +9,7 @@ import (
 
 	"github.com/amplify-lab/damping/cli/dashboard"
 	"github.com/amplify-lab/damping/cli/paths"
+	"github.com/amplify-lab/damping/cli/update"
 )
 
 func newDashboardCmd() *cobra.Command {
@@ -36,17 +37,29 @@ func newDashboardCmd() *cobra.Command {
 
 			w := cmd.OutOrStdout()
 			if host != "127.0.0.1" && host != "localhost" {
-				fmt.Fprintf(w, "⚠  Binding to %s, not just localhost — your audit log (raw commands, agent activity) becomes reachable from anywhere that can reach this host, with no authentication at all.\n", host)
+				// The dashboard also has a self-update endpoint
+				// (POST /api/update, cli/dashboard) that stays loopback-only
+				// regardless of --host — this warning is specifically about
+				// the read-only audit log surface a non-local bind exposes,
+				// not a claim that everything becomes remote-writable.
+				fmt.Fprintf(w, "⚠  Binding to %s, not just localhost — your audit log (raw commands, agent activity) becomes reachable read-only from anywhere that can reach this host, with no authentication at all; the update endpoint stays loopback-only regardless.\n", host)
 			}
 
 			addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 			fmt.Fprintf(w, "Dashboard running at http://%s (Ctrl+C to stop)\n", addr)
 
-			srv := dashboard.NewServer(dashboard.Config{AuditPath: auditPath, PolicyPath: policyPath, BindHost: host})
+			// Printed once here, to the terminal that launched `damping
+			// dashboard` — not from inside dashboard.Server itself, which
+			// serves the long-running HTTP handlers and has its own
+			// separate concerns (see the next phase of this workflow for
+			// any in-browser notice).
+			update.Check(cmd.Context(), Version).Notify(cmd.ErrOrStderr())
+
+			srv := dashboard.NewServer(dashboard.Config{AuditPath: auditPath, PolicyPath: policyPath, BindHost: host, Version: Version})
 			return http.ListenAndServe(addr, srv.Handler()) // #nosec G114 -- a local single-user CLI dev tool, not an internet-facing server; explicit timeouts would add nothing a client-abandoned SSE stream needs
 		},
 	}
-	c.Flags().StringVar(&host, "host", "127.0.0.1", "address to bind to — only change this if you understand the audit log becomes reachable beyond this machine, unauthenticated")
+	c.Flags().StringVar(&host, "host", "127.0.0.1", "address to bind to — only change this if you understand the audit log becomes reachable (read-only) beyond this machine, unauthenticated; the update endpoint stays loopback-only regardless")
 	c.Flags().IntVar(&port, "port", 4243, "port to listen on")
 	return c
 }

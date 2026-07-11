@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/amplify-lab/damping/cli/policies"
+	"github.com/amplify-lab/damping/cli/update"
 	"github.com/amplify-lab/damping/core/audit"
 	"github.com/amplify-lab/damping/core/decision"
 	"github.com/amplify-lab/damping/core/event"
@@ -630,6 +632,395 @@ func TestHostHeaderCheck_RejectsForgedHost(t *testing.T) {
 // cli/cmd/dashboard.go) — there's no single correct Host value to
 // allowlist against a bind-all address, so this is a deliberate, narrow
 // exception, not a hole: it only ever applies after that explicit choice.
+// TestHandleVersion_ReportsShapeWithNoNetworkCall exercises GET /api/version
+// end-to-end through httptest, matching how this file already tests every
+// other /api/* route rather than just eyeballing the handler. It sets
+// DAMPING_NO_UPDATE_CHECK so update.Check makes zero network calls (that
+// env var's contract — see cli/update/update.go) and DAMPING_INSTALL_DIR to
+// a fresh writable temp dir so update.CurrentMethod's NeedsElevation is
+// deterministic across every machine this test runs on, not dependent on
+// whatever the real /usr/local/bin's permissions happen to be.
+func TestHandleVersion_ReportsShapeWithNoNetworkCall(t *testing.T) {
+	s, _ := newTestServer(t, policies.Default)
+	s.cfg.Version = "v1.2.3"
+	t.Setenv("DAMPING_NO_UPDATE_CHECK", "1")
+	t.Setenv("DAMPING_INSTALL_DIR", t.TempDir())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, newLocalRequest("/api/version"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var got versionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding version response: %v", err)
+	}
+	if got.Current != "v1.2.3" {
+		t.Fatalf("expected current=%q, got %+v", "v1.2.3", got)
+	}
+	if got.Latest != "" || got.UpdateAvailable {
+		t.Fatalf("expected no update info with DAMPING_NO_UPDATE_CHECK set, got %+v", got)
+	}
+	if got.GithubURL != githubURL {
+		t.Fatalf("expected github_url=%q, got %q", githubURL, got.GithubURL)
+	}
+	switch got.Method {
+	case "script", "brew", "windows":
+	default:
+		t.Fatalf("expected method to be one of script/brew/windows, got %q", got.Method)
+	}
+	if got.Command == "" {
+		t.Fatal("expected a non-empty command string")
+	}
+	if got.CanAutoUpdate {
+		t.Fatal("expected can_auto_update=false when update_available is false, regardless of NeedsElevation")
+	}
+}
+
+// TestHandleUpdate_RejectsMissingDashboardHeader is the required regression
+// test for this endpoint's actual CSRF defense — see dashboardHeader's doc
+// comment in handlers.go for the full threat model (a malicious page's
+// blind cross-origin POST, no DNS rebinding needed, that the Host-header
+// check alone does not stop). A request with no X-Damping-Dashboard header
+// must be rejected before anything else happens: no method detection, no
+// in-flight flag set, no streaming response started, no self-update
+// command ever run.
+//
+// Mutation-tested by hand: temporarily commenting out handleUpdate's header
+// check made this test fail (it started asserting on whatever the next
+// check down — NeedsElevation, in this sandbox's default unwritable
+// /usr/local/bin — produced instead, with a distinct error message this
+// test does not accept), confirming the test actually exercises the header
+// gate and not some other rejection path. Restored afterward; this file's
+// git history at this point reflects the check back in place.
+func TestHandleUpdate_RejectsMissingDashboardHeader(t *testing.T) {
+	s, _ := newTestServer(t, policies.Default)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/update", nil)
+	req.Host = "127.0.0.1"
+	req.RemoteAddr = "127.0.0.1:54321" // must be loopback to reach the header check this test actually exercises — see TestHandleUpdate_RejectsNonLoopbackRemoteAddr for the check ahead of this one
+	// Deliberately no X-Damping-Dashboard header set.
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for POST /api/update with no %s header, got %d: %s", dashboardHeader, rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), dashboardHeader) {
+		t.Fatalf("expected the rejection message to name the missing header specifically (not some other check), got: %s", rec.Body.String())
+	}
+	if s.updateInFlight.Load() {
+		t.Fatal("updateInFlight was set even though the header check should have rejected before ever reaching it — an update may have started")
+	}
+	if strings.Contains(rec.Header().Get("Content-Type"), "text/event-stream") {
+		t.Fatal("expected a plain error response, not an SSE stream — the header check must reject before any streaming (and therefore update.Apply) begins")
+	}
+}
+
+// TestHandleUpdate_RejectsWhenElevationNeeded confirms NeedsElevation is
+// re-checked fresh, server-side (defense (c) in the task's own required
+// list) rather than ever trusted from the client. DAMPING_INSTALL_DIR
+// points at a path with a regular file (not a directory) as a parent
+// segment — os.MkdirAll can never succeed against that for any user,
+// including root, which is why this is deterministic across every machine
+// this test runs on (mirrors cli/update/method_test.go's own
+// nonWritableDir helper).
+func TestHandleUpdate_RejectsWhenElevationNeeded(t *testing.T) {
+	s, _ := newTestServer(t, policies.Default)
+	parent := t.TempDir()
+	blocker := filepath.Join(parent, "blocked-by-a-file")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatalf("writing blocker file: %v", err)
+	}
+	t.Setenv("DAMPING_INSTALL_DIR", filepath.Join(blocker, "sub", "damping"))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/update", nil)
+	req.Host = "127.0.0.1"
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.Header.Set(dashboardHeader, "1")
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 when the install location needs elevated privileges, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if s.updateInFlight.Load() {
+		t.Fatal("updateInFlight was set even though the elevation check should have rejected first")
+	}
+}
+
+// TestHandleUpdate_ConcurrentRequestGetsConflict is the regression test for
+// defense (d): a second POST while one is already applying must get 409,
+// never run a second install concurrently. update.CurrentMethod() always
+// computes a real system command with no test seam to make it "hang," so
+// this drives the in-flight guard directly (an accessible field within this
+// package) rather than racing two real HTTP requests against a real
+// installer process.
+func TestHandleUpdate_ConcurrentRequestGetsConflict(t *testing.T) {
+	s, _ := newTestServer(t, policies.Default)
+	t.Setenv("DAMPING_INSTALL_DIR", t.TempDir()) // deterministic NeedsElevation=false, so this exercises the in-flight guard specifically, not elevation
+
+	if !s.updateInFlight.CompareAndSwap(false, true) {
+		t.Fatal("expected to be able to mark a fresh Server's update as in-flight")
+	}
+	defer s.updateInFlight.Store(false)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/update", nil)
+	req.Host = "127.0.0.1"
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.Header.Set(dashboardHeader, "1")
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 Conflict while an update is already in-flight, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHandleUpdate_RejectsNonLoopbackRemoteAddr is the regression test for
+// finding (2): binding to 0.0.0.0 doesn't just widen who can *reach* this
+// dashboard, it widens who can POST /api/update at all — dashboardHeader's
+// CSRF defense stops a browser-based cross-origin request, but does nothing
+// against a plain curl from another machine on the LAN, which can set any
+// header it likes. A request with a real, correct dashboardHeader but a
+// non-loopback RemoteAddr must still be rejected, and rejected before the
+// method/elevation/in-flight checks ever run.
+func TestHandleUpdate_RejectsNonLoopbackRemoteAddr(t *testing.T) {
+	s, _ := newTestServer(t, policies.Default)
+	t.Setenv("DAMPING_INSTALL_DIR", t.TempDir())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/update", nil)
+	req.Host = "127.0.0.1"
+	req.Header.Set(dashboardHeader, "1")
+	req.RemoteAddr = "203.0.113.7:54321" // a real LAN/WAN peer, not this machine
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for a non-loopback RemoteAddr even with a valid %s header, got %d: %s", dashboardHeader, rec.Code, rec.Body.String())
+	}
+	if s.updateInFlight.Load() {
+		t.Fatal("updateInFlight was set even though the loopback check should have rejected first")
+	}
+}
+
+// TestHandleUpdate_AllowsLoopbackIPv6RemoteAddr confirms the loopback check
+// isn't IPv4-only ("127.0.0.1" string-matching would miss "::1", the address
+// a dashboard bound to an IPv6 loopback listener would see). Marking the
+// update in-flight beforehand short-circuits past the real
+// update.CurrentMethod()/Apply — this test only cares that the loopback
+// check itself lets ::1 through to the next check (the resulting 409 proves
+// that; TestHandleUpdate_ConcurrentRequestGetsConflict already covers the
+// 409 path's own behavior in detail).
+func TestHandleUpdate_AllowsLoopbackIPv6RemoteAddr(t *testing.T) {
+	s, _ := newTestServer(t, policies.Default)
+	t.Setenv("DAMPING_INSTALL_DIR", t.TempDir())
+
+	if !s.updateInFlight.CompareAndSwap(false, true) {
+		t.Fatal("expected to mark update in-flight")
+	}
+	defer s.updateInFlight.Store(false)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/update", nil)
+	req.Host = "127.0.0.1"
+	req.Header.Set(dashboardHeader, "1")
+	req.RemoteAddr = "[::1]:54321"
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected the ::1 loopback RemoteAddr to pass the loopback check and reach the in-flight guard (409), got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// withFakeUpdateMethod and withFakeApply substitute handlers.go's
+// currentMethod/applyUpdate package vars for the duration of one test,
+// restored via t.Cleanup — the seam that makes handleUpdate's success/
+// failure streaming testable at all without ever running a real
+// curl-pipe-sh/brew/powershell command.
+func withFakeUpdateMethod(t *testing.T, m update.Method) {
+	t.Helper()
+	orig := currentMethod
+	currentMethod = func() update.Method { return m }
+	t.Cleanup(func() { currentMethod = orig })
+}
+
+func withFakeApply(t *testing.T, fn func(ctx context.Context, m update.Method, w io.Writer) error) {
+	t.Helper()
+	orig := applyUpdate
+	applyUpdate = fn
+	t.Cleanup(func() { applyUpdate = orig })
+}
+
+// newLoopbackUpdateRequest builds a POST /api/update request that clears
+// every gate ahead of the one a given test cares about (loopback Host,
+// loopback RemoteAddr, the dashboardHeader) — the shared setup for the
+// success/failure streaming tests below, which are specifically about what
+// happens once every prior gate has already passed.
+func newLoopbackUpdateRequest() *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/api/update", nil)
+	req.Host = "127.0.0.1"
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.Header.Set(dashboardHeader, "1")
+	return req
+}
+
+// TestHandleUpdate_StreamsSuccessDoneFrame closes finding (3)'s gap: the
+// success/apply path — including the exact SSE "event: done" frame
+// index.html's runUpdate keys its success/failure UI off of — previously had
+// zero test coverage, since update.CurrentMethod/update.Apply always run a
+// real self-update command with no seam to fake before currentMethod/
+// applyUpdate existed.
+func TestHandleUpdate_StreamsSuccessDoneFrame(t *testing.T) {
+	s, _ := newTestServer(t, policies.Default)
+	withFakeUpdateMethod(t, update.Method{Kind: "script", NeedsElevation: false})
+	withFakeApply(t, func(ctx context.Context, m update.Method, w io.Writer) error {
+		_, _ = w.Write([]byte("downloading release archive"))
+		_, _ = w.Write([]byte("verifying checksum"))
+		return nil
+	})
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, newLoopbackUpdateRequest())
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	want := "data: downloading release archive\n\ndata: verifying checksum\n\nevent: done\ndata: {\"ok\":true}\n\n"
+	if rec.Body.String() != want {
+		t.Fatalf("SSE body =\n%q\nwant\n%q", rec.Body.String(), want)
+	}
+	if s.updateInFlight.Load() {
+		t.Fatal("expected updateInFlight to be reset once Apply finished")
+	}
+}
+
+// TestHandleUpdate_StreamsFailureDoneFrame is the failure-path counterpart:
+// an "event: error" frame carrying the failure text, followed by the final
+// "event: done" frame with ok:false and the same error message — the shape
+// index.html's handleUpdateFrame relies on to show update_failure_note
+// instead of update_success_note.
+func TestHandleUpdate_StreamsFailureDoneFrame(t *testing.T) {
+	s, _ := newTestServer(t, policies.Default)
+	withFakeUpdateMethod(t, update.Method{Kind: "script", NeedsElevation: false})
+	withFakeApply(t, func(ctx context.Context, m update.Method, w io.Writer) error {
+		_, _ = w.Write([]byte("downloading release archive"))
+		return fmt.Errorf("running script update command: exit status 1")
+	})
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, newLoopbackUpdateRequest())
+
+	if rec.Code != http.StatusOK { // headers are already committed 200 by the time Apply can fail — failure surfaces as an SSE event, never an HTTP status
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	want := "data: downloading release archive\n\n" +
+		"event: error\ndata: running script update command: exit status 1\n\n" +
+		"event: done\ndata: {\"ok\":false,\"error\":\"running script update command: exit status 1\"}\n\n"
+	if rec.Body.String() != want {
+		t.Fatalf("SSE body =\n%q\nwant\n%q", rec.Body.String(), want)
+	}
+	if s.updateInFlight.Load() {
+		t.Fatal("expected updateInFlight to be reset even after Apply failed")
+	}
+}
+
+// TestHandleUpdate_AppliesUnderContextDecoupledFromClientDisconnect is the
+// regression test for finding (1): a client disconnecting mid-update
+// (closing the tab, network blip) cancels r.Context() — Apply must run
+// under context.WithoutCancel(r.Context()) so that cancellation never
+// reaches it, since this endpoint replaces the running binary and a
+// half-applied update on cancel is worse than a client that never sees the
+// result. reqCtx is cancelled *before* the handler ever runs (simulating a
+// browser that's already gone by the time Apply starts), and the fake apply
+// asserts its own ctx was never cancelled — deterministically (ctx.Err(),
+// not a select racing two ready channels).
+func TestHandleUpdate_AppliesUnderContextDecoupledFromClientDisconnect(t *testing.T) {
+	s, _ := newTestServer(t, policies.Default)
+	withFakeUpdateMethod(t, update.Method{Kind: "script", NeedsElevation: false})
+	withFakeApply(t, func(ctx context.Context, m update.Method, w io.Writer) error {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("apply started with an already-cancelled context: %w", err)
+		}
+		_, _ = w.Write([]byte("done"))
+		return nil
+	})
+
+	reqCtx, cancel := context.WithCancel(context.Background())
+	cancel() // the client is already gone before the handler even runs
+	req := newLoopbackUpdateRequest().WithContext(reqCtx)
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `event: done`+"\n"+`data: {"ok":true}`) {
+		t.Fatalf("expected a successful done frame (proving Apply ran to completion despite the cancelled request context), got: %s", rec.Body.String())
+	}
+}
+
+// failingResponseWriter is a minimal http.ResponseWriter+http.Flusher whose
+// Write always fails, the way writing to a connection the client already
+// closed would — used to prove sseLineWriter.Write is genuinely
+// best-effort (finding (1)'s second half): a write failure here must never
+// propagate as an error, or update.Apply's underlying exec.Cmd would
+// misread a gone client as the update itself having failed.
+type failingResponseWriter struct{ header http.Header }
+
+func (f *failingResponseWriter) Header() http.Header {
+	if f.header == nil {
+		f.header = http.Header{}
+	}
+	return f.header
+}
+func (f *failingResponseWriter) Write([]byte) (int, error) { return 0, fmt.Errorf("broken pipe") }
+func (f *failingResponseWriter) WriteHeader(int)           {}
+func (f *failingResponseWriter) Flush()                    {}
+
+func TestSSELineWriter_WriteIsBestEffortOnBrokenPipe(t *testing.T) {
+	fw := &failingResponseWriter{}
+	sw := sseLineWriter{w: fw, flusher: fw}
+
+	n, err := sw.Write([]byte("hello"))
+	if err != nil {
+		t.Fatalf("expected sseLineWriter.Write to swallow a downstream write failure (best-effort), got err=%v", err)
+	}
+	if n != len("hello") {
+		t.Fatalf("expected Write to report the full length regardless of the downstream failure, got n=%d", n)
+	}
+}
+
+// TestSSELineWriter_FramesEachWriteAndStripsEmbeddedNewlines verifies the
+// actual SSE framing primitive handleUpdate hands to update.Apply, in
+// isolation — deliberately without ever invoking update.Apply/CurrentMethod
+// themselves (which always compute a REAL self-update command; there is no
+// test seam to swap in a fake one, and actually running the real one in a
+// test would mean executing a live curl-pipe-sh/brew/powershell command).
+// This exercises requirement (e) end to end instead: one "data: <line>\n\n"
+// frame per Write call, flushed immediately, with embedded newlines in a
+// single payload flattened rather than truncating the frame.
+func TestSSELineWriter_FramesEachWriteAndStripsEmbeddedNewlines(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sw := sseLineWriter{w: rec, flusher: rec}
+
+	if _, err := sw.Write([]byte("cloning release archive...")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if _, err := sw.Write([]byte("line one\nline two\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	if !rec.Flushed {
+		t.Fatal("expected each Write to flush, matching handleEventStream's own pattern")
+	}
+	want := "data: cloning release archive...\n\ndata: line one line two \n\n"
+	if rec.Body.String() != want {
+		t.Fatalf("sseLineWriter framing =\n%q\nwant\n%q", rec.Body.String(), want)
+	}
+}
+
 func TestHostHeaderCheck_SkipsEnforcementWhenExplicitlyBoundElsewhere(t *testing.T) {
 	dir := t.TempDir()
 	s := NewServer(Config{

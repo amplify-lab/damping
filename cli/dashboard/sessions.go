@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/amplify-lab/damping/core/audit"
 	"github.com/amplify-lab/damping/core/event"
 )
 
@@ -64,7 +63,7 @@ func riskScore(r event.RiskLevel) int {
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
-	events, err := audit.ReadAll(s.cfg.AuditPath, audit.Filter{})
+	events, err := s.auditEvents()
 	if err != nil {
 		http.Error(w, "reading audit log: "+err.Error(), http.StatusInternalServerError)
 		return
