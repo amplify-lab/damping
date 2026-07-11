@@ -113,6 +113,7 @@ func TestFeatures_ComplianceReportDemo(t *testing.T) {
 				t.Setenv("DAMPING_CLAUDE_SETTINGS", filepath.Join(dir, "claude", "settings.json"))
 				t.Setenv("DAMPING_CURSOR_HOOKS", filepath.Join(dir, "cursor", "hooks.json"))
 				t.Setenv("DAMPING_CODEX_HOOKS", filepath.Join(dir, "codex", "hooks.json"))
+				t.Setenv("DAMPING_NO_UPDATE_CHECK", "1") // init prints a passive background update-check notice; without this, every scenario would make a real network call to api.github.com
 				_, _, err := runDampingCommand("", "init")
 				return err
 			})

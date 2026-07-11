@@ -61,6 +61,17 @@ func DoctorState() (string, error) {
 	return filepath.Join(h, "doctor-state.json"), nil
 }
 
+// UpdateCheck returns the path to the update-checker's small cache file
+// (last-known latest release tag, last-checked timestamp) used to avoid
+// hitting the network on every single invocation — see cli/update.
+func UpdateCheck() (string, error) {
+	h, err := Home()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(h, "update-check.json"), nil
+}
+
 // ClaudeSettings returns where Claude Code's own hook config lives —
 // $DAMPING_CLAUDE_SETTINGS if set (tests use this to point at a throwaway
 // file), else the real ~/.claude/settings.json. Unlike the paths above this

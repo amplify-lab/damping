@@ -17,6 +17,7 @@ import (
 	"github.com/amplify-lab/damping/cli/i18n"
 	"github.com/amplify-lab/damping/cli/paths"
 	"github.com/amplify-lab/damping/cli/ui"
+	"github.com/amplify-lab/damping/cli/update"
 	"github.com/amplify-lab/damping/core/audit"
 	"github.com/amplify-lab/damping/core/decision"
 	"github.com/amplify-lab/damping/core/event"
@@ -39,6 +40,16 @@ func setupTestEnv(t *testing.T) {
 	t.Setenv("DAMPING_CLAUDE_SETTINGS", filepath.Join(dir, "claude", "settings.json"))
 	t.Setenv("DAMPING_CURSOR_HOOKS", filepath.Join(dir, "cursor", "hooks.json"))
 	t.Setenv("DAMPING_CODEX_HOOKS", filepath.Join(dir, "codex", "hooks.json"))
+	// init/status/doctor/dashboard all print a passive background update
+	// notice via update.Check(...).Notify(...) — without this, every one of
+	// this package's many tests calling those commands would make a real
+	// network call to api.github.com (bounded to 1.5s each, but still real,
+	// slow, and flaky offline). `damping update` itself uses ForceCheck,
+	// which ignores this var entirely (see cli/update.ForceCheck's doc
+	// comment), so its own tests are unaffected either way; tests of the
+	// background notice itself override this back to "" explicitly — see
+	// TestStatus_PrintsBackgroundUpdateNotice.
+	t.Setenv("DAMPING_NO_UPDATE_CHECK", "1")
 	// `init` only registers a hook for an agent whose config directory it can
 	// detect — pre-create all three so tests exercise the "agent installed"
 	// path for every registered agent.
@@ -1887,4 +1898,176 @@ func isExitCodeError(err error, target **ExitCodeError) bool {
 	}
 	*target = e
 	return true
+}
+
+// --- 2026-07 `damping update` command ---
+
+// writeUpdateCache seeds update.Check's on-disk cache (paths.UpdateCheck())
+// with a fresh (just-checked) result, so `damping update` tests exercise the
+// real command deterministically without ever making a network call. Mirrors
+// the JSON shape of update's own (unexported) cacheState — see
+// cli/update/update.go's cacheState struct — duplicated here rather than
+// exported, since it's a one-field-pair, purely-on-disk detail internal to
+// that package.
+func writeUpdateCache(t *testing.T, latest string) {
+	t.Helper()
+	path, err := paths.UpdateCheck()
+	if err != nil {
+		t.Fatalf("paths.UpdateCheck: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	cache := struct {
+		Latest    string    `json:"latest"`
+		CheckedAt time.Time `json:"checked_at"`
+	}{Latest: latest, CheckedAt: time.Now()}
+	data, err := json.Marshal(cache)
+	if err != nil {
+		t.Fatalf("marshal cache: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+}
+
+// withVersion temporarily overrides the package-level Version var (normally
+// set at build time via -ldflags, "dev" otherwise) for the duration of a
+// test, restoring it afterward so other tests in this package aren't
+// affected by run order.
+func withVersion(t *testing.T, v string) {
+	t.Helper()
+	prev := Version
+	Version = v
+	t.Cleanup(func() { Version = prev })
+}
+
+// nonWritableInstallDir returns a directory path that the update package's
+// MkdirAll-based writability probe can never succeed against, regardless of
+// the running user's privileges (including root, which is why this doesn't
+// rely on permission bits): it points inside a path component that is
+// already a regular file, so MkdirAll fails with "not a directory" rather
+// than any permission check. Mirrors cli/update/method_test.go's
+// nonWritableDir helper (unexported there, duplicated here for this
+// package's own tests).
+func nonWritableInstallDir(t *testing.T) string {
+	t.Helper()
+	parent := t.TempDir()
+	blocker := filepath.Join(parent, "blocked-by-a-file")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatalf("writing blocker file: %v", err)
+	}
+	return filepath.Join(blocker, "sub", "damping")
+}
+
+// TestStatus_PrintsBackgroundUpdateNotice proves the passive background
+// notice (update.Check(...).Notify(...), wired into
+// init/status/doctor/dashboard) actually fires when a newer release is
+// cached and the background check isn't suppressed — the positive-case
+// pair to features/self_update.feature's "suppressed by
+// DAMPING_NO_UPDATE_CHECK" scenario. setupTestEnv sets
+// DAMPING_NO_UPDATE_CHECK=1 by default (see its own doc comment); this
+// explicitly overrides it back to "" for just the `status` call below,
+// which also exercises that an explicit empty string is treated as unset,
+// not as "still set to something" (see update.noUpdateCheckEnv's check).
+func TestStatus_PrintsBackgroundUpdateNotice(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	withVersion(t, "v0.5.0")
+	writeUpdateCache(t, "v0.6.0")
+	t.Setenv("DAMPING_NO_UPDATE_CHECK", "")
+
+	_, errOut, err := run(t, "", "status")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(errOut, "v0.6.0") {
+		t.Fatalf("expected a background update notice mentioning v0.6.0 on stderr, got: %s", errOut)
+	}
+}
+
+func TestUpdate_AlreadyUpToDate(t *testing.T) {
+	setupTestEnv(t)
+	withVersion(t, "v0.5.0")
+	writeUpdateCache(t, "v0.5.0")
+
+	out, _, err := run(t, "", "update")
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if !strings.Contains(out, "damping is already up to date (v0.5.0).") {
+		t.Fatalf("expected an up-to-date message naming the current version, got: %s", out)
+	}
+}
+
+// TestUpdate_NeedsElevationPrintsManualCommand exercises the informational
+// (non-error) branch: an update is available, but the detected install
+// location isn't writable by the current user, so `damping update` must
+// hand back the exact command to run manually instead of attempting (and
+// failing) a self-update — see update.Method.NeedsElevation's doc comment.
+func TestUpdate_NeedsElevationPrintsManualCommand(t *testing.T) {
+	setupTestEnv(t)
+	withVersion(t, "v0.5.0")
+	writeUpdateCache(t, "v0.6.0")
+
+	badDir := nonWritableInstallDir(t)
+	t.Setenv("DAMPING_INSTALL_DIR", badDir)
+
+	method := update.CurrentMethod()
+	if !method.NeedsElevation {
+		t.Fatalf("test setup failed to force NeedsElevation (got %+v) — the writability probe unexpectedly found %s writable", method, badDir)
+	}
+
+	out, _, err := run(t, "", "update")
+	if err != nil {
+		t.Fatalf("update: %v (this branch is informational, not an error — damping never requests elevation on the user's behalf)", err)
+	}
+	if !strings.Contains(out, "elevated privileges") {
+		t.Fatalf("expected an explanation that elevation is needed, got: %s", out)
+	}
+	// Method.Display, not a raw Executable+Args join: for the "script" kind
+	// Args wraps the real command in `sh -c "..."` for exec.Command's
+	// argv-based invocation, and space-joining that loses the inner
+	// quoting — see Method.Display's doc comment for why this must be the
+	// human-pasteable form instead.
+	wantCmd := method.Display()
+	if !strings.Contains(out, wantCmd) {
+		t.Fatalf("expected the exact manual command %q to be printed, got: %s", wantCmd, out)
+	}
+}
+
+// TestUpdate_StillChecksWhenBackgroundCheckDisabled is the regression test
+// for update.ForceCheck's semantics split: DAMPING_NO_UPDATE_CHECK only
+// silences the passive background notice other commands print — an
+// explicit `damping update` invocation must still check, because the user
+// literally asked. Before this fix, `damping update` called update.Check
+// (the same function the background notices use) and so lied "already up
+// to date" under this env var without ever having looked.
+// setupTestEnv sets DAMPING_NO_UPDATE_CHECK=1 for every test in this
+// package by default (see its own doc comment) — deliberately left as-is
+// here rather than unset, since that ambient value is exactly what this
+// test proves `damping update` must not be fooled by. Forces NeedsElevation
+// (same nonWritableInstallDir trick as TestUpdate_NeedsElevationPrintsManualCommand)
+// purely so this test stays on the informational branch — the point here is
+// ForceCheck's env-var split, not update.Apply, and a writable install dir
+// would make this test actually invoke the real curl-pipe-sh installer.
+func TestUpdate_StillChecksWhenBackgroundCheckDisabled(t *testing.T) {
+	setupTestEnv(t)
+	withVersion(t, "v0.5.0")
+	writeUpdateCache(t, "v0.6.0")
+	t.Setenv("DAMPING_INSTALL_DIR", nonWritableInstallDir(t))
+
+	out, _, err := run(t, "", "update")
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if strings.Contains(out, "already up to date") {
+		t.Fatalf("expected `damping update` to still report the real available update even with DAMPING_NO_UPDATE_CHECK set, got: %s", out)
+	}
+	if !strings.Contains(out, "v0.5.0") || !strings.Contains(out, "v0.6.0") {
+		t.Fatalf("expected both the current and available versions in the output, got: %s", out)
+	}
 }

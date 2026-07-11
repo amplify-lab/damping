@@ -8,6 +8,7 @@ import (
 
 	"github.com/amplify-lab/damping/cli/adapter/agent"
 	"github.com/amplify-lab/damping/cli/enforcement"
+	"github.com/amplify-lab/damping/cli/update"
 	"github.com/amplify-lab/damping/core/policy"
 )
 
@@ -77,6 +78,8 @@ func newStatusCmd() *cobra.Command {
 			// Team sync (Phase 4) doesn't exist yet — this line is
 			// unconditionally true in V1, not aspirational.
 			fmt.Fprintln(w, "Sync:    disabled (individual tier)")
+
+			update.Check(cmd.Context(), Version).Notify(cmd.ErrOrStderr())
 
 			// A review found this RunE always returned nil even when the
 			// headline just said "NOT protecting you" — `damping doctor`

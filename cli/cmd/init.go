@@ -13,6 +13,7 @@ import (
 	"github.com/amplify-lab/damping/cli/adapter/agent"
 	"github.com/amplify-lab/damping/cli/i18n"
 	"github.com/amplify-lab/damping/cli/policies"
+	"github.com/amplify-lab/damping/cli/update"
 	"github.com/amplify-lab/damping/core/policy"
 )
 
@@ -173,6 +174,9 @@ func newInitCmd() *cobra.Command {
 				fmt.Fprintln(w, "\n✓ Setup complete — try it: ask your agent to run `rm -rf /tmp/test`")
 				fmt.Fprintln(w, "\nRun `damping doctor` any time to re-verify this setup.")
 			}
+
+			update.Check(cmd.Context(), Version).Notify(cmd.ErrOrStderr())
+
 			return nil
 		},
 	}

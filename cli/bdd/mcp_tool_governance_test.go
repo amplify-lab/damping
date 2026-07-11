@@ -111,6 +111,7 @@ func TestFeatures_MCPToolGovernance(t *testing.T) {
 				// identically against stale leftover data from earlier runs).
 				dir := t.TempDir()
 				t.Setenv("DAMPING_HOME", filepath.Join(dir, "damping-home"))
+				t.Setenv("DAMPING_NO_UPDATE_CHECK", "1") // this suite's commands can print a passive background update-check notice; without this, scenarios would make a real network call to api.github.com
 
 				policyPath := defaultPolicyPath(t)
 				cfg, err := policy.LoadConfig(policyPath)

@@ -15,6 +15,7 @@ import (
 	"github.com/amplify-lab/damping/cli/adapter/agent"
 	"github.com/amplify-lab/damping/cli/paths"
 	"github.com/amplify-lab/damping/cli/policies"
+	"github.com/amplify-lab/damping/cli/update"
 	"github.com/amplify-lab/damping/core/audit"
 	"github.com/amplify-lab/damping/core/policy"
 )
@@ -120,6 +121,9 @@ func newDoctorCmd() *cobra.Command {
 
 			fmt.Fprintln(w)
 			fmt.Fprintf(w, "%d check(s) failed, %d warning(s).\n", failed, warned)
+
+			update.Check(cmd.Context(), Version).Notify(cmd.ErrOrStderr())
+
 			if failed > 0 {
 				return &ExitCodeError{Code: 4}
 			}

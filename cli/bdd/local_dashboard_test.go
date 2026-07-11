@@ -105,6 +105,7 @@ func TestFeatures_LocalDashboard(t *testing.T) {
 				t.Setenv("DAMPING_CLAUDE_SETTINGS", claudeSettings)
 				t.Setenv("DAMPING_CURSOR_HOOKS", cursorHooks)
 				t.Setenv("DAMPING_CODEX_HOOKS", filepath.Join(dir, "codex", "hooks.json"))
+				t.Setenv("DAMPING_NO_UPDATE_CHECK", "1") // dashboard.Server's own handlers (e.g. GET /api/version) call update.Check directly; without this, scenarios would make a real network call to api.github.com
 				if err := agent.InstallClaudeCodeHook(claudeSettings, false); err != nil {
 					return ctx, err
 				}

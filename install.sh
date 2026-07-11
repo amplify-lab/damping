@@ -109,7 +109,10 @@ main() {
 
 	tar -xzf "${tmp_dir}/${archive}" -C "$tmp_dir" damping
 
-	mkdir -p "$INSTALL_DIR"
+	if ! mkdir -p "$INSTALL_DIR" 2>/dev/null; then
+		log "Creating ${INSTALL_DIR} requires sudo..."
+		sudo mkdir -p "$INSTALL_DIR"
+	fi
 	if [ -w "$INSTALL_DIR" ]; then
 		mv "${tmp_dir}/damping" "${INSTALL_DIR}/damping"
 	else
