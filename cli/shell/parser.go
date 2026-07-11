@@ -247,6 +247,28 @@ func walkPartSubstitutions(part syntax.WordPart, raw string, out *[]policy.Facts
 		for _, inner := range p.Parts {
 			walkPartSubstitutions(inner, raw, out, depth)
 		}
+	case *syntax.ParamExp:
+		// Every operand of a parameter expansion evaluates at expansion
+		// time, so a substitution hidden in any of them runs exactly like a
+		// bare $(cmd): the default/alternate word (${x:-$(cmd)}), the
+		// replace operands (${x/$(cmd)/y}), the slice offsets
+		// (${x:$(cmd):n}), and the subscript (${arr[$(cmd)]}).
+		walkArithmExpr(p.Index, raw, out, depth)
+		if p.Slice != nil {
+			walkArithmExpr(p.Slice.Offset, raw, out, depth)
+			walkArithmExpr(p.Slice.Length, raw, out, depth)
+		}
+		if p.Repl != nil {
+			walkWordSubstitutions(p.Repl.Orig, raw, out, depth)
+			walkWordSubstitutions(p.Repl.With, raw, out, depth)
+		}
+		if p.Exp != nil {
+			walkWordSubstitutions(p.Exp.Word, raw, out, depth)
+		}
+	case *syntax.ArithmExp:
+		// $(( $(cmd) )) as a word part — distinct from the "(( ))"
+		// arithmetic *command* walkCmd handles; both embed full words.
+		walkArithmExpr(p.X, raw, out, depth)
 	}
 }
 
@@ -260,9 +282,7 @@ func walkCmd(cmd syntax.Command, raw string, out *[]policy.Facts, depth int) {
 		// features/dangerous_command.feature, "command substitution used as
 		// an argument, not the command name".
 		for _, a := range c.Assigns {
-			if a.Value != nil {
-				walkWordSubstitutions(a.Value, raw, out, depth)
-			}
+			walkAssign(a, raw, out, depth)
 		}
 		for _, a := range c.Args {
 			walkWordSubstitutions(a, raw, out, depth)
@@ -312,6 +332,7 @@ func walkCmd(cmd syntax.Command, raw string, out *[]policy.Facts, depth int) {
 		walkStmts(c.Cond, raw, out, depth)
 		walkStmts(c.Do, raw, out, depth)
 	case *syntax.ForClause:
+		walkLoopHeader(c.Loop, raw, out, depth)
 		walkStmts(c.Do, raw, out, depth)
 	case *syntax.FuncDecl:
 		if c.Body != nil {
@@ -324,6 +345,14 @@ func walkCmd(cmd syntax.Command, raw string, out *[]policy.Facts, depth int) {
 		// walked at all and every rule silently no-opped.
 		walkStmt(c.Stmt, raw, out, depth)
 	case *syntax.CoprocClause:
+		// "coproc $(rm -rf ~/) { sleep 1; }" — bash evaluates the optional
+		// coprocess name's substitution before it ever checks whether the
+		// result is a valid identifier, so the command runs even though the
+		// coproc itself then fails to start. Confirmed against real bash,
+		// not just mvdan/sh's parse tree.
+		if c.Name != nil {
+			walkWordSubstitutions(c.Name, raw, out, depth)
+		}
 		walkStmt(c.Stmt, raw, out, depth)
 	case *syntax.CaseClause:
 		walkWordSubstitutions(c.Word, raw, out, depth)
@@ -337,13 +366,88 @@ func walkCmd(cmd syntax.Command, raw string, out *[]policy.Facts, depth int) {
 		// "declare v=$(rm -rf ~/)" — the substitution executes regardless of
 		// what the declared variable is ever used for.
 		for _, a := range c.Args {
-			if a.Value != nil {
-				walkWordSubstitutions(a.Value, raw, out, depth)
-			}
+			walkAssign(a, raw, out, depth)
 		}
 	case *syntax.TestClause:
 		// "[[ -n $(rm -rf ~/) ]]" — same reasoning as DeclClause.
 		walkTestExpr(c.X, raw, out, depth)
+	case *syntax.ArithmCmd:
+		// "(( $(rm -rf ~/) ))" — the substitution executes to produce the
+		// arithmetic operand regardless of whether the result is truthy.
+		walkArithmExpr(c.X, raw, out, depth)
+	case *syntax.LetClause:
+		// "let \"x=$(rm -rf ~/)\"" — same reasoning as ArithmCmd; let just
+		// takes a list of arithmetic expressions instead of one.
+		for _, e := range c.Exprs {
+			walkArithmExpr(e, raw, out, depth)
+		}
+	}
+}
+
+// walkAssign descends every word- or arithmetic-bearing part of a variable
+// assignment: the plain value ("x=$(rm -rf ~/)"), an array index
+// ("x[$(rm -rf ~/)]=1"), and an array literal's own elements and each
+// element's own index ("x=($(rm -rf ~/) safe)", "x=([$(rm -rf ~/)]=safe)").
+// Each executes its substitution at assignment time regardless of what the
+// assigned variable is ever used for — found alongside the ForClause/
+// ArithmCmd/LetClause gaps by the same review: Assign.Index and Assign.Array
+// were reachable from both *syntax.CallExpr and *syntax.DeclClause but never
+// visited by either.
+func walkAssign(a *syntax.Assign, raw string, out *[]policy.Facts, depth int) {
+	if a.Value != nil {
+		walkWordSubstitutions(a.Value, raw, out, depth)
+	}
+	walkArithmExpr(a.Index, raw, out, depth)
+	if a.Array != nil {
+		for _, elem := range a.Array.Elems {
+			walkArithmExpr(elem.Index, raw, out, depth)
+			if elem.Value != nil {
+				walkWordSubstitutions(elem.Value, raw, out, depth)
+			}
+		}
+	}
+}
+
+// walkLoopHeader descends a for-loop's header, which mvdan/sh models
+// separately from the loop body (ForClause.Do): either a word list
+// ("for f in $(rm -rf ~/x)") or a C-style arithmetic header
+// ("for ((i=0; i<$(rm -rf ~/x); i++))"). Both evaluate their substitutions at
+// loop-setup time whether or not the body ever runs, and neither was ever
+// visited by the walker before this — a destructive command hidden in either
+// position ran with no rule ever seeing it.
+func walkLoopHeader(loop syntax.Loop, raw string, out *[]policy.Facts, depth int) {
+	switch l := loop.(type) {
+	case *syntax.WordIter:
+		for _, item := range l.Items {
+			walkWordSubstitutions(item, raw, out, depth)
+		}
+	case *syntax.CStyleLoop:
+		walkArithmExpr(l.Init, raw, out, depth)
+		walkArithmExpr(l.Cond, raw, out, depth)
+		walkArithmExpr(l.Post, raw, out, depth)
+	}
+}
+
+// walkArithmExpr descends an arithmetic expression tree looking for the
+// words that may carry command/process substitution. An ArithmExpr is
+// always one of *BinaryArithm/*UnaryArithm/*ParenArithm/*FlagsArithm
+// wrapping further ArithmExpr nodes, bottoming out at a *Word leaf — see
+// mvdan.cc/sh/v3/syntax's ArithmExpr doc comment. A nil expression (an
+// omitted C-style loop clause, e.g. "for ((;;))") matches no case below and
+// is a no-op.
+func walkArithmExpr(x syntax.ArithmExpr, raw string, out *[]policy.Facts, depth int) {
+	switch a := x.(type) {
+	case *syntax.Word:
+		walkWordSubstitutions(a, raw, out, depth)
+	case *syntax.BinaryArithm:
+		walkArithmExpr(a.X, raw, out, depth)
+		walkArithmExpr(a.Y, raw, out, depth)
+	case *syntax.UnaryArithm:
+		walkArithmExpr(a.X, raw, out, depth)
+	case *syntax.ParenArithm:
+		walkArithmExpr(a.X, raw, out, depth)
+	case *syntax.FlagsArithm:
+		walkArithmExpr(a.X, raw, out, depth)
 	}
 }
 

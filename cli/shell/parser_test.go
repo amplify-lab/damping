@@ -634,6 +634,196 @@ func TestAnalyze_CompoundCommandFormsAreDescendedInto(t *testing.T) {
 	}
 }
 
+// TestAnalyze_ForLoopWordListIsDescendedInto is a regression test for a real
+// bypass: walkCmd's *syntax.ForClause case only ever walked the loop body
+// (c.Do), never the "in" word list (c.Loop, a *syntax.WordIter's Items) — so
+// "for f in $(rm -rf ~/); do ...; done" executed the substitution at
+// loop-setup time with no rule ever seeing it, regardless of what the loop
+// body did or whether it ran at all.
+func TestAnalyze_ForLoopWordListIsDescendedInto(t *testing.T) {
+	e := loadEngine(t)
+	for _, raw := range []string{
+		"for f in $(rm -rf ~/); do echo ok; done",
+		"for f in a $(rm -rf ~/) b; do echo ok; done",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			if d := evaluateRaw(t, e, raw); d.PolicyID != "destructive.rm_rf_protected" {
+				t.Fatalf("expected destructive.rm_rf_protected, got %q (verdict %v)", d.PolicyID, d.Verdict)
+			}
+		})
+	}
+}
+
+// TestAnalyze_AllowsPlainForLoopWordList is the false-positive guard for the
+// fix above: an ordinary for-loop over literal words carries no substitution
+// to find and must still be allowed.
+func TestAnalyze_AllowsPlainForLoopWordList(t *testing.T) {
+	e := loadEngine(t)
+	d := evaluateRaw(t, e, "for f in a b c; do echo ok; done")
+	if d.Verdict != decision.Allow {
+		t.Fatalf("expected a plain for-loop word list to be allowed, got %v (%q)", d.Verdict, d.PolicyID)
+	}
+}
+
+// TestAnalyze_CStyleForLoopHeaderIsDescendedInto is a regression test for a
+// gap found alongside the WordIter one above by the same review: a C-style
+// for-loop's header ("for ((i=0; i<$(rm -rf ~/); i++))") is a
+// *syntax.CStyleLoop, an entirely different Loop implementation that shares
+// none of WordIter's fields, so fixing WordIter.Items alone left this form
+// still unwalked.
+func TestAnalyze_CStyleForLoopHeaderIsDescendedInto(t *testing.T) {
+	e := loadEngine(t)
+	d := evaluateRaw(t, e, "for ((i=0; i<$(rm -rf ~/); i++)); do echo ok; done")
+	if d.PolicyID != "destructive.rm_rf_protected" {
+		t.Fatalf("expected destructive.rm_rf_protected, got %q (verdict %v)", d.PolicyID, d.Verdict)
+	}
+}
+
+func TestAnalyze_AllowsPlainCStyleForLoopHeader(t *testing.T) {
+	e := loadEngine(t)
+	d := evaluateRaw(t, e, "for ((i=0; i<3; i++)); do echo ok; done")
+	if d.Verdict != decision.Allow {
+		t.Fatalf("expected a plain C-style for-loop header to be allowed, got %v (%q)", d.Verdict, d.PolicyID)
+	}
+}
+
+// TestAnalyze_ArithmCmdAndLetClauseAreDescendedInto is a regression test for
+// a real bypass: walkCmd's type switch had no case at all for
+// *syntax.ArithmCmd ("(( ... ))") or *syntax.LetClause ("let ..."), so a
+// destructive command hidden in either escaped evaluation entirely.
+func TestAnalyze_ArithmCmdAndLetClauseAreDescendedInto(t *testing.T) {
+	e := loadEngine(t)
+	for _, raw := range []string{
+		`(( $(rm -rf ~/) ))`,
+		`let "x=$(rm -rf ~/)"`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			if d := evaluateRaw(t, e, raw); d.PolicyID != "destructive.rm_rf_protected" {
+				t.Fatalf("expected destructive.rm_rf_protected, got %q (verdict %v)", d.PolicyID, d.Verdict)
+			}
+		})
+	}
+}
+
+// TestAnalyze_AllowsPlainArithmCmdAndLetClause is the false-positive guard
+// for the fix above.
+func TestAnalyze_AllowsPlainArithmCmdAndLetClause(t *testing.T) {
+	e := loadEngine(t)
+	for _, raw := range []string{
+		`(( 1 + 1 ))`,
+		`let "x=1"`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			if d := evaluateRaw(t, e, raw); d.Verdict != decision.Allow {
+				t.Fatalf("expected %q to be allowed, got %v (%q)", raw, d.Verdict, d.PolicyID)
+			}
+		})
+	}
+}
+
+// TestAnalyze_ArrayAssignmentsAreDescendedInto is a regression test for a gap
+// found alongside the two bugs above by the same review: an assignment's
+// array index ("x[$(rm -rf ~/)]=1") and an array literal's own elements
+// ("x=($(rm -rf ~/) safe)") are carried on *syntax.Assign fields distinct
+// from the plain Value already walked, and were reachable from both
+// *syntax.CallExpr and *syntax.DeclClause without ever being visited.
+func TestAnalyze_ArrayAssignmentsAreDescendedInto(t *testing.T) {
+	e := loadEngine(t)
+	for _, raw := range []string{
+		`x[$(rm -rf ~/)]=1`,
+		`arr=($(rm -rf ~/) safe)`,
+		`declare -a arr=($(rm -rf ~/))`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			if d := evaluateRaw(t, e, raw); d.PolicyID != "destructive.rm_rf_protected" {
+				t.Fatalf("expected destructive.rm_rf_protected, got %q (verdict %v)", d.PolicyID, d.Verdict)
+			}
+		})
+	}
+}
+
+// TestAnalyze_AllowsPlainArrayAssignments is the false-positive guard for the
+// fix above.
+func TestAnalyze_AllowsPlainArrayAssignments(t *testing.T) {
+	e := loadEngine(t)
+	for _, raw := range []string{
+		`x[0]=1`,
+		`arr=(a b c)`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			if d := evaluateRaw(t, e, raw); d.Verdict != decision.Allow {
+				t.Fatalf("expected %q to be allowed, got %v (%q)", raw, d.Verdict, d.PolicyID)
+			}
+		})
+	}
+}
+
+// TestAnalyze_CoprocNameIsDescendedInto is a regression test for a gap found
+// alongside the others above by the same review: a coprocess's optional name
+// ("coproc $(rm -rf ~/) { ...; }") is a *syntax.Word on CoprocClause.Name,
+// and real bash evaluates its substitution before it ever checks whether the
+// result is a valid identifier — confirmed against real bash, not just
+// mvdan/sh's parse tree — so the command runs even though the coproc itself
+// then fails to start.
+func TestAnalyze_CoprocNameIsDescendedInto(t *testing.T) {
+	e := loadEngine(t)
+	d := evaluateRaw(t, e, "coproc $(rm -rf ~/) { sleep 1; }")
+	if d.PolicyID != "destructive.rm_rf_protected" {
+		t.Fatalf("expected destructive.rm_rf_protected, got %q (verdict %v)", d.PolicyID, d.Verdict)
+	}
+}
+
+func TestAnalyze_AllowsPlainCoprocName(t *testing.T) {
+	e := loadEngine(t)
+	d := evaluateRaw(t, e, "coproc NAME { sleep 1; }")
+	if d.Verdict != decision.Allow {
+		t.Fatalf("expected a plain coproc name to be allowed, got %v (%q)", d.Verdict, d.PolicyID)
+	}
+}
+
+// TestAnalyze_ParamExpOperandsAreDescendedInto closes the follow-up gap the
+// same review flagged but deliberately left for later: a *syntax.ParamExp's
+// own operands each evaluate at expansion time, so a substitution hidden in a
+// default word (${x:-$(cmd)}), a replacement (${x/$(cmd)/y}), a slice offset
+// (${x:$(cmd):n}), or a subscript (${arr[$(cmd)]}) runs exactly like a bare
+// $(cmd) and must be walked. $(( $(cmd) )) as a *word part* (ArithmExp)
+// belongs here too, distinct from the "(( ))" arithmetic command.
+func TestAnalyze_ParamExpOperandsAreDescendedInto(t *testing.T) {
+	e := loadEngine(t)
+	for _, raw := range []string{
+		`echo ${x:-$(rm -rf ~/)}`,
+		`echo ${x/$(rm -rf ~/)/y}`,
+		`echo ${x:$(rm -rf ~/):3}`,
+		`echo ${arr[$(rm -rf ~/)]}`,
+		`echo $(( $(rm -rf ~/) + 1 ))`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			if d := evaluateRaw(t, e, raw); d.PolicyID != "destructive.rm_rf_protected" {
+				t.Fatalf("expected destructive.rm_rf_protected, got %q (verdict %v)", d.PolicyID, d.Verdict)
+			}
+		})
+	}
+}
+
+// TestAnalyze_AllowsPlainParamExp is the false-positive guard for the fix
+// above — ordinary parameter expansions carry no substitution and must pass.
+func TestAnalyze_AllowsPlainParamExp(t *testing.T) {
+	e := loadEngine(t)
+	for _, raw := range []string{
+		`echo ${x:-default}`,
+		`echo ${x/foo/bar}`,
+		`echo ${x:1:3}`,
+		`echo ${arr[2]}`,
+		`echo $(( x + 1 ))`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			if d := evaluateRaw(t, e, raw); d.Verdict != decision.Allow {
+				t.Fatalf("expected %q to be allowed, got %v (%q)", raw, d.Verdict, d.PolicyID)
+			}
+		})
+	}
+}
+
 // TestStaticWordValue_ResolvesShellEscapes pins the fidelity property the -c
 // reinterpretation depends on: mvdan/sh preserves a literal's *source* text,
 // so `"a\"b"` arrives with the backslash still in it. A word must resolve to
