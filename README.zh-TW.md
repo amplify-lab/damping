@@ -26,8 +26,23 @@
 
 ### 1. 裝起來
 
+**macOS / Linux / WSL / Git Bash：**
+
 ```
 curl -fsSL https://raw.githubusercontent.com/amplify-lab/damping/main/install.sh | sh
+```
+
+**Windows（PowerShell）：**
+
+```
+irm https://raw.githubusercontent.com/amplify-lab/damping/main/install.ps1 | iex
+```
+
+`curl | sh` 這行需要 POSIX shell——macOS/Linux 的終端機、WSL，或 Windows 上的 Git Bash 都算，但原生 PowerShell、cmd.exe 是跑不動的；Windows 用戶請改用上面 `install.ps1` 那行。
+
+不管走哪條路，裝好之後接著跑：
+
+```
 damping init                # 自動偵測 Claude Code / Cursor / Codex，裝上預設政策，把 hook 接好
 ```
 
@@ -99,6 +114,7 @@ Damping 會把真實伺服器的工具原封不動列出來，但每次呼叫都
 | `damping on` | 重新開啟執行 |
 | `damping off [--for 30m]` | 暫停執行——唯一官方支援的停用方式（原因見 [`docs/threat-model.md`](docs/threat-model.md) §4） |
 | `damping version` | 印出目前裝的版本 |
+| `damping update` | 檢查最新版本，如果安裝的位置寫得進去就直接更新；寫不進去（像是系統目錄，需要 sudo）就印出你自己該跑的指令。想關掉背景的「有新版可用」檢查，設定 `DAMPING_NO_UPDATE_CHECK=1` |
 
 **政策**
 
@@ -131,12 +147,13 @@ Damping 會把真實伺服器的工具原封不動列出來，但每次呼叫都
 
 | 方式 | 現況 |
 | --- | --- |
-| `curl -fsSL https://raw.githubusercontent.com/amplify-lab/damping/main/install.sh \| sh` | **能用**——會自動抓對應平台的壓縮檔（從最新的 GitHub Release）、驗 SHA-256 checksum、裝到 `/usr/local/bin`（想改路徑用 `DAMPING_INSTALL_DIR`，想指定版本用 `DAMPING_VERSION=vX.Y.Z`） |
+| `curl -fsSL https://raw.githubusercontent.com/amplify-lab/damping/main/install.sh \| sh` | **能用**——會自動抓對應平台的壓縮檔（從最新的 GitHub Release）、驗 SHA-256 checksum、裝到 `/usr/local/bin`（想改路徑用 `DAMPING_INSTALL_DIR`，想指定版本用 `DAMPING_VERSION=vX.Y.Z`）。需要 POSIX shell（macOS/Linux 終端機、WSL，或 Git Bash）——原生 PowerShell、cmd.exe 跑不動 |
+| `irm https://raw.githubusercontent.com/amplify-lab/damping/main/install.ps1 \| iex` | **能用**——原生 Windows PowerShell 安裝腳本（[`install.ps1`](install.ps1)），checksum 驗證方式跟 `install.sh` 一樣，裝到 `%LOCALAPPDATA%\damping` 並自動加進 `PATH`（同樣支援 `DAMPING_INSTALL_DIR`/`DAMPING_VERSION` 覆寫） |
 | 去 [GitHub Releases](https://github.com/amplify-lab/damping/releases) 手動下載 | **能用**——每次發版都有 5 種平台的壓縮檔（linux/darwin 各配 amd64/arm64，加上 windows/amd64），還有 `checksums.txt` |
 | `brew install amplify-lab/tap/damping` | **能用**（`v0.2.1` 之後）——`amplify-lab/homebrew-tap` 是我們自己的 tap，不是官方那個，`amplify-lab/tap` 這個前綴一定要打，單打 `brew install damping` 裝不到 |
 | `curl -sSL https://damping.dev/install \| sh` | **還不能用**——`damping.dev` 這個網域有註冊了，但還沒把這個路徑接到 `install.sh` 的內容上 |
 
-**要怎麼更新**：目前還沒有 `damping update` 這種指令，想更新就把當初裝的方式重跑一次就好（`curl ... | sh` 或 `brew upgrade amplify-lab/tap/damping`），會自動抓到最新版。有一點要注意：升級這件事**不會**動到你的政策檔——`damping init` 本來就設計成不會覆蓋已經存在的 `~/.damping/policy.yaml`，就是為了不要把你自己加的 `always_allow`/`always_deny`/`protected_paths` 蓋掉。所以新版 binary 多出來的規則，不會自動跑進一台已經裝過的機器裡。`damping doctor` 現在會幫你檢查政策檔是不是少了目前版本內建的規則，少了會提醒你；真的想刷新就跑 `damping init --force`（這個指令是整份覆蓋，記得自己客製化的東西要先備份、事後補回去）。
+**要怎麼更新**：跑 `damping update` 就好——它會檢查最新的 GitHub release，如果安裝的位置寫得進去，就直接原地更新（安裝程式本身的輸出會即時印出來）；寫不進去的話（比如裝在系統目錄、需要 `sudo`），就印出你自己該跑的那行指令，不會擅自幫你要求提權。`damping dashboard` 的頁首也有同一套檢查，不需要提權的話還有個「Update now」一鍵更新按鈕。如果不想讓 `init`/`status`/`doctor`/`dashboard` 在輸出結尾偷偷印「有新版可用」的提示，設定 `DAMPING_NO_UPDATE_CHECK=1` 就會整個關掉這個檢查。有一點要注意：更新這件事**不會**動到你的政策檔——`damping init` 本來就設計成不會覆蓋已經存在的 `~/.damping/policy.yaml`，就是為了不要把你自己加的 `always_allow`/`always_deny`/`protected_paths` 蓋掉。所以新版 binary 多出來的規則，不會自動跑進一台已經裝過的機器裡。`damping doctor` 現在會幫你檢查政策檔是不是少了目前版本內建的規則，少了會提醒你；真的想刷新就跑 `damping init --force`（這個指令是整份覆蓋，記得自己客製化的東西要先備份、事後補回去）。
 
 **想整個團隊一起用，不只是自己裝**：V1 目前沒有集中管理或推送式的部署機制，每個人都要自己在自己機器上跑 `damping init`，而且每台機器的政策檔彼此獨立、互不影響。如果現在就想讓全團隊套用同一份政策，比較實際的做法是自己想辦法散布 `policy.yaml`（丟進團隊的 dotfiles repo，或寫個小 script 在 `damping init` 之後自動蓋過去），而不是等 Damping 內建什麼機制——集中式的政策分發跟團隊管理是 Phase 5 才會做的事，現在還沒有。
 
@@ -167,7 +184,7 @@ $ damping log --channel mcp
 | **[dcg](https://github.com/Dicklesworthstone/destructive_command_guard)** | 1,150+ 星、每天都有人 commit，整合了 10 種以上的 agent（Claude Code、Codex、Gemini CLI、Copilot CLI、Cursor、Grok、Aider），內建的規則也比 Damping 現在多 | 只做 CLI，MCP 工具呼叫完全沒涵蓋，也沒有跨管道的稽核紀錄 |
 | **[Aegis](https://github.com/Justin0504/Aegis)** | 這領域裡跟「一套政策 + 稽核 gateway」概念最接近的 OSS 專案，有加密稽核紀錄、人工核可流程，還支援 9 種以上框架的 SDK | 走的是 gateway/SDK、執行期中介這種部署模式，不是輕量的 per-agent CLI+MCP hook——形態完全不一樣，對個人開發者的終端機來說沒辦法直接拿來換 |
 | **[Pipelock](https://github.com/luckyPipewrench/pipelock)** | 專門做 MCP/HTTP/A2A 流量的 AI agent 防火牆，抓外洩、SSRF、prompt injection，還會簽章存證 | 它回答的是「資料有沒有流出去」，不是「這個動作到底做了什麼、誰核准的」——沒有細到每個工具呼叫的授權機制，也沒有統一的稽核紀錄 |
-| **Damping** | 同一套引擎、同一份紀錄，終端機跟 MCP 伺服器一起顧，鎖定個人開發者的規模，用真正的 AST 解析（`mvdan/sh`）不是正規表達式抓，零遙測，單一靜態 Go 執行檔 | 四個裡面最新出來的——內建規則比 dcg 少；沒有加密稽核紀錄，也沒有 gateway 部署模式，這兩個是 Aegis 的強項 |
+| **Damping** | 同一套引擎、同一份紀錄，終端機跟 MCP 伺服器一起顧，鎖定個人開發者的規模，用真正的 AST 解析（`mvdan/sh`）不是正規表達式抓，零遙測（唯一一次對外連線是每天一次的 GitHub 版本檢查，不會送出任何使用者資料，也能用 `DAMPING_NO_UPDATE_CHECK` 整個關掉），單一靜態 Go 執行檔 | 四個裡面最新出來的——內建規則比 dcg 少；沒有加密稽核紀錄，也沒有 gateway 部署模式，這兩個是 Aegis 的強項 |
 
 這個領域裡目前沒有其他人在個人開發者這個規模上，把 CLI 跟 MCP 統一在同一套引擎、同一份稽核紀錄底下——這才是真正的差異，不只是「擋一次 shell 指令」的 demo 好看而已。
 

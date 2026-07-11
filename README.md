@@ -26,8 +26,23 @@ Damping sits between your AI coding agent (Claude Code, Cursor, Codex, and more 
 
 ### 1. Install and set up
 
+**macOS / Linux / WSL / Git Bash:**
+
 ```
 curl -fsSL https://raw.githubusercontent.com/amplify-lab/damping/main/install.sh | sh
+```
+
+**Windows (PowerShell):**
+
+```
+irm https://raw.githubusercontent.com/amplify-lab/damping/main/install.ps1 | iex
+```
+
+The `curl | sh` line needs a POSIX shell — a real terminal on macOS/Linux, WSL, or Git Bash on Windows — it will not work in native PowerShell or cmd.exe; that's what the `install.ps1` one-liner above is for.
+
+Either way, once the binary's on your `PATH`:
+
+```
 damping init                # detects Claude Code / Cursor / Codex, installs the default policy, registers hooks
 ```
 
@@ -99,6 +114,7 @@ Every command below also accepts a global `--config PATH` flag to point at a pol
 | `damping on` | Re-enable enforcement |
 | `damping off [--for 30m]` | Pause enforcement — the only sanctioned way to disable Damping (see [`docs/threat-model.md`](docs/threat-model.md) §4) |
 | `damping version` | Print the installed version |
+| `damping update` | Check the latest release and apply it in place if the install location is writable; otherwise print the exact command to run yourself. Set `DAMPING_NO_UPDATE_CHECK=1` to disable the background "update available" check entirely |
 
 **Policy**
 
@@ -131,12 +147,13 @@ Every command below also accepts a global `--config PATH` flag to point at a pol
 
 | Method | Status |
 | --- | --- |
-| `curl -fsSL https://raw.githubusercontent.com/amplify-lab/damping/main/install.sh \| sh` | **Works today** — downloads the matching platform archive from the latest GitHub Release, verifies its SHA-256 checksum, installs to `/usr/local/bin` (override with `DAMPING_INSTALL_DIR`; pin a version with `DAMPING_VERSION=vX.Y.Z`) |
+| `curl -fsSL https://raw.githubusercontent.com/amplify-lab/damping/main/install.sh \| sh` | **Works today** — downloads the matching platform archive from the latest GitHub Release, verifies its SHA-256 checksum, installs to `/usr/local/bin` (override with `DAMPING_INSTALL_DIR`; pin a version with `DAMPING_VERSION=vX.Y.Z`). Needs a POSIX shell (macOS/Linux terminal, WSL, or Git Bash) — won't run in native PowerShell or cmd.exe |
+| `irm https://raw.githubusercontent.com/amplify-lab/damping/main/install.ps1 \| iex` | **Works today** — native Windows PowerShell installer ([`install.ps1`](install.ps1)), same checksum verification as `install.sh`, installs to `%LOCALAPPDATA%\damping` and updates your `PATH` (same `DAMPING_INSTALL_DIR`/`DAMPING_VERSION` overrides) |
 | Manual download from [GitHub Releases](https://github.com/amplify-lab/damping/releases) | **Works today** — 5 platform archives (linux/darwin × amd64/arm64, windows/amd64) plus `checksums.txt` per release |
 | `brew install amplify-lab/tap/damping` | **Works today** (as of `v0.2.1`) — `amplify-lab/homebrew-tap` is a custom tap, not `homebrew-core`, so the `amplify-lab/tap` prefix is required; a bare `brew install damping` will never resolve to it |
 | `curl -sSL https://damping.dev/install \| sh` | **Not live yet** — `damping.dev` is registered but not yet configured to serve `install.sh`'s content at that path |
 
-**Updating**: there's no `damping update`/`damping upgrade` subcommand yet — re-run whichever install method you used the first time (`curl ... | sh` or `brew upgrade amplify-lab/tap/damping`) and it fetches the latest release. One thing an upgrade does **not** touch: `damping init` never overwrites an existing `~/.damping/policy.yaml`, specifically so it never clobbers your own `always_allow`/`always_deny`/`protected_paths` customizations — which means a newer binary's additional default rules aren't automatically added to an install that already has a policy file. `damping doctor` warns if your policy file is missing rules the current binary ships by default; `damping init --force` refreshes it to the current default (this overwrites the whole file, so re-add any customizations afterward).
+**Updating**: run `damping update` — it checks the latest GitHub release and, if the install location is writable, applies it in place (streaming the installer's own output); if it isn't (e.g. a system-wide install needing `sudo`), it prints the exact command to run yourself instead of ever requesting elevated privileges on your behalf. `damping dashboard`'s header has the same check built in, with a one-click "Update now" button when no elevation is needed. Set `DAMPING_NO_UPDATE_CHECK=1` if you'd rather `init`/`status`/`doctor`/`dashboard` never even print the quiet "update available" notice they otherwise show at the end of their output. One thing an update does **not** touch: `damping init` never overwrites an existing `~/.damping/policy.yaml`, specifically so it never clobbers your own `always_allow`/`always_deny`/`protected_paths` customizations — which means a newer binary's additional default rules aren't automatically added to an install that already has a policy file. `damping doctor` warns if your policy file is missing rules the current binary ships by default; `damping init --force` refreshes it to the current default (this overwrites the whole file, so re-add any customizations afterward).
 
 **Deploying to a team, not just yourself**: V1 has no centralized fleet-management or push-based rollout mechanism — each developer runs `damping init` on their own machine, and each machine's `~/.damping/policy.yaml` is independent of every other. If you want the same policy across a whole team today, the practical approach is distributing your own `policy.yaml` (e.g. via your dotfiles repo, or a wrapper script that copies it into place right after `damping init`) rather than anything Damping ships out of the box — centralized policy distribution and fleet management is Phase 5 scope, not built yet.
 
@@ -167,7 +184,7 @@ Here's the honest breakdown against the closest tools in this space — we'd rat
 | **[dcg](https://github.com/Dicklesworthstone/destructive_command_guard)** | 1,150+★, daily commits, 10+ agent integrations (Claude Code, Codex, Gemini CLI, Copilot CLI, Cursor, Grok, Aider), a much larger built-in rule set than Damping ships today | CLI-only — no MCP tool-call coverage, no cross-channel audit trail |
 | **[Aegis](https://github.com/Justin0504/Aegis)** | The closest OSS project to "one policy + audit gateway," with a cryptographic audit trail and human-in-the-loop approval, plus SDK support across 9+ frameworks | A gateway/SDK deployment model built around a runtime mediation point, not a lightweight per-agent CLI+MCP hook — different operational shape, not a drop-in alternative for an individual developer's terminal |
 | **[Pipelock](https://github.com/luckyPipewrench/pipelock)** | Purpose-built AI agent firewall for MCP/HTTP/A2A traffic — exfiltration, SSRF, and prompt-injection detection with signed action receipts | Answers "is data leaking out," not "what did this specific action do and who authorized it" — no fine-grained per-tool-call authorization or unified audit log |
-| **Damping** | One policy engine and one audit trail across both your terminal and your MCP servers, at individual-developer scale, with real AST parsing (`mvdan/sh`) instead of regex, zero telemetry, and a single static Go binary | Newest of the four — smaller rule library than dcg's out of the box; no encrypted audit trail or gateway deployment mode (Aegis's strengths) |
+| **Damping** | One policy engine and one audit trail across both your terminal and your MCP servers, at individual-developer scale, with real AST parsing (`mvdan/sh`) instead of regex, zero telemetry (its one outbound call is a daily GitHub version check that sends no user data and is fully opt-out via `DAMPING_NO_UPDATE_CHECK`), and a single static Go binary | Newest of the four — smaller rule library than dcg's out of the box; no encrypted audit trail or gateway deployment mode (Aegis's strengths) |
 
 Nobody else in this space unifies CLI and MCP under one engine and one audit trail at individual-developer scale — that's the actual differentiator, not the shell-blocking demo alone.
 

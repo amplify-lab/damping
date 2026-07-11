@@ -11,14 +11,14 @@
 | `damping status` | 1 | One-line current state: enabled/disabled, active policy, detected integrations |
 | `damping on` / `damping off` | 1 | Enable / temporarily disable enforcement |
 | `damping log` | 1 | Replay the local audit trail |
-| `damping dashboard` | 1 (not in the original plan — see §9.1) | Serve a local, read-only web view of the same audit trail `damping log` reads |
+| `damping dashboard` | 1 (not in the original plan — see §9.1) | Serve a local web view of the same audit trail `damping log` reads — every route is read-only except a one-click self-update endpoint (see §9.1) |
 | `damping policy list` / `test` / `edit` / `validate` | 1 | Inspect and dry-run the policy file |
 | `damping mcp wrap -- <server-command>` | 1 | V1 thin MCP stdio wrapper (policy + audit only, no OAuth) — **implemented**, see §9 |
 | `damping hook <event>` | 1 | Internal entrypoint invoked by agent hook configs — not meant for direct interactive use |
 | `damping sync enable` / `disable` | 4 | Team tier opt-in cloud sync (not implemented until Phase 4) |
 | `damping completion <shell>` | 1 | Shell completion script (bash/zsh/fish/powershell) — provided automatically by Cobra |
 | `damping version` | 1 | Print version + build info |
-| `damping upgrade` | 2+ | Self-update (documented now, implemented post-launch) |
+| `damping update` | 1 | Self-update — check the latest GitHub release and, when the install location is writable, apply it in place; see §6.1 |
 
 Global flag on every command: `--config <path>` (default `~/.damping/policy.yaml`, or `$DAMPING_HOME/policy.yaml`). `--json` is `log`-specific, not global (see §7) — there is no global `--json` or `-v/--verbose` flag in V1; don't assume one.
 
@@ -143,6 +143,39 @@ $ damping on
 
 `damping off` is the **only** sanctioned disable path (see `docs/threat-model.md` §4) — it is a deliberate human action at a terminal, not something reachable through a Bash tool call an agent would plausibly be instructed to run. `--for <duration>` avoids the "I forgot it was off" failure mode research flagged as a real churn risk (users disabling permanently out of launch-week frustration).
 
+## 6.1 `damping update`
+
+```
+$ damping update
+damping is already up to date (v0.5.0).
+```
+
+Checks the latest GitHub release — via `cli/update.ForceCheck`, deliberately not `Check`: an explicit `damping update` invocation always looks, regardless of `DAMPING_NO_UPDATE_CHECK` (see that section below for why) — and behaves one of three ways, in order:
+
+- **Already up to date**: prints `damping is already up to date (<current>).` and exits 0 — nothing else happens.
+- **An update exists, but the install location needs elevated privileges** (e.g. installed under a system directory this process can't write to without `sudo`/an elevated shell): damping never re-execs itself with elevated privileges on your behalf, so it hands back the exact command and stops there, unmodified:
+
+  ```
+  $ damping update
+  damping v0.4.0 -> v0.5.0 is available, but the install location needs elevated privileges damping won't request on your behalf.
+  Run this yourself: curl -fsSL https://raw.githubusercontent.com/amplify-lab/damping/main/install.sh | sh
+  ```
+
+- **An update exists and the install location is writable**: runs that same self-update command directly, streaming its output live, then confirms:
+
+  ```
+  $ damping update
+  Updating v0.4.0 -> v0.5.0 via: curl -fsSL https://raw.githubusercontent.com/amplify-lab/damping/main/install.sh | sh
+  ...
+  ✓ Updated to v0.5.0.
+  ```
+
+  (`Method.Display()` renders the exact, directly-pasteable command a human would type themselves — for the "script"/"windows" channels this is *not* the same as the argv form `exec.Command` actually runs internally, e.g. `sh -c "curl ... | sh"`; naively joining that argv back together would lose the inner quoting and produce a string that isn't valid shell. See `cli/update/method.go`'s `Method.Display` doc comment.)
+
+Which command it runs (`cli/update/method.go`'s `DetectMethod`) depends on how this binary was installed: `brew upgrade --cask damping` if the running executable's path resolves (through any symlink) into Homebrew's Caskroom — damping ships only as a cask, never a formula, so a `/Cellar/` path is also checked but only as a harmless legacy/defensive fallback — otherwise the platform's own installer script: `curl -fsSL .../install.sh | sh` on macOS/Linux, or the `irm .../install.ps1 | iex` PowerShell one-liner on Windows (see the "Deploying Damping" section of the README for `install.ps1` alongside `install.sh`). For those two installer-script channels (brew manages its own Cellar/Caskroom paths and needs no such override), the self-update targets wherever the *running* binary's own directory actually is — `filepath.Dir` of the resolved executable path, not a hardcoded default — by exporting `DAMPING_INSTALL_DIR` into the installer's environment before running it, so a custom `DAMPING_INSTALL_DIR=~/bin` install updates itself back into `~/bin` rather than silently gaining a second stray copy at the platform's conventional location (`/usr/local/bin`, or `%LOCALAPPDATA%\damping` on Windows).
+
+**Background update check (`DAMPING_NO_UPDATE_CHECK`)**: independently of the `damping update` command itself, `damping init`, `damping status`, `damping doctor`, and `damping dashboard` each perform the same check once, at the very end of their own output, and print a single quiet notice to **stderr** — `ℹ damping <latest> is available (you have <current>) — run 'damping update'` — when a newer release exists; nothing is printed at all when already up to date. The check is cached to at most once per day (`~/.damping/update-check.json`, or `$DAMPING_HOME/update-check.json`), bounded by a 1.5s network timeout against GitHub's public releases API, and every failure mode (offline, timeout, malformed response, unwritable cache) is swallowed silently — it can never make a command fail or feel slow. Set **`DAMPING_NO_UPDATE_CHECK`** to any non-empty value to disable this check entirely (no cache read, no network call at all) — for CI, offline environments, or anyone who doesn't want damping phoning home on every invocation. **This opt-out only ever silences that passive background notice** — it is never consulted by an explicit `damping update` invocation (see above), which always checks regardless, since typing that command directly is asking a real question and deserves a real answer, not a cached-out guess.
+
 ## 7. `damping log`
 
 ```
@@ -233,9 +266,14 @@ A small local HTTP server rendering the same `~/.damping/audit.jsonl` `damping l
 
 **Recent sessions: risk dot and click-to-filter** (2026-07): each session card's colored dot is that session's *most recent* event's risk tier (`sessionSpark.LatestRisk`, `cli/dashboard/sessions.go`), using the identical hex scale the risk-over-time chart's own legend already does (`DampingCharts.RISK_COLORS`) — not whether the session itself is still open, which this dashboard has no way to know at all (it only ever reads the audit log, never live process/connection state). This replaced an earlier "settled"/"active" text badge after real user confusion: a session with only one logged event was *always* "settled" by that definition regardless of whether the underlying agent session was brand new and still running, and the label read as a claim about conversation liveness it never actually made. A "?" button beside the panel heading opens a small popover spelling this out, reusing the risk-tier color key verbatim. Clicking a card scopes the events table (and its stats charts, and the live SSE stream) to just that session via a new `?session_id=` filter (`core/audit.Filter.SessionID`, exact match — see the dismissible chip that appears in the filter bar); clicking the same card again, or the chip's own close button, clears it.
 
-**This is not Phase 4.** `docs/ux-dashboard-spec.md` describes a separate, not-yet-built team dashboard — React+TS, Cloudflare-hosted, SSO auth, cross-member team sync — genuinely blocked on Tim picking a Cloudflare account and an auth vendor. `damping dashboard` needs none of that: no auth, no network calls beyond serving its own page, binds to `127.0.0.1` only by default. It borrows that spec's visual language (dark theme, risk-as-temperature color, the damped-oscillation sparkline motif) and its "CLI/dashboard vocabulary parity" principle (§4 of that spec) — the same `core/audit.ParseFilter` that parses `damping log --risk critical` also parses `?risk=critical` on `/api/events`.
+**This is not Phase 4.** `docs/ux-dashboard-spec.md` describes a separate, not-yet-built team dashboard — React+TS, Cloudflare-hosted, SSO auth, cross-member team sync — genuinely blocked on Tim picking a Cloudflare account and an auth vendor. `damping dashboard` needs none of that: no auth, binds to `127.0.0.1` only by default, and the only outbound network call it ever makes on its own initiative is the same GitHub releases version check every other command performs (§6.1) — cached 24h, opt out via `DAMPING_NO_UPDATE_CHECK`, no user data/filesystem content/audit history ever sent. See `docs/threat-model.md` §10 for the full writeup. It borrows that spec's visual language (dark theme, risk-as-temperature color, the damped-oscillation sparkline motif) and its "CLI/dashboard vocabulary parity" principle (§4 of that spec) — the same `core/audit.ParseFilter` that parses `damping log --risk critical` also parses `?risk=critical` on `/api/events`.
 
 Flags: `--port` (default `4243`), `--host` (default `127.0.0.1` — passing anything else prints an explicit warning that the audit log becomes reachable, unauthenticated, from wherever that address is reachable). Routes: `GET /` (the page), `GET /static/dashboard.css` (the compiled stylesheet), `GET /static/charts.js` (the shared, hand-rolled chart primitives — sparkline/stacked-bar/bar-list, all built via DOM/SVG-namespace APIs, no `innerHTML`), `GET /api/summary`, `GET /api/sessions`, `GET /api/policy` (the active policy's full rule list — id/description/risk/action — for the summary strip's rule explainer), `GET /api/events` (same filters as `damping log` plus dashboard-only additions: `channel`, `risk`, `actor`, `outcome`, `since`, `until`, `policy_id`, `action_type`, `limit`, `keyword` (substring match against Target/Raw), `before` (exclusive Timestamp cursor for "load older" pagination), `session_id` (exact match, set by clicking a Recent Sessions card)), `GET /api/events/stream` (Server-Sent Events, same filters minus `limit`/`before`), `GET /api/stats` (risk-over-time buckets, top-triggered-rules counts, and allow/deny/degraded totals — same filter vocabulary as `/api/events`, but always computed over `core/audit.ReadAll`'s full matching result, never the events table's own `defaultEventsLimit`, so a long history never silently undercounts a summary chart).
+
+**`GET /api/version` and `POST /api/update`** (2026-07) back the header's version badge and its one-click update modal — the same `cli/update` package and detection logic `damping update` itself uses (§6.1), not a separate reimplementation:
+
+- `GET /api/version` reports this install's current/latest/update-available state as JSON (`current`, `latest`, `update_available`, `github_url`, `method`, `command`, `can_auto_update`) — read-only, no auth beyond the existing Host-header check above, since it reveals nothing an operator with a terminal on this machine couldn't already see by running `damping update` themselves.
+- `POST /api/update` runs the self-update in place (the identical command `damping update` would run) and streams its combined stdout/stderr back as Server-Sent Events, ending with a final `event: done` frame reporting success or failure. Two checks gate this endpoint before it does anything else at all, and both must pass: **(1)** regardless of what `--host` this dashboard was started with, the request's actual TCP peer address (`http.Request.RemoteAddr`, never a spoofable header) must be loopback — a plain `curl` from another machine on the same network is rejected even against `damping dashboard --host 0.0.0.0`, unlike the read-only routes' Host-header check, which deliberately steps aside once `--host` is set to something other than `127.0.0.1`/`localhost`; **(2)** **every request must carry the header `X-Damping-Dashboard: 1`, or the endpoint rejects it with `403 Forbidden`** — this dashboard has no other authentication, and unlike a GET, a plain cross-origin POST triggers no CORS preflight on its own, so this custom header is the actual CSRF defense: it forces the browser to preflight the request first, and since this server never sends an `Access-Control-Allow-Origin` header, the browser's same-origin policy fails that preflight for any cross-origin caller before the real POST is ever sent (the client's own JS can't use `EventSource` here for the same reason — it can't set custom headers — so it uses `fetch` with a manually-read streamed body instead). The install location's elevation requirement is re-checked fresh server-side on every call (never trusted from the client), and a second concurrent request while one is already applying gets `409 Conflict`. See `cli/dashboard/handlers.go`'s `remoteAddrIsLoopback`/`dashboardHeader`/`handleUpdate` doc comments and `docs/threat-model.md` §10 for the full threat model.
 
 `/api/events`'s `limit` differs from `damping log --limit` in one respect: the CLI's own default is `0` (unbounded — a terminal user can scroll or pipe), but this endpoint defaults to 200 when `limit` is omitted entirely, since its response gets re-rendered as DOM rows in a live browser tab on every filter change rather than streamed to a pager. An explicit `?limit=0` still means unlimited, matching the CLI's vocabulary exactly. Whenever the default (or an explicit) limit actually drops events, the response carries an `X-Damping-Truncated: true` header and the page shows a small inline note — per `docs/ux-dashboard-spec.md` §4's "never silently drop data," even a sane default shouldn't trim history without saying so.
 
