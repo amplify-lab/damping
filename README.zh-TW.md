@@ -155,6 +155,13 @@ Damping 會把真實伺服器的工具原封不動列出來，但每次呼叫都
 
 **要怎麼更新**：跑 `damping update` 就好——它會檢查最新的 GitHub release，如果安裝的位置寫得進去，就直接原地更新（安裝程式本身的輸出會即時印出來）；寫不進去的話（比如裝在系統目錄、需要 `sudo`），就印出你自己該跑的那行指令，不會擅自幫你要求提權。`damping dashboard` 的頁首也有同一套檢查，不需要提權的話還有個「Update now」一鍵更新按鈕。如果不想讓 `init`/`status`/`doctor`/`dashboard` 在輸出結尾偷偷印「有新版可用」的提示，設定 `DAMPING_NO_UPDATE_CHECK=1` 就會整個關掉這個檢查。有一點要注意：更新這件事**不會**動到你的政策檔——`damping init` 本來就設計成不會覆蓋已經存在的 `~/.damping/policy.yaml`，就是為了不要把你自己加的 `always_allow`/`always_deny`/`protected_paths` 蓋掉。所以新版 binary 多出來的規則，不會自動跑進一台已經裝過的機器裡。`damping doctor` 現在會幫你檢查政策檔是不是少了目前版本內建的規則，少了會提醒你；真的想刷新就跑 `damping init --force`（這個指令是整份覆蓋，記得自己客製化的東西要先備份、事後補回去）。
 
+<p>
+  <img src="docs/assets/dashboard-update-available.png" alt="Dashboard 頁首在版本號旁顯示「update available」徽章" width="415">
+  <img src="docs/assets/dashboard-update-modal.png" alt="更新確認框顯示 0.6.0 → v0.7.1 以及「Update now」按鈕" width="415">
+</p>
+
+*(真的有新版時的 dashboard：版本號旁會出現 **update available** 徽章，點一下先確認要跳到哪一版——這裡是裝了 `0.6.0` 的機器看到 `v0.7.1`——再原地更新。這是對真實 release 的實際截圖，不是示意圖。)*
+
 **想整個團隊一起用，不只是自己裝**：V1 目前沒有集中管理或推送式的部署機制，每個人都要自己在自己機器上跑 `damping init`，而且每台機器的政策檔彼此獨立、互不影響。如果現在就想讓全團隊套用同一份政策，比較實際的做法是自己想辦法散布 `policy.yaml`（丟進團隊的 dotfiles repo，或寫個小 script 在 `damping init` 之後自動蓋過去），而不是等 Damping 內建什麼機制——集中式的政策分發跟團隊管理是 Phase 5 才會做的事，現在還沒有。
 
 **怎麼確認真的裝成功了**，不管哪台機器都適用：

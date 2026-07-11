@@ -155,6 +155,13 @@ Every command below also accepts a global `--config PATH` flag to point at a pol
 
 **Updating**: run `damping update` — it checks the latest GitHub release and, if the install location is writable, applies it in place (streaming the installer's own output); if it isn't (e.g. a system-wide install needing `sudo`), it prints the exact command to run yourself instead of ever requesting elevated privileges on your behalf. `damping dashboard`'s header has the same check built in, with a one-click "Update now" button when no elevation is needed. Set `DAMPING_NO_UPDATE_CHECK=1` if you'd rather `init`/`status`/`doctor`/`dashboard` never even print the quiet "update available" notice they otherwise show at the end of their output. One thing an update does **not** touch: `damping init` never overwrites an existing `~/.damping/policy.yaml`, specifically so it never clobbers your own `always_allow`/`always_deny`/`protected_paths` customizations — which means a newer binary's additional default rules aren't automatically added to an install that already has a policy file. `damping doctor` warns if your policy file is missing rules the current binary ships by default; `damping init --force` refreshes it to the current default (this overwrites the whole file, so re-add any customizations afterward).
 
+<p>
+  <img src="docs/assets/dashboard-update-available.png" alt="Dashboard header showing an 'update available' badge beside the version number" width="415">
+  <img src="docs/assets/dashboard-update-modal.png" alt="Update confirmation reading 0.6.0 to v0.7.1 with an 'Update now' button" width="415">
+</p>
+
+*(The dashboard when a newer release actually exists: the version label carries an **update available** badge, and one click confirms the jump — here an install on `0.6.0` seeing `v0.7.1` — before applying it in place. Real capture against a live release, not a mockup.)*
+
 **Deploying to a team, not just yourself**: V1 has no centralized fleet-management or push-based rollout mechanism — each developer runs `damping init` on their own machine, and each machine's `~/.damping/policy.yaml` is independent of every other. If you want the same policy across a whole team today, the practical approach is distributing your own `policy.yaml` (e.g. via your dotfiles repo, or a wrapper script that copies it into place right after `damping init`) rather than anything Damping ships out of the box — centralized policy distribution and fleet management is Phase 5 scope, not built yet.
 
 **Verifying a deployment actually worked**, on any single machine:
