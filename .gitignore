@@ -32,3 +32,6 @@ id_ed25519*
 
 # Claude Code session-local state (not project content)
 /.claude/
+
+# Local competitor/research scratch — never part of the public repo
+/.scratch_research/
