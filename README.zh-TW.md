@@ -160,7 +160,7 @@ $ damping log --channel cli
 $ damping log --channel mcp
 ```
 
-跟這個領域裡幾個比較接近的工具，老實比一輪——人家贏在哪就直接講，不裝作沒有這回事（`docs/00-統一開發計畫（定案版）.md` §三 有這張表背後完整的研究）：
+跟這個領域裡幾個比較接近的工具，老實比一輪——人家贏在哪就直接講，不裝作沒有這回事：
 
 | | 贏在哪 | 沒做到什麼 |
 | --- | --- | --- |
@@ -205,7 +205,7 @@ $ damping log --channel mcp
 - 上面每一條規則現在都看得穿常見的規避手法，不是只認你打出來的字面指令：`sudo`/`env`/`nohup`/`timeout`/`exec`/`nice`/`time` 這類指令包裝前綴、直譯器的 `-c` 腳本或 `eval` 參數、管線裡的每一段（以前 `rm -rf ~/ | cat` 會整個溜過去，因為管線自己的 Facts 沒帶任何一段的參數）、還有 `case`、`declare`、`[[ ... ]]`、`time`、`coproc` 這些 AST 解析原本沒走進去的複合指令語法。細節跟現在還沒解決、老實講清楚的部分（像是 `xargs` 從 stdin 帶進來的操作對象、`Write` 工具吃到的絕對路徑跟 tilde 寫法的正規化），見 [`docs/threat-model.md`](docs/threat-model.md) 的「已知繞過手法」表格。
 - Claude Code 的 `Write`/`Edit`/`MultiEdit` 工具呼叫，現在跟 `Bash` 一樣會被顧到——上面 27 條規則裡有 3 條專門抓危險的*檔案寫入*（agent 權限升級、git-hook 埋後門、npm 生命週期腳本注入），不只是抓危險指令而已。目前只支援 Claude Code；Cursor 跟 Codex 為什麼還沒做，原因寫在 [`docs/cli-reference.md`](docs/cli-reference.md) §11。
 - `damping mcp wrap`——同一套政策引擎、同一份稽核紀錄，MCP 工具呼叫也一樣管，不只是終端機。
-- 本機的 `damping dashboard`（畫面如上）跟 `damping log`，可以把兩種管道的完整稽核紀錄重播出來——還有風險趨勢圖、觸發最多次的規則排行、時間區間/規則 ID/關鍵字篩選，以及往前翻頁看更早歷史的「載入更早的事件」，這兩個圖表都是算在完整歷史紀錄上，不是只看畫面上那幾筆而已。dashboard 的介面（不是稽核資料本身）現在也能切換英文／繁體中文，點一下規則數量摘要還會跳出視窗，用白話說明每條規則到底在防什麼。
+- 本機的 `damping dashboard`（畫面如上）跟 `damping log`，可以把兩種管道的完整稽核紀錄重播出來——還有風險趨勢圖、觸發最多次的規則排行、時間區間/規則 ID/關鍵字篩選，以及往前翻頁看更早歷史的「載入更早的事件」，這兩個圖表都是算在完整歷史紀錄上，不是只看畫面上那幾筆而已。dashboard 的介面（不是稽核資料本身）現在也能切換英文／繁體中文，點一下規則數量摘要還會跳出視窗，用白話說明每條規則到底在防什麼。「近期 session」面板的圓點顏色是那個 session *最新一筆*事件的風險等級（不代表 session 現在是否還開著——這個 dashboard 沒辦法得知這件事）；點選某個 session 可以把事件表格、圖表、即時串流全部篩選成只顯示那一個 session。
 - 內建 OPA/Rego 政策引擎，可以當作預設 Go 引擎之外的另一個選擇。
 - `damping compliance-report demo` / `export`——對日後企業版合規報表的一個早期預覽，而且老實講清楚範圍：`demo` 不用真的部署什麼（用真實、已經在跑的規則湊出一份合成的 30 天資料），`export` 則是拿你自己本機真正的稽核紀錄跑出同一份報表，支援 markdown/text/JSON，還有自帶圖表的 HTML 格式。講清楚這不是完整的 Phase 5 企業版功能（沒有地端部署、沒有 AD/LDAP 身分綁定、沒有 PostgreSQL）——細節在 [`docs/cli-reference.md`](docs/cli-reference.md) §7.1。
 - `noninteractive_prompt_fallback`——一個要自己開才會生效的設定，讓一條該問人的規則，在旁邊沒有終端機可以問的時候（像是背景跑、沒人盯著的 agent），改成照風險等級決定放行還是擋下，不會再像以前那樣不管三七二十一直接擋掉。
