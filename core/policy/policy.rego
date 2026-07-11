@@ -928,3 +928,33 @@ find_expression_start := min([i |
 	some i, a in input.facts.args
 	is_rm_flag(a)
 ])
+
+# --- 2026-07 wave 3 addition — rules_wave3.go ---
+# See rules_wave3.go's doc comment for the PocketOS incident this rule is
+# grounded in. Mirrors matchCloudAPIRawDelete exactly —
+# core/policy/opa_equivalence_test.go asserts both engines never diverge.
+
+railway_api_pattern := `(?i)https?://backboard\.railway\.(app|com)/graphql`
+
+railway_destructive_mutation_pattern := `\b(volumeDelete|serviceDelete|serviceInstanceDelete|deploymentRemove|environmentDelete|projectDelete)\b`
+
+# destructive_cloud_api_host_pattern mirrors rules_wave3.go's
+# destructiveCloudAPIHostPattern exactly — five REST providers verified
+# directly against their own API references (Vercel/Netlify/Render/Heroku/
+# DigitalOcean); Railway is handled separately above since its API is
+# GraphQL-over-POST, not REST.
+destructive_cloud_api_host_pattern := `(?i)https?://(api\.vercel\.com/v[0-9]+/projects/|api\.netlify\.com/api/v[0-9]+/sites/|api\.render\.com/v[0-9]+/services/|api\.heroku\.com/apps/|api\.digitalocean\.com/v[0-9]+/droplets/)`
+
+destructive_method_flag_pattern := `(?i)(-X\s*DELETE\b|--request[\s=]DELETE\b|--method[\s=]DELETE\b)`
+
+matches contains "destructive.cloud_api_raw_delete" if {
+	input.facts.command in {"curl", "wget"}
+	regex.match(railway_api_pattern, input.facts.raw)
+	regex.match(railway_destructive_mutation_pattern, input.facts.raw)
+}
+
+matches contains "destructive.cloud_api_raw_delete" if {
+	input.facts.command in {"curl", "wget"}
+	regex.match(destructive_cloud_api_host_pattern, input.facts.raw)
+	regex.match(destructive_method_flag_pattern, input.facts.raw)
+}

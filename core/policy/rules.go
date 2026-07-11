@@ -55,6 +55,9 @@ var matchers = map[string]matcher{
 	// 2026-07 agent-asset-protection expansion (rules_agentasset.go).
 	"destructive.agent_asset_mass_removal": matchAgentAssetMassRemoval,
 	"destructive.find_delete_protected":    matchFindDeleteProtected,
+
+	// 2026-07 wave 3 addition (rules_wave3.go).
+	"destructive.cloud_api_raw_delete": matchCloudAPIRawDelete,
 }
 
 // RedirectWritePlaceholder is what cli/shell sets Facts.Command to when it

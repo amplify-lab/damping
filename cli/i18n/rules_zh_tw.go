@@ -73,4 +73,6 @@ var ruleReasonsZhTW = map[string]string{ // #nosec G101 -- gosec's hardcoded-cre
 	"destructive.agent_asset_mass_removal": "一次性把 agent 自己安裝的資產全部清光——不管是 `skills remove --all` 或用萬用字元 `'*'`（官方文件寫明是「每個 skill、每個 agent、完全不用確認」的縮寫，不管是用 skills、npx/bunx skills，還是 pnpm/yarn dlx skills 跑的都算）、`claude plugin marketplace remove`（會連鎖移除該 marketplace 底下的所有 plugin）、`claude plugin uninstall --prune`，還是 `claude project purge --all`（會刪掉所有專案的對話紀錄／任務／檔案異動歷史）——這些指令通通沒有「復原」這個選項",
 
 	"destructive.find_delete_protected": "find <path> -delete 的目標是你的家目錄、檔案系統根目錄、政策設定的受保護路徑，或系統關鍵目錄——跟 destructive.rm_rf_protected 涵蓋的是同一組真正災難性的目標，只是這次是透過 find 而不是 rm",
+
+	"destructive.cloud_api_raw_delete": "curl 或 wget 直接呼叫雲端／PaaS 供應商的原始 HTTP API，刪掉整個已部署的資源——Railway 的 GraphQL API（volumeDelete、serviceDelete 之類的 mutation），或是對 Vercel／Netlify／Render／Heroku／DigitalOcean 的 project／site／service／app／droplet 端點下 REST DELETE——完全繞過供應商自己的 CLI，以及 CLI 可能有的任何確認步驟",
 }

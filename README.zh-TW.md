@@ -93,7 +93,7 @@ Damping 會把真實伺服器的工具原封不動列出來，但每次呼叫都
 
 | 指令 | 做什麼 |
 | --- | --- |
-| `damping init [--lang en\|zh-TW]` | 一次性設定——自動偵測 Claude Code / Cursor / Codex，裝上預設政策，把 hook 接好。不會覆蓋已經存在的政策檔；想強制刷新成目前版本的預設值就用 `damping init --force`（會整份覆蓋掉）。第一次裝的時候還會問（互動式，或用 `--lang` 直接指定）TTY 確認提示跟 `policy test` 要顯示哪種語言——英文或繁體中文，27 條規則都已經翻好了 |
+| `damping init [--lang en\|zh-TW]` | 一次性設定——自動偵測 Claude Code / Cursor / Codex，裝上預設政策，把 hook 接好。不會覆蓋已經存在的政策檔；想強制刷新成目前版本的預設值就用 `damping init --force`（會整份覆蓋掉）。第一次裝的時候還會問（互動式，或用 `--lang` 直接指定）TTY 確認提示跟 `policy test` 要顯示哪種語言——英文或繁體中文，28 條規則都已經翻好了 |
 | `damping status` | 現在有沒有開、用哪個政策檔、實際接了哪些 agent |
 | `damping doctor` | 健檢——hook 有沒有掛好、政策檔正不正常、有沒有降級模式紀錄。出包會回傳 exit code 4——這是唯一適合寫進 onboarding 檢查清單或 CI 的指令 |
 | `damping on` | 重新開啟執行 |
@@ -192,6 +192,7 @@ $ damping log --channel mcp
 | 2019 年 8 月，有人入侵了某個維護者的 RubyGems.org 帳號，拿去發布了四個惡意版本（1.6.10–1.6.13）的熱門套件 `rest-client`，其中 1.6.13 版藏了偷憑證兼挖礦的後門——CVE-2019-15224（[GitHub issue](https://github.com/rest-client/rest-client/issues/713)）。 | `destructive.gem_push_unreviewed` |
 | Socket 的威脅研究團隊抓到 npm 套件 `mysql-dumpdiscord`（還有配套的 PyPI/RubyGems 套件）會偷讀 `.env`/`config.json`/`ayarlar.json`，再包成 JSON 送到寫死的 Discord webhook 網址——這是一整波把 Discord webhook 當成免費、不用驗證的 C2/外洩管道的攻擊行動，橫跨 npm、PyPI、RubyGems 三個生態系（[Socket](https://socket.dev/blog/weaponizing-discord-for-command-and-control)）。 | `destructive.webhook_exfiltration` |
 | 有個 skills CLI（就是 `npx skills` 那個管理 agent skills 的工具）的使用者回報：它的全域移除指令——`--all` 官方文件寫明就是 `--skill '*' --agent '*' -y` 的縮寫，也就是每個 skill、每個 agent、完全不問你——把共用 skills 目錄裡**每一個**資料夾都刪了，連使用者自己手寫、CLI 根本沒裝過的 skills 也一起帶走，最後是靠內容碰巧留在別的 session log 裡才救回來（[vercel-labs/skills #604](https://github.com/vercel-labs/skills/issues/604)，上游用 PR #609 修掉；同型的資料遺失 bug 還有一個 [#287](https://github.com/vercel-labs/skills/issues/287)）。AI agent 一句「幫你清乾淨」，就可能把你累積好幾個月的 skills 一次抹掉。 | `destructive.agent_asset_mass_removal`——同一條規則也管 `claude plugin marketplace remove`（會連鎖移除該 marketplace 來的所有 plugin）、`claude plugin uninstall --prune`、`claude project purge --all`，每一個都是對著真的 `claude` CLI 驗證過的。另外 `~/.claude`、`.claude`、`~/.codex`、`~/.cursor` 現在都進了預設的 `protected_paths`，所以對 agent 自己的 skills/記憶/設定目錄下手的 `rm -rf`/`find -delete`/重導向寫入，通通升級成 critical 級（`destructive.rm_rf_protected`、新的 `destructive.find_delete_protected`、`destructive.write_protected_path`）——連讀 `~/.claude/.credentials.json` 再往外送，也會觸發 `destructive.secret_exfiltration` |
+| PocketOS（2026 年 4 月 25 日）：一個跑 Claude Opus 4.6 的 Cursor session 在 staging 環境撞到憑證對不上，自己跑去找解法——結果在一個不相干的檔案裡找到一組 API token，這組 token 原本是拿來透過 Railway CLI 管理自訂網域用的，但權限開得太大，什麼操作都能做，包括破壞性的。它拿這組 token 直接呼叫 Railway 的 GraphQL API，下了一個 `volumeDelete` mutation，同一次呼叫就把正式環境資料庫跟所有備份一起清空了（Railway 把 volume 層級的備份存在同一個 volume 裡）——沒有任何確認提示，從頭到尾 9 秒（[The Register](https://www.theregister.com/2026/04/27/cursoropus_agent_snuffs_out_pocketos/)）。 | `destructive.cloud_api_raw_delete`——`curl`/`wget` 直接呼叫雲端／PaaS 供應商的 API，刪掉整個已部署的資源，完全繞過供應商自己的 CLI（以及 CLI 可能有的任何確認步驟）。除了 Railway 的 GraphQL API，也涵蓋對 Vercel／Netlify／Render／Heroku／DigitalOcean 的 project／site／service／app／droplet 端點下真正的 REST `DELETE`——每一個都對著該供應商自己的 API 文件驗證過，不是憑類推猜的；一開始這條規則只做了 Railway，被直接問「這算大範圍防護還是只防這一個事故」之後才補上其他供應商的 |
 
 特別提一下加密貨幣/錢包這塊：上面講的憑證外洩路徑是真的存在，而且現在就直接衝著 Claude Code/Cursor 來（TrapDoor 那個）。至於直接攔截轉帳指令本身（`cast send`、`solana transfer` 這類）則是更窄、更 Web3 專屬的情境，證據沒那麼多——列為以後可能會做的項目，現在還沒做，這裡也不誇大講。
 
@@ -201,9 +202,9 @@ $ damping log --channel mcp
 
 以下這些都已經做完、有測試在把關——不是畫大餅，是現在的實際狀況：
 
-- CLI shell 指令攔截，用的是真正的 AST 解析，不是正規表達式硬湊，涵蓋 27 條預設規則（破壞性刪除、強制推送、破壞性 SQL/Mongo/Redis 操作、遞迴權限變更、沒查核的安裝 pipeline、編碼過的 payload、沙箱繞過路徑、infra-as-code 的 destroy/沒審查就 apply、破壞性的 git 歷史操作、憑證外洩、kubectl/雲端 CLI 大量刪除、對整顆裝置的原始寫入、沒審查的 crates.io/RubyGems 發布、聊天軟體 webhook 外洩、一口氣清光 agent 自己裝的 skills/plugin/專案記憶、對受保護路徑下手的 `find -delete`，還有更多）——完整清單跟每一條背後的真實事故，見 [`docs/threat-model.md`](docs/threat-model.md) 跟上面「這些是它要防的真實事故」那節。
+- CLI shell 指令攔截，用的是真正的 AST 解析，不是正規表達式硬湊，涵蓋 28 條預設規則（破壞性刪除、強制推送、破壞性 SQL/Mongo/Redis 操作、遞迴權限變更、沒查核的安裝 pipeline、編碼過的 payload、沙箱繞過路徑、infra-as-code 的 destroy/沒審查就 apply、破壞性的 git 歷史操作、憑證外洩、kubectl/雲端 CLI 大量刪除、繞過雲端供應商 CLI 直接呼叫 API 刪除資源、對整顆裝置的原始寫入、沒審查的 crates.io/RubyGems 發布、聊天軟體 webhook 外洩、一口氣清光 agent 自己裝的 skills/plugin/專案記憶、對受保護路徑下手的 `find -delete`，還有更多）——完整清單跟每一條背後的真實事故，見 [`docs/threat-model.md`](docs/threat-model.md) 跟上面「這些是它要防的真實事故」那節。
 - 上面每一條規則現在都看得穿常見的規避手法，不是只認你打出來的字面指令：`sudo`/`env`/`nohup`/`timeout`/`exec`/`nice`/`time` 這類指令包裝前綴、直譯器的 `-c` 腳本或 `eval` 參數、管線裡的每一段（以前 `rm -rf ~/ | cat` 會整個溜過去，因為管線自己的 Facts 沒帶任何一段的參數）、還有 `case`、`declare`、`[[ ... ]]`、`time`、`coproc` 這些 AST 解析原本沒走進去的複合指令語法。細節跟現在還沒解決、老實講清楚的部分（像是 `xargs` 從 stdin 帶進來的操作對象、`Write` 工具吃到的絕對路徑跟 tilde 寫法的正規化），見 [`docs/threat-model.md`](docs/threat-model.md) 的「已知繞過手法」表格。
-- Claude Code 的 `Write`/`Edit`/`MultiEdit` 工具呼叫，現在跟 `Bash` 一樣會被顧到——上面 27 條規則裡有 3 條專門抓危險的*檔案寫入*（agent 權限升級、git-hook 埋後門、npm 生命週期腳本注入），不只是抓危險指令而已。目前只支援 Claude Code；Cursor 跟 Codex 為什麼還沒做，原因寫在 [`docs/cli-reference.md`](docs/cli-reference.md) §11。
+- Claude Code 的 `Write`/`Edit`/`MultiEdit` 工具呼叫，現在跟 `Bash` 一樣會被顧到——上面 28 條規則裡有 3 條專門抓危險的*檔案寫入*（agent 權限升級、git-hook 埋後門、npm 生命週期腳本注入），不只是抓危險指令而已。目前只支援 Claude Code；Cursor 跟 Codex 為什麼還沒做，原因寫在 [`docs/cli-reference.md`](docs/cli-reference.md) §11。
 - `damping mcp wrap`——同一套政策引擎、同一份稽核紀錄，MCP 工具呼叫也一樣管，不只是終端機。
 - 本機的 `damping dashboard`（畫面如上）跟 `damping log`，可以把兩種管道的完整稽核紀錄重播出來——還有風險趨勢圖、觸發最多次的規則排行、時間區間/規則 ID/關鍵字篩選，以及往前翻頁看更早歷史的「載入更早的事件」，這兩個圖表都是算在完整歷史紀錄上，不是只看畫面上那幾筆而已。dashboard 的介面（不是稽核資料本身）現在也能切換英文／繁體中文，點一下規則數量摘要還會跳出視窗，用白話說明每條規則到底在防什麼。「近期 session」面板的圓點顏色是那個 session *最新一筆*事件的風險等級（不代表 session 現在是否還開著——這個 dashboard 沒辦法得知這件事）；點選某個 session 可以把事件表格、圖表、即時串流全部篩選成只顯示那一個 session。
 - 內建 OPA/Rego 政策引擎，可以當作預設 Go 引擎之外的另一個選擇。

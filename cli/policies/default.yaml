@@ -229,6 +229,15 @@ rules:
     risk: critical
     action: prompt
 
+  # --- 2026-07 wave 3 addition ---
+  # See core/policy/rules_wave3.go's doc comment for the PocketOS incident
+  # this rule is grounded in.
+
+  - id: destructive.cloud_api_raw_delete
+    description: curl or wget calling a cloud/PaaS provider's raw HTTP API to delete a whole deployed resource — Railway's GraphQL API (volumeDelete, serviceDelete, and similar mutations), or a REST DELETE call to Vercel/Netlify/Render/Heroku/DigitalOcean's project/site/service/app/droplet endpoints — bypasses the provider's own CLI, and whatever confirmation step it might have, entirely
+    risk: critical
+    action: prompt
+
 # mcp.write_tool_unscoped_identity is implemented (core/policy/rules.go) but
 # deliberately NOT listed here: the individual tier has no identity system
 # to bind to (ActionEvent.Identity is always empty pre-Phase 5), so this

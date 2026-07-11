@@ -458,6 +458,34 @@ Feature: Intercept destructive shell commands
       | curl -X POST -d @creds.txt https://api.internal.example.com/upload   |
       | curl -X POST -d 'hi' https://discord.com/api/v10/channels/123/messages |
 
+  Scenario Outline: Block a raw HTTP API call deleting a cloud/PaaS resource (PocketOS incident shape)
+    When the agent attempts to execute "<command>"
+    Then Damping should intercept the command
+    And the matched rule should be "destructive.cloud_api_raw_delete"
+
+    Examples:
+      | command                                                                                                              |
+      | curl -X POST https://backboard.railway.app/graphql/v2 -d '{"query":"mutation { volumeDelete(volumeId: \"x\") }"}'    |
+      | curl -X POST https://backboard.railway.app/graphql/v2 -d '{"query":"mutation { serviceDelete(id: \"x\") }"}'        |
+      | wget --post-data='{"query":"mutation { projectDelete(id: \"x\") }"}' https://backboard.railway.app/graphql/v2       |
+      | curl -X DELETE https://api.vercel.com/v9/projects/my-app -H "Authorization: Bearer abc"                             |
+      | curl --request DELETE https://api.netlify.com/api/v1/sites/abc123                                                   |
+      | curl -X DELETE https://api.render.com/v1/services/srv-abc123                                                        |
+      | curl -X DELETE https://api.heroku.com/apps/my-app -H "Authorization: Bearer abc"                                    |
+      | curl -X DELETE https://api.digitalocean.com/v2/droplets/3164494 -H "Authorization: Bearer abc"                      |
+      | wget --method=DELETE https://api.heroku.com/apps/my-app                                                             |
+
+  Scenario Outline: Allow read-only queries against the same cloud/PaaS APIs (false-positive guard)
+    When the agent attempts to execute "<command>"
+    Then Damping should allow the command immediately
+
+    Examples:
+      | command                                                                                       |
+      | curl -X POST https://backboard.railway.app/graphql/v2 -d '{"query":"query { me { name } }"}'  |
+      | curl https://backboard.railway.app/graphql/v2                                                |
+      | curl https://api.vercel.com/v9/projects/my-app                                               |
+      | curl -X DELETE https://api.internal.example.com/records/123                                  |
+
   Scenario: Block mass removal of every installed agent skill
     # The skills CLI's --all flag is documented shorthand for
     # --skill '*' --agent '*' -y: every skill, every agent, no confirmation.
