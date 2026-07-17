@@ -234,3 +234,70 @@ func TestEvaluate_RmRfUnrecognizedPathIsMediumRiskNotCritical(t *testing.T) {
 		}
 	}
 }
+
+// TestEvaluate_RmRfUnprovableTargetIsCritical: an operand cli/shell could not
+// resolve to a literal collapses to "" — rm -rf is destructive by
+// construction, so an unprovable target gets matchFindDeleteProtected's
+// long-standing treatment, not the medium tier (which is exactly the tier a
+// sane unattended noninteractive_prompt_fallback config auto-allows — and the
+// 2026-07 GPT-5.6 Codex $HOME deletions happened in precisely that kind of
+// unattended full-access run).
+func TestEvaluate_RmRfUnprovableTargetIsCritical(t *testing.T) {
+	e := loadDefaultEngine(t)
+	d := e.Evaluate(Facts{Raw: `rm -rf "$BUILD_DIR"`, Command: "rm", Args: []string{"-rf", ""}, Target: ""})
+	if d.PolicyID != "destructive.rm_rf_protected" {
+		t.Fatalf("expected destructive.rm_rf_protected for an unprovable target, got %q (verdict %v)", d.PolicyID, d.Verdict)
+	}
+	if d.Risk != string(event.RiskCritical) {
+		t.Fatalf("expected critical risk for an unprovable target, got %q", d.Risk)
+	}
+}
+
+func TestStripTrailingSlashStar(t *testing.T) {
+	cases := []struct {
+		target string
+		want   string
+	}{
+		{"~/*", "~/"},
+		{"/*", "/"},
+		{"/etc/*", "/etc/"},
+		{"./build/*", "./build/"},
+		{"~/*.log", "~/*.log"}, // a scoped glob is a bounded delete, not a directory wipe
+		{"*", "*"},             // bare glob: cwd-relative, no directory to normalize to
+		{"~/", "~/"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		if got := stripTrailingSlashStar(tc.target); got != tc.want {
+			t.Errorf("stripTrailingSlashStar(%q) = %q, want %q", tc.target, got, tc.want)
+		}
+	}
+}
+
+// TestEvaluate_RmRfGlobOfProtectedRootIsCritical: `rm -rf ~/*` empties the
+// home directory exactly as `rm -rf ~/` does (minus dotfiles), and `rm -rf
+// /*` is the classic spelling of a root wipe — both used to land in the
+// medium unrecognized-path tier because the glob suffix matched no
+// catastrophic-target literal.
+func TestEvaluate_RmRfGlobOfProtectedRootIsCritical(t *testing.T) {
+	e := loadDefaultEngine(t)
+	for _, target := range []string{"~/*", "/*", "/etc/*", "~/.claude/*"} {
+		d := e.Evaluate(Facts{Raw: "rm -rf " + target, Command: "rm", Args: []string{"-rf", target}, Target: target})
+		if d.PolicyID != "destructive.rm_rf_protected" {
+			t.Errorf("rm -rf %s: expected destructive.rm_rf_protected, got %q (verdict %v)", target, d.PolicyID, d.Verdict)
+		}
+	}
+}
+
+// TestEvaluate_RmRfGlobOfRegenerableStaysAllowed is the false-positive guard
+// for the glob normalization: "<dir>/*" must land in the exact same
+// regenerable/temp-root carve-outs "<dir>" itself already hits.
+func TestEvaluate_RmRfGlobOfRegenerableStaysAllowed(t *testing.T) {
+	e := loadDefaultEngine(t)
+	for _, target := range []string{"./build/*", "node_modules/*", "/tmp/scratch/*"} {
+		d := e.Evaluate(Facts{Raw: "rm -rf " + target, Command: "rm", Args: []string{"-rf", target}, Target: target})
+		if d.Verdict != decision.Allow {
+			t.Errorf("rm -rf %s: expected Allow, got verdict %v (rule %q)", target, d.Verdict, d.PolicyID)
+		}
+	}
+}

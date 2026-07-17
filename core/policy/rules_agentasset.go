@@ -191,6 +191,11 @@ func matchFindDeleteProtected(f Facts, cfg Config) bool {
 		if target == "" {
 			return true
 		}
+		// Same trailing-glob normalization as the rm rules: the shell expands
+		// `find ~/* -delete` into every non-hidden entry of home as starting
+		// points, which previously matched no check at all and was allowed
+		// outright.
+		target = stripTrailingSlashStar(target)
 		if isFilesystemOrHomeRoot(target) || inProtectedPaths(target, cfg.ProtectedPaths) {
 			return true
 		}

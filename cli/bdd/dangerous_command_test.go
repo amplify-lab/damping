@@ -96,7 +96,13 @@ func TestFeatures_DangerousCommand(t *testing.T) {
 			})
 			sc.Given(`^Damping is enabled$`, func() error { return nil })
 
-			sc.When(`^the agent attempts to execute "([^"]*)"$`, w.evaluate)
+			// Greedy capture to the line's final quote, not `([^"]*)`: many
+			// real command shapes carry their own double quotes (`curl -H
+			// "Authorization: Bearer abc"`, `let "x=..."`), and the
+			// non-greedy class silently left every such scenario *undefined*
+			// — 9 cloud-API-delete and let-clause scenarios were reported as
+			// passing suites while never actually executing.
+			sc.When(`^the agent attempts to execute "(.*)"$`, w.evaluate)
 			sc.When(`^the agent attempts to execute a multi-line script containing "([^"]*)" inside a shell function body$`, func(embedded string) error {
 				script := fmt.Sprintf("setup() {\n  echo preparing workspace\n  %s\n}\nsetup\n", embedded)
 				return w.evaluate(script)

@@ -48,6 +48,25 @@ func matchRmRfProtected(f Facts, cfg Config) bool {
 	// features/dangerous_command.feature, "rm -rf with multiple path
 	// operands, only one of which is dangerous".
 	for _, target := range rmPathOperands(f.Args) {
+		// An operand the parser could not resolve to a literal collapses to
+		// "" (an unquoted "$TMPDIR/build" is unresolvable without executing
+		// the shell). rm -rf is destructive by construction, so an unprovable
+		// target gets the same treatment a known-protected one does — the
+		// exact reasoning matchFindDeleteProtected already applies to find
+		// -delete, extended to rm after the 2026-07 GPT-5.6 Codex incident:
+		// the agent re-pointed $HOME at a temp directory and deleted the real
+		// $HOME instead, the precise failure mode where a variable-bearing rm
+		// target's runtime value diverges from what anyone believed it was.
+		// Accepted cost, same as find's: `rm -rf "$BUILD_DIR"` prompts at
+		// this tier too. Under noninteractive_prompt_fallback this tier is
+		// the one a sane unattended config denies — which is the whole point:
+		// the Codex deletions happened precisely in unattended full-access
+		// runs, where the old medium-tier classification would have been
+		// auto-allowed by the documented everyday-cleanup fallback config.
+		if target == "" {
+			return true
+		}
+		target = stripTrailingSlashStar(target)
 		if isFilesystemOrHomeRoot(target) {
 			return true
 		}
@@ -67,6 +86,20 @@ func matchRmRfProtected(f Facts, cfg Config) bool {
 		}
 	}
 	return false
+}
+
+// stripTrailingSlashStar normalizes a target of the form "<dir>/*" to
+// "<dir>/" — `rm -rf ~/*` empties the home directory exactly as `rm -rf ~/`
+// does (minus dotfiles), and `find ~/* -delete` receives every non-hidden
+// entry of home as its starting points once the shell expands the glob, so
+// the policy layer judges the glob form as the directory it empties. Only
+// the exact "/*" suffix is stripped: a scoped glob like "~/*.log" is a real
+// but bounded delete, not a directory wipe, and stays as-is.
+func stripTrailingSlashStar(target string) string {
+	if strings.HasSuffix(target, "/*") {
+		return strings.TrimSuffix(target, "*")
+	}
+	return target
 }
 
 // isRecognizedSafeRmTarget reports whether target is a known-regenerable
@@ -100,6 +133,10 @@ func matchRmRfUnrecognizedPath(f Facts, cfg Config) bool {
 		return false
 	}
 	for _, target := range rmPathOperands(f.Args) {
+		if target == "" {
+			continue // unprovable → matchRmRfProtected's concern, not this rule's
+		}
+		target = stripTrailingSlashStar(target)
 		if isRecognizedSafeRmTarget(target) {
 			continue
 		}
@@ -487,7 +524,7 @@ func isShortFlagCluster(a string) bool {
 
 func isFilesystemOrHomeRoot(target string) bool {
 	switch target {
-	case "/", "~", "~/", "$HOME":
+	case "/", "~", "~/", "$HOME", "$HOME/":
 		return true
 	}
 	return false

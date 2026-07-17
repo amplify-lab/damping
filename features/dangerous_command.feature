@@ -680,17 +680,169 @@ Feature: Intercept destructive shell commands
       | nice -n 10 cargo build         |
       | bash -c 'npm run build'        |
       | bash script.sh                 |
-      | eval $UNRESOLVABLE             |
       | echo sudo rm -rf ~/            |
 
+  Scenario: eval of a command substitution stays allowed (false-positive guard)
+    # eval "$(ssh-agent -s)" / eval "$(direnv hook bash)" are ubiquitous,
+    # long-established shell idioms — flagging every one of them is exactly
+    # the false-positive profile docs/threat-model.md says gets a tool like
+    # this uninstalled. The substituted command itself is still walked and
+    # judged on its own; only the eval of its *output* stays unflagged, a
+    # disclosed gap in docs/threat-model.md §3.
+    When the agent attempts to execute the following script:
+      """
+      eval "$(ssh-agent -s)"
+      """
+    Then Damping should allow the command immediately
+
+  Scenario: eval of an opaque variable is dynamic command construction, not safe usage
+    # A bare "$FOO" in command position has always been intercepted as
+    # destructive.dynamic_command_construction — so "eval $FOO", which
+    # executes exactly the same unknowable content, allowing outright was a
+    # one-word wrapper bypass of that rule. The command-substitution idioms
+    # (eval "$(ssh-agent -s)" above) stay allowed; only a plain opaque
+    # variable handed to eval is flagged.
+    When the agent attempts to execute "eval $UNRESOLVABLE"
+    Then Damping should intercept the command
+    And the matched rule should be "destructive.dynamic_command_construction"
+
   Scenario: find -delete against a target the parser cannot resolve is not assumed safe
-    # "$HOME/.claude" collapses to an empty literal — an unprovable target for
-    # an inherently destructive verb gets the same confirmation a known
+    # "$TMPDIR/.claude" collapses to an empty literal — an unprovable target
+    # for an inherently destructive verb gets the same confirmation a known
     # protected one does, mirroring destructive.dynamic_command_construction's
-    # reasoning for unresolvable command names.
-    When the agent attempts to execute "find $HOME/.claude -delete"
+    # reasoning for unresolvable command names. (This used to exercise
+    # "$HOME/.claude", which now resolves to "~/.claude" and is caught as a
+    # protected path instead of as unprovable — see the GPT-5.6 Codex suite
+    # below.)
+    When the agent attempts to execute "find $TMPDIR/.claude -delete"
     Then Damping should intercept the command
     And the matched rule should be "destructive.find_delete_protected"
+
+  # --- 2026-07 GPT-5.6 Codex home-directory-deletion regression suite ---
+  #
+  # OpenAI's Codex lead confirmed (2026-07-16) a handful of cases where
+  # GPT-5.6 Codex, running in full-access mode with sandboxing and auto-review
+  # both off, tried to re-point $HOME at a temp directory and deleted the real
+  # $HOME instead. Every shape below is that same failure class — a home
+  # deletion reaching the shell through a variable, a glob, or an
+  # interpreter's script string instead of a literal ~. Before this suite,
+  # `bash -c "rm -rf $HOME"`, `eval "rm -rf $HOME"`, `find ~/* -delete`, and
+  # `echo x >> $HOME/.ssh/authorized_keys` were allowed outright, and every
+  # direct `rm -rf $HOME` spelling was mis-tiered as the medium-severity
+  # unrecognized-path rule — the tier an unattended operator reasonably
+  # auto-allows via noninteractive_prompt_fallback, i.e. exactly the
+  # configuration in which the real incident ran. Permanent regression
+  # scenarios, per CONTRIBUTING.md.
+
+  Scenario Outline: A home deletion via $HOME or a root glob is critical-tier, exactly like a literal ~
+    When the agent attempts to execute "<command>"
+    Then Damping should intercept the command
+    And the matched rule should be "destructive.rm_rf_protected"
+
+    Examples:
+      | command                        |
+      | rm -rf $HOME                   |
+      | rm -rf ${HOME}                 |
+      | rm -rf $HOME/                  |
+      | sudo rm -rf $HOME              |
+      | rm -rf $HOME/*                 |
+      | rm -rf ~/*                     |
+      | rm -rf /*                      |
+      | bash -c 'rm -rf $HOME'         |
+      | eval 'rm -rf $HOME'            |
+
+  Scenario: A double-quoted $HOME deletion resolves identically to the unquoted spelling
+    When the agent attempts to execute the following script:
+      """
+      rm -rf "$HOME"
+      """
+    Then Damping should intercept the command
+    And the matched rule should be "destructive.rm_rf_protected"
+
+  Scenario: A $HOME deletion inside a double-quoted -c script is reinterpreted, not skipped
+    # The exact spelling class from the Codex incident reports. The script
+    # string cannot be resolved to a static value (it embeds $HOME), but it
+    # can be recovered as source text and re-parsed — before that, the whole
+    # command collapsed to an unresolvable argument of "bash" and was allowed
+    # outright.
+    When the agent attempts to execute the following script:
+      """
+      bash -c "rm -rf $HOME"
+      """
+    Then Damping should intercept the command
+    And the matched rule should be "destructive.rm_rf_protected"
+
+  Scenario: A $HOME deletion handed to eval is reinterpreted, not skipped
+    When the agent attempts to execute the following script:
+      """
+      eval "rm -rf $HOME"
+      """
+    Then Damping should intercept the command
+    And the matched rule should be "destructive.rm_rf_protected"
+
+  Scenario: An env-prefixed HOME override does not launder a $HOME deletion
+    # The parent shell expands "$HOME" before env ever applies its
+    # assignment, so this deletes the real home directory — and it is also
+    # the literal Codex failure narrative (believe HOME was re-pointed,
+    # delete the real one).
+    When the agent attempts to execute the following script:
+      """
+      env HOME=/tmp/scratch rm -rf "$HOME"
+      """
+    Then Damping should intercept the command
+    And the matched rule should be "destructive.rm_rf_protected"
+
+  Scenario: A $HOME deletion inside a heredoc fed to a shell interpreter is reinterpreted
+    When the agent attempts to execute the following script:
+      """
+      bash <<EOF
+      rm -rf $HOME
+      EOF
+      """
+    Then Damping should intercept the command
+    And the matched rule should be "destructive.rm_rf_protected"
+
+  Scenario: Emptying the home directory via find's glob form is critical-tier
+    # The shell expands ~/* into every non-hidden entry of home as find's
+    # starting points — this matched no check at all before and was allowed
+    # outright.
+    When the agent attempts to execute "find ~/* -delete"
+    Then Damping should intercept the command
+    And the matched rule should be "destructive.find_delete_protected"
+
+  Scenario: A protected-path write is intercepted when the path is spelled with $HOME
+    Given the protected paths list includes "~/.ssh"
+    When the agent attempts to execute "echo x >> $HOME/.ssh/authorized_keys"
+    Then Damping should intercept the command
+    And the matched rule should be "destructive.write_protected_path"
+
+  Scenario: An rm -rf target the parser cannot resolve is never assumed safe
+    # "$BUILD_DIR" could hold anything — including the real home directory,
+    # which is precisely how the Codex deletions happened (a variable's
+    # runtime value diverging from what the model believed it was). Same
+    # reasoning matchFindDeleteProtected has always applied to find -delete,
+    # and the accepted cost is the same: a genuinely scratch-directory
+    # variable prompts too. Under noninteractive_prompt_fallback, this tier
+    # is the one an unattended configuration denies.
+    When the agent attempts to execute "rm -rf $BUILD_DIR"
+    Then Damping should intercept the command
+    And the matched rule should be "destructive.rm_rf_protected"
+
+  Scenario Outline: Deleting a regenerable directory spelled via $HOME or a glob stays quiet (false-positive guard)
+    # $HOME/.cache now resolves to ~/.cache, and a trailing /* is judged as
+    # the directory it empties — both must land in the exact same
+    # regenerable-directory carve-outs their literal spellings already hit,
+    # or this expansion would add prompt-fatigue instead of protection.
+    When the agent attempts to execute "<command>"
+    Then Damping should allow the command immediately
+    And no confirmation prompt should be shown
+
+    Examples:
+      | command                        |
+      | rm -rf $HOME/.cache            |
+      | rm -rf ./build/*               |
+      | rm -rf node_modules/*          |
+      | rm -rf /tmp/scratch/*          |
 
   Scenario: Fetching a public Anthropic docs page is not credential exfiltration
     # docs.claude.com literally contains the substring ".claude", a

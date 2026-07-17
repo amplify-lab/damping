@@ -238,7 +238,7 @@ func collectPipelineCommands(cmd syntax.Command, cmds *[]string, domain *string)
 		// than "sudo" — otherwise every pipeline-shape rule (curl|sh,
 		// base64|sh, secret exfiltration) is bypassed by one sudo.
 		name := ""
-		if words := unwrapCommandPrefixes(literalArgs(c.Args)); len(words) > 0 {
+		if words := unwrapCommandPrefixes(callWords(c.Args)); len(words) > 0 {
 			name = words[0]
 		}
 		if name == "" {

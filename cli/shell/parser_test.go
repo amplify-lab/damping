@@ -503,20 +503,44 @@ func TestAnalyze_ReinterpretsInterpreterDashCScripts(t *testing.T) {
 
 // TestAnalyze_DoesNotReinterpretNonScriptArguments is the false-positive
 // control: a -c argument is only a script when the command really is an
-// interpreter, and an unresolvable script cannot be reinterpreted at all.
+// interpreter. Command-substitution-bearing eval arguments stay allowed too —
+// `eval "$(ssh-agent -s)"` / `eval "$(direnv hook bash)"` are ubiquitous,
+// long-established shell idioms, and flagging them is the false-positive
+// profile docs/threat-model.md says gets a tool like this uninstalled.
 func TestAnalyze_DoesNotReinterpretNonScriptArguments(t *testing.T) {
 	e := loadEngine(t)
 	for _, raw := range []string{
 		`bash -c "npm run build"`,
 		`bash script.sh`,
 		`bash -c`,
-		`eval $UNRESOLVABLE`,
+		`eval "$(ssh-agent -s)"`,
 		`docker -c ctx run img`,
 		`psql -c "SELECT 1"`,
 	} {
 		t.Run(raw, func(t *testing.T) {
 			if d := evaluateRaw(t, e, raw); d.Verdict != decision.Allow {
 				t.Fatalf("expected allow, got %v (%q)", d.Verdict, d.PolicyID)
+			}
+		})
+	}
+}
+
+// TestAnalyze_EvalOfOpaqueVariableIsDynamic: a bare `$FOO` in command
+// position has always surfaced as DynamicCommandPlaceholder — so `eval $FOO`,
+// which executes exactly the same unknowable content, allowing outright was a
+// one-word wrapper bypass of destructive.dynamic_command_construction. The
+// plain-variable eval argument now recovers its source text (`$FOO`),
+// re-parses, and lands in command position, closing the asymmetry. Found
+// researching the 2026-07 GPT-5.6 Codex $HOME deletions.
+func TestAnalyze_EvalOfOpaqueVariableIsDynamic(t *testing.T) {
+	e := loadEngine(t)
+	for _, raw := range []string{
+		`eval $UNRESOLVABLE`,
+		`eval "$CMD"`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			if d := evaluateRaw(t, e, raw); d.PolicyID != "destructive.dynamic_command_construction" {
+				t.Fatalf("expected destructive.dynamic_command_construction, got %q (verdict %v)", d.PolicyID, d.Verdict)
 			}
 		})
 	}

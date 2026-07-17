@@ -30,26 +30,52 @@ regenerable_dir_names := {
 # input.facts.target (the *last* word), mirroring rules_shell.go's
 # rmPathOperands/matchRmRfProtected exactly.
 
+# An operand the parser could not resolve to a literal collapses to "" — rm
+# -rf is destructive by construction, so an unprovable target is never
+# assumed safe. Mirrors matchRmRfProtected's `if target == ""` branch (added
+# after the 2026-07 GPT-5.6 Codex $HOME-deletion incident; see
+# rules_shell.go for the full reasoning).
 matches contains "destructive.rm_rf_protected" if {
 	input.facts.command == "rm"
 	has_recursive_force
 	some target in rm_path_operands
+	target == ""
+}
+
+matches contains "destructive.rm_rf_protected" if {
+	input.facts.command == "rm"
+	has_recursive_force
+	some raw_target in rm_path_operands
+	target := norm_slash_star(raw_target)
 	is_filesystem_or_home_root(target)
 }
 
 matches contains "destructive.rm_rf_protected" if {
 	input.facts.command == "rm"
 	has_recursive_force
-	some target in rm_path_operands
+	some raw_target in rm_path_operands
+	target := norm_slash_star(raw_target)
 	in_protected_paths(target)
 }
 
 matches contains "destructive.rm_rf_protected" if {
 	input.facts.command == "rm"
 	has_recursive_force
-	some target in rm_path_operands
+	some raw_target in rm_path_operands
+	target := norm_slash_star(raw_target)
 	not is_regenerable_target(target)
 	is_system_critical_path(target)
+}
+
+# norm_slash_star mirrors rules_shell.go's stripTrailingSlashStar exactly:
+# "<dir>/*" is judged as the directory it empties ("<dir>/"); any other
+# target — including a scoped glob like "~/*.log" — passes through unchanged.
+norm_slash_star(t) := trim_suffix(t, "*") if {
+	endswith(t, "/*")
+}
+
+norm_slash_star(t) := t if {
+	not endswith(t, "/*")
 }
 
 # --- destructive.rm_rf_unrecognized_path — rules_shell.go
@@ -63,7 +89,9 @@ matches contains "destructive.rm_rf_protected" if {
 matches contains "destructive.rm_rf_unrecognized_path" if {
 	input.facts.command == "rm"
 	has_recursive_force
-	some target in rm_path_operands
+	some raw_target in rm_path_operands
+	raw_target != "" # unprovable → rm_rf_protected's concern, not this rule's
+	target := norm_slash_star(raw_target)
 	not is_regenerable_target(target)
 	not is_filesystem_or_home_root(target)
 	not in_protected_paths(target)
@@ -101,7 +129,7 @@ is_rm_flag(a) if {
 }
 
 is_filesystem_or_home_root(target) if {
-	target in {"/", "~", "~/", "$HOME"}
+	target in {"/", "~", "~/", "$HOME", "$HOME/"}
 }
 
 is_regenerable_target(target) if {
@@ -896,24 +924,30 @@ matches contains "destructive.find_delete_protected" if {
 	target == ""
 }
 
+# norm_slash_star: same trailing-glob normalization as the rm rules — the
+# shell expands `find ~/* -delete` into every non-hidden entry of home as
+# starting points, which previously matched no check at all.
 matches contains "destructive.find_delete_protected" if {
 	input.facts.command == "find"
 	"-delete" in input.facts.args
-	some target in find_path_operands
+	some raw_target in find_path_operands
+	target := norm_slash_star(raw_target)
 	is_filesystem_or_home_root(target)
 }
 
 matches contains "destructive.find_delete_protected" if {
 	input.facts.command == "find"
 	"-delete" in input.facts.args
-	some target in find_path_operands
+	some raw_target in find_path_operands
+	target := norm_slash_star(raw_target)
 	in_protected_paths(target)
 }
 
 matches contains "destructive.find_delete_protected" if {
 	input.facts.command == "find"
 	"-delete" in input.facts.args
-	some target in find_path_operands
+	some raw_target in find_path_operands
+	target := norm_slash_star(raw_target)
 	not is_regenerable_target(target)
 	is_system_critical_path(target)
 }

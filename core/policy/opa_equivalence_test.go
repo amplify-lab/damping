@@ -62,6 +62,16 @@ always_deny:
 		{"allows rm -rf under /tmp", defaultCfg, Facts{Raw: "rm -rf /tmp/scratch-research", Command: "rm", Args: []string{"-rf", "/tmp/scratch-research"}, Target: "/tmp/scratch-research"}},
 		{"allows rm -rf under /var/tmp", defaultCfg, Facts{Raw: "rm -rf /var/tmp/build-cache", Command: "rm", Args: []string{"-rf", "/var/tmp/build-cache"}, Target: "/var/tmp/build-cache"}},
 		{"blocks rm -rf on a path that merely contains \"tmp\" as a segment elsewhere", defaultCfg, Facts{Raw: "rm -rf /home/user/tmp", Command: "rm", Args: []string{"-rf", "/home/user/tmp"}, Target: "/home/user/tmp"}},
+		// 2026-07 GPT-5.6 Codex $HOME-deletion class — see rules_shell.go's
+		// matchRmRfProtected doc comment and features/dangerous_command.feature.
+		{"blocks rm -rf with an unprovable operand", defaultCfg, Facts{Raw: `rm -rf "$BUILD_DIR"`, Command: "rm", Args: []string{"-rf", ""}, Target: ""}},
+		{"blocks rm -rf of the home glob", defaultCfg, Facts{Raw: "rm -rf ~/*", Command: "rm", Args: []string{"-rf", "~/*"}, Target: "~/*"}},
+		{"blocks rm -rf of the root glob", defaultCfg, Facts{Raw: "rm -rf /*", Command: "rm", Args: []string{"-rf", "/*"}, Target: "/*"}},
+		{"blocks rm -rf of a system-dir glob", defaultCfg, Facts{Raw: "rm -rf /etc/*", Command: "rm", Args: []string{"-rf", "/etc/*"}, Target: "/etc/*"}},
+		{"allows rm -rf of a regenerable-dir glob", defaultCfg, Facts{Raw: "rm -rf ./build/*", Command: "rm", Args: []string{"-rf", "./build/*"}, Target: "./build/*"}},
+		{"allows rm -rf of a temp-root glob", defaultCfg, Facts{Raw: "rm -rf /tmp/scratch/*", Command: "rm", Args: []string{"-rf", "/tmp/scratch/*"}, Target: "/tmp/scratch/*"}},
+		{"flags rm -rf of a scoped home glob as unrecognized, not critical", defaultCfg, Facts{Raw: "rm -rf ~/*.log", Command: "rm", Args: []string{"-rf", "~/*.log"}, Target: "~/*.log"}},
+		{"blocks find of the home glob -delete", defaultCfg, Facts{Raw: "find ~/* -delete", Command: "find", Args: []string{"~/*", "-delete"}, Target: "-delete"}},
 		{"allows chmod 644", defaultCfg, Facts{Raw: "chmod 644 ./README.md", Command: "chmod", Args: []string{"644", "./README.md"}, Target: "./README.md"}},
 		{"allows allowlisted install pipeline", defaultCfg, Facts{Raw: "curl -sSL https://damping.dev/install | sh", IsPipeline: true, PipelineCmds: []string{"curl", "sh"}, Domain: "damping.dev"}},
 		{"blocks write to protected path", defaultCfg, Facts{Raw: "echo key >> ~/.ssh/authorized_keys", Command: RedirectWritePlaceholder, Target: "~/.ssh/authorized_keys"}},

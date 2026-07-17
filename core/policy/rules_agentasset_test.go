@@ -87,6 +87,9 @@ func TestMatchFindDeleteProtected(t *testing.T) {
 		{"find under /tmp -delete (safe)", Facts{Command: "find", Args: []string{"/tmp/scratch", "-delete"}}, false},
 		{"find under /var/tmp -delete (safe, temp-root carve-out of /var)", Facts{Command: "find", Args: []string{"/var/tmp/build-cache", "-delete"}}, false},
 		{"find node_modules -delete (safe, regenerable)", Facts{Command: "find", Args: []string{"node_modules", "-delete"}}, false},
+		{"find the home glob -delete (2026-07 Codex-class: shell expands ~/* into every non-hidden home entry)", Facts{Command: "find", Args: []string{"~/*", "-delete"}}, true},
+		{"find a system-dir glob -delete", Facts{Command: "find", Args: []string{"/etc/*", "-delete"}}, true},
+		{"find a temp-root glob -delete (safe)", Facts{Command: "find", Args: []string{"/tmp/scratch/*", "-delete"}}, false},
 		{"path operand after the expression (disclosed gap)", Facts{Command: "find", Args: []string{"-delete", "~/.claude"}}, false},
 		{"unrelated command", Facts{Command: "rm", Args: []string{"-rf", "~/.claude"}}, false},
 	}

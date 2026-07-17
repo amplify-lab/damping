@@ -92,7 +92,12 @@ func collectRedirectWrites(s *syntax.Stmt, raw string, out *[]policy.Facts) {
 		if !writeRedirOps[r.Op] || r.Word == nil {
 			continue
 		}
-		target, ok := staticWordValue(r.Word)
+		// argWordValue, not staticWordValue: a redirect target is a path in
+		// argument position, so a word-leading plain $HOME resolves to the
+		// canonical `~` — `echo x >> $HOME/.ssh/authorized_keys` used to
+		// collapse to an unresolvable target and skip interception entirely,
+		// while the byte-identical `>> ~/.ssh/authorized_keys` was caught.
+		target, ok := argWordValue(r.Word)
 		if !ok || target == "" {
 			continue
 		}
@@ -143,8 +148,18 @@ func collectRedirectSubstitutions(s *syntax.Stmt, raw string, out *[]policy.Fact
 		if !shellReinterpretCommands[cmdName] {
 			continue
 		}
-		body, ok := staticWordValue(r.Hdoc)
+		// scriptWordValue, not staticWordValue: an unquoted heredoc body
+		// containing a plain $HOME (or any plain $VAR) keeps its source
+		// spelling and re-parses into the same expansion in argument
+		// position — `bash <<EOF` + `rm -rf $HOME` used to make the body
+		// unresolvable and skip reinterpretation entirely.
+		body, ok := scriptWordValue(r.Hdoc)
 		if !ok {
+			// The shell interpreter will definitely execute this body, and it
+			// cannot be recovered even as source text (it embeds command
+			// substitution or a runtime-only expansion) — surface it the same
+			// way an unresolvable -c script is, instead of assuming it safe.
+			*out = append(*out, policy.Facts{Raw: raw, Command: policy.DynamicCommandPlaceholder})
 			continue
 		}
 		reinterpretScript(body, raw, out, depth)
@@ -174,44 +189,77 @@ func reinterpretScript(script, raw string, out *[]policy.Facts, depth int) {
 // `-c` script (`bash -c "rm -rf ~/"`, including clustered spellings like
 // `bash -lc`) and everything `eval` is handed (`eval "rm -rf ~/"`, and the
 // unquoted `eval rm -rf ~/`, whose words the shell re-joins before parsing).
+// nodes are the AST words aligned index-for-index with words, so a script
+// operand whose *value* couldn't be resolved can still be recovered as
+// source text via scriptWordValue — `bash -c "rm -rf $HOME"` re-parses as
+// `rm -rf $HOME` and reaches the rm rules in argument position, instead of
+// dying as one unresolvable string (which used to mean the whole command was
+// allowed outright; found researching the 2026-07 GPT-5.6 Codex
+// home-directory deletions).
+//
+// The second return value reports a `-c` script operand that cannot be
+// recovered even as source text (it embeds command substitution or a
+// runtime-only expansion) — the caller surfaces that as
+// DynamicCommandPlaceholder. Deliberately not reported for eval: an
+// unresolvable eval argument is dominated by the `eval "$(ssh-agent -s)"` /
+// `eval "$(direnv hook bash)"` class of long-established, ubiquitous shell
+// idioms, and flagging every one of those is exactly the false-positive
+// profile docs/threat-model.md says gets a tool like this uninstalled. That
+// asymmetry (its cost: `eval "$(echo 'rm -rf ~')"` stays invisible) is a
+// disclosed gap in docs/threat-model.md §3, unchanged from before.
 //
 // Before this existed, cli/shell re-parsed only heredoc bodies, so wrapping
 // any command in `sh -c '...'` — the single most obvious way to hide one —
 // presented Facts.Command as "sh" with the whole payload as one inert string
 // argument, and every rule in core/policy silently no-opped. Found by an
 // adversarial review of the 2026-07 agent-asset expansion.
-func embeddedShellScripts(words []string) []string {
-	if len(words) < 2 {
-		return nil
+func embeddedShellScripts(words []string, nodes []*syntax.Word) ([]string, bool) {
+	if len(words) < 2 || len(nodes) != len(words) {
+		return nil, false
 	}
 	if words[0] == "eval" {
 		// eval concatenates its arguments with a space and executes the
-		// result. An unresolvable argument makes the whole script unknowable,
-		// so nothing is reinterpreted (the command still reaches the rules as
-		// an ordinary "eval" call).
-		for _, a := range words[1:] {
+		// result. Each argument resolves to its value if static, else to its
+		// parameter-expansion source text; if any argument is unknowable even
+		// as source, the whole script is unknowable and nothing is
+		// reinterpreted (the command still reaches the rules as an ordinary
+		// "eval" call — see the doc comment for why this isn't flagged).
+		parts := make([]string, 0, len(words)-1)
+		for i, a := range words[1:] {
 			if a == "" {
-				return nil
+				src, ok := scriptWordValue(nodes[1:][i])
+				if !ok {
+					return nil, false
+				}
+				a = src
 			}
+			parts = append(parts, a)
 		}
-		return []string{strings.Join(words[1:], " ")}
+		return []string{strings.Join(parts, " ")}, false
 	}
 	if !shellReinterpretCommands[words[0]] {
-		return nil
+		return nil, false
 	}
 	for i, a := range words[1:] {
 		if !isDashCFlag(a) {
 			continue
 		}
 		script := words[1:][i+1:]
-		if len(script) == 0 || script[0] == "" {
-			return nil
+		if len(script) == 0 {
+			return nil, false
 		}
 		// Only the first operand is the script; anything after it becomes
 		// $0/$1... for the script, not more code.
-		return []string{script[0]}
+		if script[0] != "" {
+			return []string{script[0]}, false
+		}
+		src, ok := scriptWordValue(nodes[1:][i+1])
+		if !ok {
+			return nil, true
+		}
+		return []string{src}, false
 	}
-	return nil
+	return nil, false
 }
 
 // isDashCFlag reports whether a word is an interpreter's -c flag, either on
@@ -290,12 +338,29 @@ func walkCmd(cmd syntax.Command, raw string, out *[]policy.Facts, depth int) {
 		if len(c.Args) == 0 {
 			return
 		}
-		words := unwrapCommandPrefixes(literalArgs(c.Args))
+		resolved := callWords(c.Args)
+		words := unwrapCommandPrefixes(resolved)
+		// unwrapCommandPrefixes only ever strips words from the front, so the
+		// unwrapped slice is a suffix of the input and the original AST word
+		// nodes line up with it at the same tail offset.
+		nodes := c.Args[len(resolved)-len(words):]
 		// `sh -c "..."` / `eval "..."` execute their argument as shell code.
 		// Walk it as its own script so the ordinary rules see the real
 		// command, not one opaque string.
-		for _, script := range embeddedShellScripts(words) {
+		scripts, dynamic := embeddedShellScripts(words, nodes)
+		for _, script := range scripts {
 			reinterpretScript(script, raw, out, depth)
+		}
+		if dynamic {
+			// The interpreter will definitely execute its script operand as
+			// shell code, and that operand cannot be resolved even to source
+			// text (it embeds command substitution or a runtime-only
+			// expansion) — the same "about to run code no rule can see" shape
+			// DynamicCommandPlaceholder exists for. `bash -c "$(curl ...)"`
+			// is the pipe-less twin of curl|sh, and was allowed outright
+			// before this. Never assumed safe merely because it can't be
+			// proven dangerous.
+			*out = append(*out, policy.Facts{Raw: raw, Command: policy.DynamicCommandPlaceholder})
 		}
 		if f, ok := factsFromWords(words, raw); ok {
 			*out = append(*out, f)
