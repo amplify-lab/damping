@@ -100,6 +100,16 @@ always_deny:
 		{"flags dynamically constructed command", defaultCfg, Facts{Raw: "$(echo rm) -rf ~/", Command: DynamicCommandPlaceholder, Args: []string{"-rf", "~/"}}},
 		{"allows read-only MCP tool call", defaultCfg, Facts{Channel: event.ChannelMCP, ActionType: event.ActionToolCall, Command: "database.read_record", ToolTags: []string{"read"}}},
 		{"prompts on server-declared destructive tool", defaultCfg, Facts{Channel: event.ChannelMCP, ActionType: event.ActionToolCall, Command: "filesystem.delete_all", ToolTags: []string{"destructive"}}},
+		// mcp.destructive_tool_name — the word-splitting is implemented twice
+		// (Go's toolNameWords, Rego's mcp_tool_name_words), so every naming
+		// convention and every near-miss belongs in this table, not just one
+		// representative case.
+		{"prompts on an agent-namespaced destructive tool name", defaultCfg, Facts{Channel: event.ChannelMCP, ActionType: event.ActionToolCall, Command: "mcp__notes__delete_file"}},
+		{"prompts on a camelCase destructive tool name", defaultCfg, Facts{Channel: event.ChannelMCP, ActionType: event.ActionToolCall, Command: "purgeCache"}},
+		{"prompts on a destructive verb after an acronym run", defaultCfg, Facts{Channel: event.ChannelMCP, ActionType: event.ActionToolCall, Command: "HTTPRemoveObject"}},
+		{"allows a tool name that only mentions deletion", defaultCfg, Facts{Channel: event.ChannelMCP, ActionType: event.ActionToolCall, Command: "mcp__github__list_deleted_branches"}},
+		{"allows a tool name containing rm inside a word", defaultCfg, Facts{Channel: event.ChannelMCP, ActionType: event.ActionToolCall, Command: "mcp__ops__confirm_order"}},
+		{"allows a destructively-named tool the server declared read-only", defaultCfg, Facts{Channel: event.ChannelMCP, ActionType: event.ActionToolCall, Command: "mcp__db__delete_dry_run", ToolTags: []string{"read"}}},
 		{"denies agent attempt to disable damping", defaultCfg, Facts{Raw: "damping off", Command: "damping", Args: []string{"off"}}},
 		{"denies damping off with a global --config flag first", defaultCfg, Facts{Raw: "damping --config /tmp/policy.yaml off", Command: "damping", Args: []string{"--config", "/tmp/policy.yaml", "off"}}},
 		{"allows off as an unrelated flag's value, not the subcommand", defaultCfg, Facts{Raw: "damping log --actor off", Command: "damping", Args: []string{"log", "--actor", "off"}}},

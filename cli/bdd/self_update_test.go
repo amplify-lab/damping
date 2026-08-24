@@ -164,8 +164,12 @@ func TestFeatures_SelfUpdate(t *testing.T) {
 			})
 		},
 		Options: &godog.Options{
-			Format:   "pretty",
-			Paths:    []string{selfUpdateFeaturePath(t)},
+			Format: "pretty",
+			Paths:  []string{selfUpdateFeaturePath(t)},
+			// Strict makes an undefined or pending step fail the suite —
+			// without it godog reports "undefined" and still exits 0, so a
+			// scenario whose steps were never wired reads as green.
+			Strict:   true,
 			TestingT: t,
 		},
 	}

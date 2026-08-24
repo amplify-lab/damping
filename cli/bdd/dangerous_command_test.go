@@ -203,8 +203,12 @@ func TestFeatures_DangerousCommand(t *testing.T) {
 			sc.Then(`^Damping should not assume the substitution is safe merely because it cannot resolve it statically$`, func() error { return nil })
 		},
 		Options: &godog.Options{
-			Format:   "pretty",
-			Paths:    []string{featurePath(t)},
+			Format: "pretty",
+			Paths:  []string{featurePath(t)},
+			// Strict makes an undefined or pending step fail the suite —
+			// without it godog reports "undefined" and still exits 0, so a
+			// scenario whose steps were never wired reads as green.
+			Strict:   true,
 			TestingT: t,
 		},
 	}

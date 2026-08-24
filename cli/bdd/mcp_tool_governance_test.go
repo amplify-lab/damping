@@ -35,6 +35,7 @@ package bdd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"runtime"
@@ -66,6 +67,13 @@ type mcpGovernanceWorld struct {
 	decision decision.Decision
 	stdout   string
 	runErr   error
+
+	// The hook-channel scenarios (an MCP tool call arriving as a PreToolUse
+	// payload rather than through `damping mcp wrap`) drive the real CLI
+	// instead of policy.Evaluate, so they carry a host-supplied annotation
+	// set and the audit record the run produced.
+	hostAnnotations map[string]bool
+	lastEvent       event.ActionEvent
 }
 
 func (w *mcpGovernanceWorld) evaluateToolCall(toolName string) error {
@@ -112,6 +120,13 @@ func TestFeatures_MCPToolGovernance(t *testing.T) {
 				dir := t.TempDir()
 				t.Setenv("DAMPING_HOME", filepath.Join(dir, "damping-home"))
 				t.Setenv("DAMPING_NO_UPDATE_CHECK", "1") // this suite's commands can print a passive background update-check notice; without this, scenarios would make a real network call to api.github.com
+				// The hook-channel scenarios run `damping init` to get a real
+				// policy file on disk; without these three, init would look
+				// for (and register hooks in) the real ~/.claude, ~/.cursor,
+				// and ~/.codex of whoever is running the tests.
+				t.Setenv("DAMPING_CLAUDE_SETTINGS", filepath.Join(dir, "claude", "settings.json"))
+				t.Setenv("DAMPING_CURSOR_HOOKS", filepath.Join(dir, "cursor", "hooks.json"))
+				t.Setenv("DAMPING_CODEX_HOOKS", filepath.Join(dir, "codex", "hooks.json"))
 
 				policyPath := defaultPolicyPath(t)
 				cfg, err := policy.LoadConfig(policyPath)
@@ -126,6 +141,10 @@ func TestFeatures_MCPToolGovernance(t *testing.T) {
 
 			sc.Given(`^the "([^"]*)" tool is annotated with destructiveHint=true$`, func(string) error {
 				w.toolTags = []string{"destructive"}
+				return nil
+			})
+			sc.Given(`^the "([^"]*)" tool is annotated with readOnlyHint=true$`, func(string) error {
+				w.toolTags = []string{"read"}
 				return nil
 			})
 			sc.Given(`^the "([^"]*)" tool is tagged as a write tool$`, func(string) error {
@@ -162,6 +181,72 @@ rules:
 			// within the keyword it was registered under, so a single
 			// keyword-agnostic registration is needed for both usages.
 			sc.Step(`^the agent calls MCP tool "([^"]*)" with args \{[^}]*\}$`, w.evaluateToolCall)
+
+			// --- MCP tool calls arriving on the PreToolUse hook channel ---
+			//
+			// These drive the real `damping hook pretooluse` command rather
+			// than policy.Evaluate: the thing under test is precisely that a
+			// tool_name of "mcp__<server>__<tool>" now reaches the policy
+			// engine at all (it used to fall through the hook's tool-name
+			// switch as "nothing Damping judges"), so nothing short of the
+			// real command proves it. The verdict is then read back out of
+			// the audit record, which lets the shared Then steps above assert
+			// on it unchanged.
+
+			sc.Given(`^the agent's MCP server is reached over HTTP, so "damping mcp wrap" cannot sit in front of it$`, func() error {
+				return nil // context for the reader: wrap is a stdio proxy, so this call can only be seen by the hook
+			})
+			sc.Given(`^the host declares the "([^"]*)" tool has destructiveHint=true$`, func(string) error {
+				w.hostAnnotations = map[string]bool{"destructiveHint": true}
+				return nil
+			})
+			sc.When(`^the agent's host sends the "([^"]*)" tool call to "damping hook pretooluse" with args (\{.*\})$`, func(tool, args string) error {
+				if _, _, err := runDampingCommand("", "init"); err != nil {
+					return err
+				}
+				payload := map[string]any{
+					"session_id":      "bdd-mcp-hook",
+					"hook_event_name": "PreToolUse",
+					"tool_name":       tool,
+					"tool_input":      json.RawMessage(args),
+				}
+				if w.hostAnnotations != nil {
+					payload["tool_annotations"] = w.hostAnnotations
+				}
+				raw, err := json.Marshal(payload)
+				if err != nil {
+					return err
+				}
+				if _, _, err := runDampingCommand(string(raw), "hook", "pretooluse", "--hook-json"); err != nil {
+					return err
+				}
+				auditPath, err := paths.Audit()
+				if err != nil {
+					return err
+				}
+				events, err := audit.ReadAll(auditPath, audit.Filter{})
+				if err != nil {
+					return err
+				}
+				if len(events) == 0 {
+					return fmt.Errorf("the hook wrote no audit record for the tool call")
+				}
+				w.lastEvent = events[len(events)-1]
+				w.decision = w.lastEvent.Decision
+				return nil
+			})
+			sc.Then(`^the audit record should be on the "([^"]*)" channel with target "([^"]*)"$`, func(channel, target string) error {
+				if string(w.lastEvent.Channel) != channel {
+					return fmt.Errorf("expected channel %q, got %q", channel, w.lastEvent.Channel)
+				}
+				if w.lastEvent.ActionType != event.ActionToolCall {
+					return fmt.Errorf("expected action_type %q, got %q", event.ActionToolCall, w.lastEvent.ActionType)
+				}
+				if w.lastEvent.Target != target {
+					return fmt.Errorf("expected target %q, got %q", target, w.lastEvent.Target)
+				}
+				return nil
+			})
 
 			sc.Then(`^Damping should intercept the call$`, func() error {
 				if w.decision.Verdict == decision.Allow {
@@ -270,7 +355,11 @@ rules:
 			// test (no Gateway module exists yet) — excluded outright rather
 			// than given pass-through steps, unlike the real-but-thinly-wired
 			// scenarios above.
-			Tags:     "~@phase3",
+			Tags: "~@phase3",
+			// Strict makes an undefined or pending step fail the suite —
+			// without it godog reports "undefined" and still exits 0, so a
+			// scenario whose steps were never wired reads as green.
+			Strict:   true,
 			TestingT: t,
 		},
 	}

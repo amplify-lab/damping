@@ -64,7 +64,7 @@ Language / 語言:
 
 — and writes the answer into `ui_language` in the just-written (or already-existing) `policy.yaml`, via `core/policy.SetUILanguage` (the same comment-preserving `yaml.Node` surgery `AppendAlwaysPattern` uses, not a full unmarshal/marshal round trip that would silently drop the file's own explanatory comments). A non-interactive run (piped `curl install.sh | sh`, CI) is never blocked waiting for an answer that will never come — it resolves nothing and leaves `ui_language` unset, which means the display language is still auto-detected live from `$LANG`/`$LC_ALL` on every render (`cli/i18n.ResolveLang`), just not pinned into the file. `--lang en|zh-TW` sets it explicitly and non-interactively either way — the scriptable path, and the only one that can change an *already-configured* choice without `--force` (which would overwrite everything else in the file).
 
-This preference controls two render sites: the TTY confirmation prompt (`cli/ui`, §12 below) and `damping policy test`'s output — **not** the audit log, compliance reports, or `Decision.Reason` itself, which stay English always (see `core/policy.Config.UILanguage`'s own doc comment for why). Rule-by-rule translation coverage lives in `cli/i18n`, keyed by rule id, with an unconditional fallback to the real English `Reason` for any rule id not yet translated — a rule shipping without a same-day translation is a non-event, not a bug (`cli/i18n/i18n_test.go`'s completeness check makes new gaps visible at build time without ever blocking a merge on translating them immediately). As of this writing, all 28 default rules have zh-TW translations.
+This preference controls two render sites: the TTY confirmation prompt (`cli/ui`, §12 below) and `damping policy test`'s output — **not** the audit log, compliance reports, or `Decision.Reason` itself, which stay English always (see `core/policy.Config.UILanguage`'s own doc comment for why). Rule-by-rule translation coverage lives in `cli/i18n`, keyed by rule id, with an unconditional fallback to the real English `Reason` for any rule id not yet translated — a rule shipping without a same-day translation is a non-event, not a bug (`cli/i18n/i18n_test.go`'s completeness check makes new gaps visible at build time without ever blocking a merge on translating them immediately). As of this writing, all 29 default rules have zh-TW translations.
 
 ## 4. `damping doctor`
 
@@ -228,6 +228,7 @@ destructive.proc_sandbox_bypass            critical  deny
 destructive.dynamic_command_construction   medium    prompt
 destructive.write_protected_path           critical  prompt
 mcp.destructive_tool_call                  high      prompt
+mcp.destructive_tool_name                  high      prompt
 self_protection.damping_off_attempt        critical  deny
 
 $ damping policy test "rm -rf ~/Documents"
@@ -297,8 +298,9 @@ Verified against official docs during planning (see `docs/00-統一開發計畫�
   - `"Write"`: `tool_input.file_path`, `tool_input.content` (the tool's *entire new file content* — Claude Code does not send a diff).
   - `"Edit"`: `tool_input.file_path`, `tool_input.old_string`, `tool_input.new_string`.
   - `"MultiEdit"`: `tool_input.file_path`, `tool_input.edits[]` (an array of `{old_string, new_string}`).
+  - `"mcp__<server>__<tool>"`: an MCP tool call, with whatever `tool_input` shape that server's own schema declares. Judged since the 2026-08 expansion — see the MCP note at the end of this section.
 - **Exit code `2`** = hard deny (tool call cancelled, stderr fed back to the model as the reason).
-- **Exit code `0`** + stdout JSON `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"|"deny"|"ask","permissionDecisionReason":"..."}}` is the documented general contract, and `"ask"` is how a hook can defer to Claude Code's own native permission UI. **Damping's V1 hook does not use this path** — its stdin/stdout are already spoken-for by this same JSON protocol, so it cannot simultaneously run its own branded interactive prompt (§12) over the same streams. Instead it opens the controlling terminal directly (`/dev/tty`), resolves a `Prompt`-tier decision fully itself, and only then responds with a plain exit code — see `docs/architecture.md` §6.
+- **Exit code `0`** + stdout JSON `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"|"deny"|"ask","permissionDecisionReason":"..."}}` is the documented general contract, and `"ask"` is how a hook can defer to Claude Code's own native permission UI. **Damping's hook does not use this path for a terminal agent** — its stdin/stdout are already spoken-for by this same JSON protocol, so it cannot simultaneously run its own branded interactive prompt (§12) over the same streams. Instead it opens the controlling terminal directly (`/dev/tty`), resolves a `Prompt`-tier decision fully itself, and only then responds with a plain exit code — see `docs/architecture.md` §6. An application *embedding* an agent SDK has no terminal to open and its own dialog to ask with, so it can opt into exactly this JSON path with `--hook-json` — see §11.1.
 - Any other exit code (1, 3, ...) is **non-blocking** — the command still runs, only the first stderr line is shown. Damping's hook entrypoint must never rely on this path for a deny.
 - **Write/Edit/MultiEdit (2026-07 non-Bash attack-surface expansion)**: `cli/cmd/hook.go` builds `policy.Facts` for these three tool names via `cli/adapter/hook.FactsFromToolWrite` instead of parsing shell text — `Facts.Target` is the file path, `Facts.Raw` is the path plus the tool's new content (for `Edit`/`MultiEdit`, only the `new_string`(s); `old_string` never reaches detection, since matching is about what the file becomes, not what it stops being). The `[a]`/`[d]`/`[A]`/`[D]` confirmation prompt (§12) truncates what it displays (12 lines / 800 characters) so a large `Write` doesn't blow out the terminal — policy matching and the audit log both still see the full, untruncated content. See `core/policy/rules_configwrite.go` for the three rules this enables (`destructive.agent_permission_escalation`, `destructive.git_hook_write`, `destructive.npm_lifecycle_script_write`) and §13 for their default risk/action.
 
@@ -315,6 +317,13 @@ Verified against official docs during planning (see `docs/00-統一開發計畫�
 - The written `.cursor/hooks.json` itself needs a top-level `"version": 1` field — Cursor's docs state this is required, and real Cursor releases reject the *entire file* without it (silently disabling every hook it contains, not just Damping's). A prior review found `InstallCursorHook` had never written this field at all; fixed to always ensure it's present (without overwriting an existing value) and to have `damping doctor`'s hook-registration check treat a missing `version` as unregistered, since a healthy-looking entry in a file Cursor refuses to load isn't actually healthy.
 - Cursor has no pre-write hook at all for file edits — its only file-write-adjacent event is `afterFileEdit`, which fires *after* the write has already happened and cannot block it (informational only, per Cursor's own hooks documentation). Damping does not register anything for it: a hook that can only observe an already-completed write isn't something a deny/prompt decision can act on.
 
+**MCP tool calls on the hook channel (2026-08 expansion)**: a `tool_name` beginning with `mcp__` is an MCP tool call the agent is about to make. `cli/cmd/hook.go` hands it to `cli/adapter/hook.FactsFromMCPToolCall`, which builds the same `policy.Facts` shape `damping mcp wrap` builds (`Channel: mcp`, `ActionType: tool_call`, `Command`: the full tool name, `Target`: whichever of `file_path`/`path`/`paths[0]`/`uri`/`url`/`table`/... the arguments carry, falling back to the tool name, `Raw`: `"<tool name> <compact args json>"`). Two consequences worth knowing:
+
+- This is the *only* interception point that exists for an MCP server the agent reaches over HTTP/SSE. `damping mcp wrap` is a stdio proxy — it can only sit in front of a server launched as a subprocess.
+- The hook contract carries no `ToolAnnotations`, so `mcp.destructive_tool_call` (which needs the server's own `destructiveHint`) cannot fire here on its own. `mcp.destructive_tool_name` covers the gap by reading the tool's own name; a host that already holds the server's tool list can instead pass the real annotations as **`tool_annotations`** — `{"destructiveHint": true, "readOnlyHint": false}` — a Damping-specific extension field no agent sends and every agent's own parser ignores.
+
+`damping init` does **not** add `mcp__.*` to any agent's hook matcher: for a stdio server already governed by `damping mcp wrap`, that would prompt twice for one call. Add it yourself (Claude Code's `matcher` accepts a regex) when your MCP servers are HTTP/SSE, or let an embedding host send those calls itself.
+
 All three agents fail open on anything other than the documented deny path — this is an external constraint Damping does not control (see `docs/threat-model.md` §6).
 
 **Capability matrix — Write/Edit/MultiEdit coverage** (the 2026-07 non-Bash attack-surface expansion is Claude Code only; this is a real, disclosed gap, not an oversight — see `docs/threat-model.md` §1.1):
@@ -324,6 +333,73 @@ All three agents fail open on anything other than the documented deny path — t
 | Claude Code | Yes | `PreToolUse` fires for `Write`/`Edit`/`MultiEdit` and can hard-deny via exit code `2`, exactly like `Bash`. |
 | Cursor      | No  | Only `afterFileEdit` exists for file writes, and it fires after the fact — nothing to block. |
 | Codex       | No  | `PreToolUse` only fires for `Bash` tool calls per Codex's own docs — Write/Edit/Apply Patch/MCP calls never reach any hook. |
+
+## 11.1 Embedding Damping in a GUI host (`--hook-json`, `--actor`)
+
+Everything in §11 assumes an agent running at a terminal. An application that *embeds* an agent SDK — a desktop app, an IDE, anything with its own permission dialog — is a different shape: there is no controlling terminal for Damping's own prompt (§12) to open, but there *is* a human sitting in front of the app. Without this mode, every `Prompt`-tier rule (most of the shipped policy) collapses into the §13.1 no-TTY deny: a silent hard block the user is never given the chance to answer.
+
+```
+$ damping hook pretooluse --hook-json [--actor <label>]
+```
+
+**These flags are for hosts only.** `damping init` never writes either of them into any agent's hook config, and you should not add them there by hand — see "Why this is opt-in" below.
+
+### What changes
+
+| Damping's decision | Without the flag | With `--hook-json` |
+| --- | --- | --- |
+| Allow | exit `0`, no stdout | exit `0`, response body with `damping.decision: "allow"` and **no** `hookSpecificOutput` |
+| Deny | exit `2`, reason on stderr | exit `2`, reason on stderr, **and** a response body with `permissionDecision: "deny"` |
+| Prompt, terminal available | Damping's own `[a]`/`[A]`/`[d]`/`[D]` prompt (§12) | not applicable — host mode never opens `/dev/tty` |
+| Prompt, no terminal | deny (or §13.1's `noninteractive_prompt_fallback`) | §13.1's fallback if the risk tier is configured, otherwise `permissionDecision: "ask"` at exit `0` — the host asks the human |
+| Internal failure (degraded) | exit `0`, degraded audit record | same, plus a response body with `damping.degraded: true` |
+
+Nothing else moves. A deny is still a deny, exit code 2 included; `damping off` still means nothing is judged (the response says so); the audit record is still written the same way on the same trail.
+
+### Response body
+
+One JSON object on stdout, exactly once per invocation. It carries two layers — the agent SDK's own hook contract (forwardable verbatim) and a `damping` block with everything a decent confirmation dialog needs:
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "ask",
+    "permissionDecisionReason": "Recursive+force delete of your home directory, ..."
+  },
+  "damping": {
+    "decision": "ask",
+    "verdict": "prompt",
+    "policyId": "destructive.rm_rf_protected",
+    "risk": "critical",
+    "reason": "Recursive+force delete of your home directory, ...",
+    "eventId": "evt_5f3c1a9b0d2e4f77",
+    "channel": "cli",
+    "actionType": "shell_exec",
+    "target": "~/",
+    "version": "0.8.0"
+  }
+}
+```
+
+- **`damping.decision`** is the one field to switch on: `"allow"`, `"deny"`, or `"ask"`. `verdict` is the raw policy verdict behind it (`"prompt"` whenever the decision is `"ask"`).
+- **`hookSpecificOutput`** appears only for `"ask"` and `"deny"`. A payload that arrived in Cursor's `beforeShellExecution` shape gets Cursor's vocabulary instead — `{"permission": "...", "user_message": "...", "agent_message": "..."}` — since the dialect follows the payload, not the `--actor` label.
+- **`damping.degraded: true`** means no policy decision was made at all (malformed payload, unreadable policy file, parser crash). The action is allowed through — Damping cannot fail closed once the agent's own hook contract takes over (`docs/threat-model.md` §6) — but a host showing a "protected" indicator should stop claiming it for this call.
+- **`damping.version`** is there so a host can feature-detect instead of shelling out to `damping version` separately.
+
+**An allow never claims `permissionDecision: "allow"`.** In the Claude Code contract that value means *skip the host's own permission flow entirely* — it is auto-approval, including of things the host's own policy would have stopped. "Damping has no objection" and "approved" are different statements, and a guardrail is only entitled to make the first one, so a plain allow carries no `hookSpecificOutput` at all.
+
+### `--actor <label>`
+
+Overrides the audit trail's actor, which is otherwise derived from the payload shape (`claude-code`/`codex`/`cursor`). A desktop host embedding Claude Code's SDK sends a payload indistinguishable from the user's own Claude Code CLI, so without this its interceptions are unattributable in the shared `~/.damping/audit.jsonl` that `damping log` and `damping dashboard` read. Accepts 1–64 characters of `[a-zA-Z0-9._-]` starting alphanumeric; anything else is rejected outright rather than written into a JSONL field other tools parse.
+
+### Why this is opt-in, and never an automatic "no TTY, so ask"
+
+The automatic version was built and deliberately parked (branch `experiment/tty-ask-fallback`, 2026-07-06). Two of the three supported agents mishandle `"ask"` in the unsafe direction: Claude Code's `auto` permission mode silently treats it as *allow* (Anthropic-confirmed, closed as not planned), and Cursor's shipped `ask` handling has been reported to run the command with no prompt at all. A hook that guesses its way into `"ask"` therefore *weakens* a terminal install. Passing `--hook-json` is a host asserting the opposite: it will put the question in front of a human itself.
+
+### Known limitation: Damping never learns the answer
+
+A deferred decision is recorded as a `prompt` verdict with **no** resolved verdict, and a reason that says it was deferred — because the human's answer happens in the host's UI, which Damping does not see. `damping log` and the dashboard therefore show it as neither allowed nor denied. Closing that loop needs an ingest path (a host reporting its own resolution back into the audit trail) and is not implemented.
 
 ## 12. Confirmation prompt — exact UX copy
 
@@ -479,6 +555,14 @@ rules:
 
   - id: mcp.destructive_tool_call
     description: MCP tool the server itself declared destructive (ToolAnnotations.DestructiveHint)
+    risk: high
+    action: prompt
+
+  # Listed immediately after the annotation-driven rule above so that one
+  # wins the tie whenever a server does declare the hint — first match in
+  # this list is the matched rule (core/policy.Engine.Evaluate).
+  - id: mcp.destructive_tool_name
+    description: MCP tool whose own name says it destroys something (delete/destroy/drop/purge/...), on a server that ships no destructiveHint annotation — almost none do
     risk: high
     action: prompt
 

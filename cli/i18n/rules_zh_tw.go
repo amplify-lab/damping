@@ -42,6 +42,8 @@ var ruleReasonsZhTW = map[string]string{ // #nosec G101 -- gosec's hardcoded-cre
 
 	"mcp.destructive_tool_call": "MCP 伺服器自己宣告為破壞性的工具（ToolAnnotations.DestructiveHint）",
 
+	"mcp.destructive_tool_name": "MCP 工具的名稱本身就寫明了它會刪除／銷毀東西（delete、destroy、drop、purge…），而這台伺服器沒有附上 destructiveHint 標註——實務上幾乎沒有伺服器會附",
+
 	"self_protection.damping_off_attempt": "Agent 透過自己的 Bash 工具呼叫試圖執行「damping off」（Ona 事故的那種失效模式）——如果是人類自己在終端機直接下這個指令，永遠不會碰到這條規則",
 
 	"destructive.iac_destroy": "terraform／pulumi／cdk destroy——就是在一起真實、有紀錄的事故中把正式環境帳號整個刪掉的那種指令（agent 當時判斷「清乾淨重來」）",

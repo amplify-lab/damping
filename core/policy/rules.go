@@ -31,6 +31,7 @@ var matchers = map[string]matcher{
 	"destructive.write_protected_path":         matchWriteProtectedPath,
 	"mcp.write_tool_unscoped_identity":         matchMCPWriteToolUnscopedIdentity,
 	"mcp.destructive_tool_call":                matchMCPDestructiveToolCall,
+	"mcp.destructive_tool_name":                matchMCPDestructiveToolName,
 	"self_protection.damping_off_attempt":      matchDampingSelfDisableAttempt,
 
 	// 2026-07 dangerous-command-coverage expansion (rules_expansion.go).

@@ -407,7 +407,11 @@ func TestFeatures_SelfProtection(t *testing.T) {
 			// Only V1-scope scenarios; nothing in self_protection.feature is
 			// tagged for a later phase, but this keeps parity with the other
 			// suites' filtering convention for when one is added.
-			Tags:     "~@phase3 && ~@phase4 && ~@phase5",
+			Tags: "~@phase3 && ~@phase4 && ~@phase5",
+			// Strict makes an undefined or pending step fail the suite —
+			// without it godog reports "undefined" and still exits 0, so a
+			// scenario whose steps were never wired reads as green.
+			Strict:   true,
 			TestingT: t,
 		},
 	}

@@ -114,8 +114,12 @@ func TestFeatures_AgentConfigWrite(t *testing.T) {
 			sc.Then(`^Codex's PreToolUse hook never fires for a Write/Edit/MultiEdit tool call at all$`, func() error { return nil })
 		},
 		Options: &godog.Options{
-			Format:   "pretty",
-			Paths:    []string{agentConfigWriteFeaturePath(t)},
+			Format: "pretty",
+			Paths:  []string{agentConfigWriteFeaturePath(t)},
+			// Strict makes an undefined or pending step fail the suite —
+			// without it godog reports "undefined" and still exits 0, so a
+			// scenario whose steps were never wired reads as green.
+			Strict:   true,
 			TestingT: t,
 		},
 	}

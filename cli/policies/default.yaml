@@ -118,6 +118,14 @@ rules:
     risk: high
     action: prompt
 
+  # Listed immediately after the annotation-driven rule above so that one
+  # wins the tie whenever a server does declare the hint — first match in
+  # this list is the matched rule (core/policy.Engine.Evaluate).
+  - id: mcp.destructive_tool_name
+    description: MCP tool whose own name says it destroys something (delete/destroy/drop/purge/...), on a server that ships no destructiveHint annotation — almost none do
+    risk: high
+    action: prompt
+
   - id: self_protection.damping_off_attempt
     description: Agent tried to run "damping off" itself via its own Bash tool call (the Ona-incident failure mode) — a human running it directly at their own terminal never reaches this rule
     risk: critical

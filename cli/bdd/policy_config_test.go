@@ -178,8 +178,12 @@ func TestFeatures_PolicyConfig(t *testing.T) {
 			sc.Then(`^a rule without both should not be merged$`, func() error { return nil })
 		},
 		Options: &godog.Options{
-			Format:   "pretty",
-			Paths:    []string{policyConfigFeaturePath(t)},
+			Format: "pretty",
+			Paths:  []string{policyConfigFeaturePath(t)},
+			// Strict makes an undefined or pending step fail the suite —
+			// without it godog reports "undefined" and still exits 0, so a
+			// scenario whose steps were never wired reads as green.
+			Strict:   true,
 			TestingT: t,
 		},
 	}

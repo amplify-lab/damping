@@ -537,6 +537,86 @@ func TestEvaluate_PromptsOnServerDeclaredDestructiveTool(t *testing.T) {
 	}
 }
 
+// TestEvaluate_PromptsOnDestructiveToolName covers the annotation-free
+// fallback: almost no real MCP server ships ToolAnnotations, and the
+// PreToolUse hook channel carries none even when one does, so a tool that
+// names the destruction itself is the only signal left. Every naming
+// convention a real server might use has to resolve the same way.
+func TestEvaluate_PromptsOnDestructiveToolName(t *testing.T) {
+	e := loadDefaultEngine(t)
+	for _, name := range []string{
+		"mcp__notes__delete_file", // agent-namespaced MCP tool (hook channel)
+		"filesystem.delete_all",   // dotted server.tool (wrap channel)
+		"deleteFile",              // camelCase
+		"purgeCache",
+		"HTTPRemoveObject", // acronym run followed by the verb
+		"vault.revoke_token",
+	} {
+		d := e.Evaluate(Facts{
+			Channel: event.ChannelMCP, ActionType: event.ActionToolCall,
+			Command: name,
+		})
+		if d.PolicyID != "mcp.destructive_tool_name" {
+			t.Fatalf("%s: expected rule mcp.destructive_tool_name, got %q (verdict %v)", name, d.PolicyID, d.Verdict)
+		}
+	}
+}
+
+// TestEvaluate_AllowsToolWhoseNameOnlyMentionsDestruction is the other
+// direction, and the reason the match is whole-word rather than substring:
+// every name here contains a destructive verb somewhere in its text but
+// none of them destroys anything. A rule that fires on these is a false
+// positive, which is the failure mode this project treats as enemy #1.
+func TestEvaluate_AllowsToolWhoseNameOnlyMentionsDestruction(t *testing.T) {
+	e := loadDefaultEngine(t)
+	for _, name := range []string{
+		"mcp__github__list_deleted_branches", // "deleted", not "delete"
+		"mcp__docs__get_removal_policy",      // "removal"
+		"mcp__crm__undelete_contact",         // "undelete"
+		"mcp__ops__confirm_order",            // "confirm" must not yield an "rm" word
+		"database.read_record",
+	} {
+		d := e.Evaluate(Facts{
+			Channel: event.ChannelMCP, ActionType: event.ActionToolCall,
+			Command: name,
+		})
+		if d.Verdict != decision.Allow {
+			t.Fatalf("%s: expected an allow verdict, got %v (rule %q)", name, d.Verdict, d.PolicyID)
+		}
+	}
+}
+
+// TestEvaluate_DestructiveToolNameYieldsToReadOnlyAnnotation: the server is
+// the authority on its own tools, so an explicit readOnlyHint beats any
+// guess made from the name.
+func TestEvaluate_DestructiveToolNameYieldsToReadOnlyAnnotation(t *testing.T) {
+	e := loadDefaultEngine(t)
+	d := e.Evaluate(Facts{
+		Channel: event.ChannelMCP, ActionType: event.ActionToolCall,
+		Command: "mcp__db__delete_dry_run", ToolTags: []string{"read"},
+	})
+	if d.Verdict != decision.Allow {
+		t.Fatalf("expected a read-only-annotated tool to be allowed, got %v (rule %q)", d.Verdict, d.PolicyID)
+	}
+}
+
+// TestEvaluate_DestructiveToolNameDoesNotFireOnShellCommands guards the
+// rule's ActionType gate: "rm -rf ./build" is a shell command whose own
+// rules already judged it safe, and its Facts.Command is literally "rm" —
+// exactly the word this rule looks for. Without the tool_call gate, every
+// safe rm/prune/revoke invocation would pick up a second, bogus MCP-rule
+// prompt.
+func TestEvaluate_DestructiveToolNameDoesNotFireOnShellCommands(t *testing.T) {
+	e := loadDefaultEngine(t)
+	d := e.Evaluate(Facts{
+		Channel: event.ChannelCLI, ActionType: event.ActionShellExec,
+		Raw: "rm -rf ./build", Command: "rm", Args: []string{"-rf", "./build"}, Target: "./build",
+	})
+	if d.Verdict != decision.Allow {
+		t.Fatalf("expected a safe shell rm to stay allowed, got %v (rule %q)", d.Verdict, d.PolicyID)
+	}
+}
+
 // --- features/self_protection.feature ---
 
 func TestEvaluate_AlwaysDenyOverridesBroaderAlwaysAllow(t *testing.T) {

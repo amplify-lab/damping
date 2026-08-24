@@ -405,6 +405,46 @@ matches contains "mcp.write_tool_unscoped_identity" if {
 	not input.facts.has_identity
 }
 
+# --- mcp.destructive_tool_name — rules_mcp.go matchMCPDestructiveToolName ---
+#
+# The server named the destruction itself, in a tool name — the fallback for
+# the (overwhelmingly common) unannotated server, and for the PreToolUse hook
+# channel, whose wire format carries no annotations at all. An explicit
+# read-only annotation always wins over the name.
+
+destructive_tool_name_verbs := {
+	"delete", "destroy", "drop", "erase",
+	"purge", "prune", "remove", "revoke",
+	"rm", "truncate", "unlink", "wipe",
+}
+
+matches contains "mcp.destructive_tool_name" if {
+	input.facts.action_type == "tool_call"
+	not "read" in input.facts.tool_tags
+	some w in mcp_tool_name_words(input.facts.command)
+	w in destructive_tool_name_verbs
+}
+
+# Whole words only, split at both non-alphanumeric separators and camelCase
+# boundaries — mirrors rules_mcp.go's toolNameWords exactly (the acronym
+# replacement runs first, so "HTTPDelete" splits as "http"/"delete", and
+# "deleteFile" as "delete"/"file"). Substring matching would flag
+# "list_deleted_branches", which deletes nothing.
+#
+# A function rather than a top-level rule on purpose: it runs only when
+# called, i.e. only after the action_type gate above has already passed, so
+# a shell command's evaluation never pays for these regexes (see
+# opa_bench_test.go's sub-millisecond gate).
+mcp_tool_name_words(name) := {lower(w) |
+	spaced := regex.replace(
+		regex.replace(name, `([A-Z]+)([A-Z][a-z])`, "${1}_${2}"),
+		`([a-z0-9])([A-Z])`,
+		"${1}_${2}",
+	)
+	some w in regex.split(`[^A-Za-z0-9]+`, spaced)
+	w != ""
+}
+
 # --- self_protection.damping_off_attempt — rules_selfprotection.go ---
 #
 # "off" must occupy the actual subcommand position, not just appear

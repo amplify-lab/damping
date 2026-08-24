@@ -20,6 +20,57 @@ Feature: MCP tool-call governance (V1 thin adapter)
     When the agent calls MCP tool "database.read_record" with args {"table":"users","id":"42"}
     Then Damping should allow the call immediately
 
+  Scenario: A tool whose own name declares what it destroys is intercepted without any annotation
+    When the agent calls MCP tool "mcp__notes__delete_file" with args {"path":"/books/notes.md"}
+    Then Damping should intercept the call
+    And the matched rule should be "mcp.destructive_tool_name"
+    # The annotation-driven rule above is the honest signal, but most real
+    # servers never set ToolAnnotations at all (see cli/adapter/mcp/facts.go's
+    # toolTags comment, which is why "assume destructive when unannotated"
+    # was rejected). A tool that spells "delete" in its own name is a
+    # different, much narrower claim than "unannotated, therefore suspect":
+    # the server named the verb itself. Prompt-tier, so one [A] answer
+    # retires it for good.
+
+  Scenario: A tool whose name only mentions a destroyed thing in passing is not flagged
+    When the agent calls MCP tool "mcp__github__list_deleted_branches" with args {"repo":"acme/web"}
+    Then Damping should allow the call immediately
+    # The other direction, and the reason matching is whole-word rather than
+    # substring: "deleted" is what the returned records are, not what this
+    # call does. A rule that fires here is a false positive, and false
+    # positives are what get a guardrail uninstalled (docs/threat-model.md).
+
+  Scenario: A tool the server declares read-only is never flagged by its name alone
+    Given the "mcp__db__delete_dry_run" tool is annotated with readOnlyHint=true
+    When the agent calls MCP tool "mcp__db__delete_dry_run" with args {"table":"users"}
+    Then Damping should allow the call immediately
+    # An explicit server annotation always beats a guess made from the tool's
+    # name — the server is the authority on its own tools.
+
+  Scenario: An MCP tool call arriving through the PreToolUse hook channel is evaluated, not ignored
+    Given the agent's MCP server is reached over HTTP, so "damping mcp wrap" cannot sit in front of it
+    When the agent's host sends the "mcp__notes__delete_file" tool call to "damping hook pretooluse" with args {"path":"/books/notes.md"}
+    Then Damping should intercept the call
+    And the matched rule should be "mcp.destructive_tool_name"
+    And the audit record should be on the "mcp" channel with target "/books/notes.md"
+    # "damping mcp wrap" is a stdio proxy: it can only govern MCP servers the
+    # agent launches as a subprocess. An HTTP/SSE server is out of its reach
+    # entirely — but the agent's PreToolUse hook still fires for that call,
+    # with tool_name "mcp__<server>__<tool>". Before this, the hook channel
+    # dropped those on the floor (they weren't Bash/Write/Edit/MultiEdit), so
+    # the one channel that *could* see them treated them as nothing to judge.
+
+  Scenario: A host that knows its server's annotations can pass them through the hook channel
+    Given the host declares the "mcp__acme__sync_workspace" tool has destructiveHint=true
+    When the agent's host sends the "mcp__acme__sync_workspace" tool call to "damping hook pretooluse" with args {"scope":"all"}
+    Then Damping should intercept the call
+    And the matched rule should be "mcp.destructive_tool_call"
+    # The hook contract carries no tool annotations — the agent doesn't
+    # forward them. A host that already holds the server's tool list (it had
+    # to, to call the tool) can attach them as a Damping-specific extension
+    # field, which restores the annotation-driven rule on this channel
+    # instead of leaving it dependent on how the tool happens to be named.
+
   @phase5
   Scenario: A write-tagged tool call with no bound identity is intercepted (Phase 5 enterprise policy — not active in the V1 individual-tier default)
     Given the "database.delete_record" tool is tagged as a write tool

@@ -1402,6 +1402,190 @@ func TestHook_UnrecognizedHookEventPassesThroughButLogsDegraded(t *testing.T) {
 	}
 }
 
+// TestHook_MalformedToolInputFailsOpenButLogsDegraded covers a gap the
+// tool_input refactor opened up and closed: tool_input used to decode into a
+// fixed struct alongside the rest of the payload, so a garbled one silently
+// produced an empty command — evaluating nothing and allowing everything,
+// with no trace. It is now decoded separately, and a malformed one for a
+// tool whose shape Damping does know is treated like any other degradation.
+func TestHook_MalformedToolInputFailsOpenButLogsDegraded(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	stdin := `{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":["not","a","string"]}}`
+	if _, _, err := run(t, stdin, "hook", "pretooluse"); err != nil {
+		t.Fatalf("expected malformed tool_input to fail open, got %v", err)
+	}
+
+	logOut, _, err := run(t, "", "log", "--outcome", "degraded")
+	if err != nil {
+		t.Fatalf("log: %v", err)
+	}
+	if strings.Contains(logOut, "No audit events") {
+		t.Fatal("expected a degraded audit record for malformed tool_input, got none")
+	}
+}
+
+// --- MCP tool calls on the hook channel (2026-08 expansion) ---
+
+// TestHook_PromptsOnDestructiveMCPToolCall proves the new tool-name family
+// reaches enforcement through the ordinary terminal-agent path too, not
+// just the GUI-host one: with no TTY to ask, a Prompt-tier decision still
+// hard-denies (exit 2), which is what an unattended agent should get.
+func TestHook_PromptsOnDestructiveMCPToolCall(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	stdin := `{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"mcp__notes__delete_file","tool_input":{"path":"/books/notes.md"}}`
+	_, stderr, err := run(t, stdin, "hook", "pretooluse")
+	var exitErr *ExitCodeError
+	if !isExitCodeError(err, &exitErr) || exitErr.Code != 2 {
+		t.Fatalf("expected a destructive MCP tool call to be intercepted (Code:2 with no TTY), got %v", err)
+	}
+	if stderr == "" {
+		t.Fatal("expected a reason on stderr")
+	}
+
+	auditPath, err := paths.Audit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := audit.ReadAll(auditPath, audit.Filter{})
+	if err != nil {
+		t.Fatalf("reading audit log: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected exactly 1 audit event, got %d", len(events))
+	}
+	if events[0].Channel != event.ChannelMCP || events[0].ActionType != event.ActionToolCall {
+		t.Fatalf("expected an mcp/tool_call audit record, got %s/%s", events[0].Channel, events[0].ActionType)
+	}
+	if events[0].Target != "/books/notes.md" {
+		t.Fatalf("expected the call's own target in the audit record, got %q", events[0].Target)
+	}
+}
+
+func TestHook_AllowsOrdinaryMCPToolCall(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	stdin := `{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"mcp__notes__read_file","tool_input":{"path":"/books/notes.md"}}`
+	if _, _, err := run(t, stdin, "hook", "pretooluse"); err != nil {
+		t.Fatalf("expected an ordinary MCP tool call to pass through, got %v", err)
+	}
+}
+
+// --- embedding-host mode (`--hook-json`) ---
+
+// TestHook_WithoutHostFlagWritesNothingToStdout is the invariant that keeps
+// this feature from breaking every existing install: a terminal agent's
+// stdout is reserved for its own hook protocol, so the response body must
+// appear only when a host explicitly asks for it.
+func TestHook_WithoutHostFlagWritesNothingToStdout(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	for _, stdin := range []string{
+		`{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git status"}}`,
+		`{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"damping off"}}`,
+		`{"not":"even valid`,
+	} {
+		stdout, _, _ := run(t, stdin, "hook", "pretooluse")
+		if stdout != "" {
+			t.Fatalf("expected empty stdout without --hook-json, got %q", stdout)
+		}
+	}
+}
+
+func TestHook_HostJSON_CursorPayloadUsesCursorsOwnResponseShape(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	stdin := `{"hook_event_name":"beforeShellExecution","conversation_id":"c1","command":"rm -rf ~/"}`
+	stdout, _, err := run(t, stdin, "hook", "pretooluse", "--hook-json")
+	if err != nil {
+		t.Fatalf("expected exit 0 when deferring to the host, got %v", err)
+	}
+	var decoded struct {
+		HookSpecificOutput map[string]any `json:"hookSpecificOutput"`
+		Permission         string         `json:"permission"`
+		UserMessage        string         `json:"user_message"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
+		t.Fatalf("parsing %q: %v", stdout, err)
+	}
+	if decoded.Permission != "ask" {
+		t.Fatalf("expected Cursor's own permission field, got %q (%s)", decoded.Permission, stdout)
+	}
+	if decoded.HookSpecificOutput != nil {
+		t.Fatalf("expected no Claude-Code-shaped block for a Cursor payload, got %s", stdout)
+	}
+	if decoded.UserMessage == "" {
+		t.Fatal("expected a user_message the host can show a human")
+	}
+}
+
+func TestHook_HostJSON_RespondsForToolsDampingDoesNotJudge(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	// A host sends every PreToolUse call it sees; "Read" is not one Damping
+	// judges, but silence would leave the host unable to tell that from a
+	// crash.
+	stdin := `{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"/etc/hosts"}}`
+	stdout, _, err := run(t, stdin, "hook", "pretooluse", "--hook-json")
+	if err != nil {
+		t.Fatalf("expected exit 0, got %v", err)
+	}
+	if !strings.Contains(stdout, `"decision":"allow"`) {
+		t.Fatalf("expected an explicit allow response, got %q", stdout)
+	}
+}
+
+// TestHook_HostJSON_ReportsEnforcementOff: `damping off` is the one state
+// where Damping deliberately judges nothing at all. A host that shows a
+// "protected by Damping" indicator needs to know that, rather than reading
+// a silent exit 0 as "checked and fine".
+func TestHook_HostJSON_ReportsEnforcementOff(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, _, err := run(t, "", "off"); err != nil {
+		t.Fatalf("off: %v", err)
+	}
+	stdin := `{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"rm -rf ~/"}}`
+	stdout, _, err := run(t, stdin, "hook", "pretooluse", "--hook-json")
+	if err != nil {
+		t.Fatalf("expected exit 0 while enforcement is off, got %v", err)
+	}
+	if !strings.Contains(stdout, "enforcement is off") {
+		t.Fatalf("expected the response to say enforcement is off, got %q", stdout)
+	}
+}
+
+func TestHook_ActorFlagRejectsAnUnusableLabel(t *testing.T) {
+	setupTestEnv(t)
+	if _, _, err := run(t, "", "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	stdin := `{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git status"}}`
+	for _, actor := range []string{"has space", "line\nbreak", "-leading-dash", strings.Repeat("x", 65)} {
+		if _, _, err := run(t, stdin, "hook", "pretooluse", "--actor", actor); err == nil {
+			t.Fatalf("expected --actor %q to be rejected", actor)
+		}
+	}
+	if _, _, err := run(t, stdin, "hook", "pretooluse", "--actor", "notes-desktop_1.2"); err != nil {
+		t.Fatalf("expected an ordinary host label to be accepted, got %v", err)
+	}
+}
+
 // panicEvaluator is a policy.Evaluator stub that panics on every call — used
 // to prove evaluateCommandRecovering actually recovers, since neither
 // shell.Analyze nor the real policy.Engine has a way to be made to panic on

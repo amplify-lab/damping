@@ -418,7 +418,11 @@ func TestFeatures_AuditLog(t *testing.T) {
 			Format: "pretty",
 			Paths:  []string{auditLogFeaturePath(t)},
 			// @phase4's team dashboard has no implementation to test.
-			Tags:     "~@phase4",
+			Tags: "~@phase4",
+			// Strict makes an undefined or pending step fail the suite —
+			// without it godog reports "undefined" and still exits 0, so a
+			// scenario whose steps were never wired reads as green.
+			Strict:   true,
 			TestingT: t,
 		},
 	}
