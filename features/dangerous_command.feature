@@ -579,6 +579,72 @@ Feature: Intercept destructive shell commands
     Then Damping should intercept the command
     And the matched rule should be "destructive.rm_rf_protected"
 
+  # --- Path-qualified command names (2026-08) ---
+  #
+  # Every rule in core/policy dispatches on Facts.Command, which used to be
+  # the command word exactly as written — so "/usr/bin/rm" was a command name
+  # no matcher had ever heard of, and `/usr/bin/rm -rf ~/` was allowed
+  # outright, as was `sudo /bin/rm -rf ~/` and `./bin/damping off`. Same
+  # class of bypass as the wrapper suite below, found the same way: writing
+  # out a path is not a trick, it is how half the world invokes a binary.
+  #
+  # The other direction of the same fix: a command whose *directory* comes
+  # from a variable (`$VENV/bin/python`, `$HOME/go/bin/goreleaser`) used to be
+  # flagged as dynamically constructed. It is not — the program's own name is
+  # right there in the text, and an unverifiable directory is exactly what
+  # $PATH already is for a bare `python`. A variable supplying the *program
+  # name* is a different thing, and stays flagged.
+
+  Scenario Outline: A command invoked by its path is judged as the program it runs
+    When the agent attempts to execute "<command>"
+    Then Damping should intercept the command
+    And the matched rule should be "destructive.rm_rf_protected"
+
+    Examples:
+      | command                      |
+      | /usr/bin/rm -rf ~/           |
+      | /bin/rm -rf ~/               |
+      | ./rm -rf ~/                  |
+      | ../tools/rm -rf ~/           |
+      | sudo /usr/bin/rm -rf ~/      |
+      | $HOME/bin/rm -rf ~/          |
+      | $TOOLS/rm -rf ~/             |
+
+  Scenario: An agent cannot dodge self-protection by invoking damping through a path
+    When the agent attempts to execute "/usr/local/bin/damping off"
+    Then Damping should intercept the command
+    And the matched rule should be "self_protection.damping_off_attempt"
+
+  Scenario Outline: A tool run out of a variable-held directory is not dynamic command construction
+    When the agent attempts to execute "<command>"
+    Then Damping should allow the command immediately
+    And no confirmation prompt should be shown
+
+    Examples:
+      | command                            |
+      | $VENV/bin/python train.py          |
+      | $HOME/go/bin/goreleaser release    |
+      | ${TOOLS}/bin/node index.js         |
+      | /usr/bin/git status                |
+      | ./node_modules/.bin/tsc --noEmit   |
+
+  Scenario Outline: A command whose own name is unresolvable is still flagged
+    When the agent attempts to execute "<command>"
+    Then Damping should intercept the command
+    And the matched rule should be "destructive.dynamic_command_construction"
+
+    Examples:
+      | command                  |
+      | $CMD --flag              |
+      | $BIN/$CMD --flag         |
+      | /usr/bin/$CMD --flag     |
+      | $(which rm) -rf ~/tmp    |
+      | `echo rm` -rf ~/tmp      |
+    # The last two matter most: a command substitution *executes code* to
+    # produce the name, which is categorically different from a variable that
+    # merely names a directory — resolving those the same way would gut the
+    # rule this whole section is loosening.
+
   # --- Wrapper bypasses (2026-07 adversarial-review regression suite) ---
   #
   # Every shape below silently ran with NO interception before this suite

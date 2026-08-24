@@ -88,7 +88,10 @@ func unwrapCommandPrefixes(words []string) []string {
 	// Bounded by the number of wrappers actually present; each iteration
 	// strictly shortens words, so this always terminates.
 	for len(words) > 0 {
-		p, ok := commandPrefixes[words[0]]
+		// programName, not words[0] verbatim: a wrapper is just as much a
+		// wrapper when it's invoked as /usr/bin/sudo — see literal.go's
+		// commandWordValue for the same reasoning applied one level up.
+		p, ok := commandPrefixes[programName(words[0])]
 		if !ok {
 			return words
 		}
@@ -139,6 +142,20 @@ func wrappedCommandArgs(args []string, p commandPrefix) ([]string, bool) {
 	return args[i:], true
 }
 
+// programName reduces an already-resolved command string to the program it
+// runs: the last path segment. `/usr/bin/rm` and `./bin/damping` are an rm
+// and a damping invocation, and every rule in core/policy dispatches on that
+// name. A word with no `/` is returned unchanged, and a trailing-slash path
+// (not executable in the first place) keeps its original text rather than
+// collapsing to "", which factsFromWords would read as unresolvable.
+func programName(word string) string {
+	i := strings.LastIndex(word, "/")
+	if i < 0 || i == len(word)-1 {
+		return word
+	}
+	return word[i+1:]
+}
+
 // isAssignmentWord reports whether a word is a NAME=VALUE environment
 // assignment (env's own syntax) rather than a command name. A leading "="
 // is not an assignment, and neither is a word whose name half is empty.
@@ -162,7 +179,12 @@ func factsFromWords(words []string, raw string) (policy.Facts, bool) {
 	}
 	words = unwrapCommandPrefixes(words)
 
-	command := words[0]
+	// The command word arrives here already reduced to a program name when it
+	// came from the command position (literal.go's commandWordValue), but not
+	// when it was promoted out of a wrapper's arguments just above —
+	// `sudo /usr/bin/rm` resolves its second word in argument position, which
+	// keeps the full path. Normalizing here covers both.
+	command := programName(words[0])
 	if command == "" {
 		// Word.Lit() returns "" for anything that isn't a plain literal —
 		// e.g. "$(echo rm)" contains a CmdSubst part. A command name that
@@ -239,7 +261,10 @@ func collectPipelineCommands(cmd syntax.Command, cmds *[]string, domain *string)
 		// base64|sh, secret exfiltration) is bypassed by one sudo.
 		name := ""
 		if words := unwrapCommandPrefixes(callWords(c.Args)); len(words) > 0 {
-			name = words[0]
+			// programName for the same reason factsFromWords applies it:
+			// `curl -sSL https://x/i | /bin/sh` is a shell sink, and the
+			// pipeline-shape rules dispatch on these names.
+			name = programName(words[0])
 		}
 		if name == "" {
 			name = policy.DynamicCommandPlaceholder

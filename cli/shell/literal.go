@@ -25,8 +25,8 @@ func literalArgs(words []*syntax.Word) []string {
 }
 
 // callWords resolves a call expression's words for rule evaluation: the
-// command word (index 0) strictly statically — an unresolvable command name
-// must keep collapsing to "" so factsFromWords surfaces it as
+// command word (index 0) through commandWordValue — an unresolvable command
+// name must keep collapsing to "" so factsFromWords surfaces it as
 // DynamicCommandPlaceholder — and every argument word through argWordValue,
 // so a word-leading plain $HOME reaches the rules as the canonical `~`
 // spelling instead of vanishing into "".
@@ -34,7 +34,7 @@ func callWords(words []*syntax.Word) []string {
 	out := make([]string, len(words))
 	for i, w := range words {
 		if i == 0 {
-			if v, ok := staticWordValue(w); ok {
+			if v, ok := commandWordValue(w); ok {
 				out[i] = v
 			}
 			continue
@@ -44,6 +44,94 @@ func callWords(words []*syntax.Word) []string {
 		}
 	}
 	return out
+}
+
+// commandWordValue resolves a command-position word to the name of the
+// program it actually runs, which is the last path segment — `/usr/bin/rm`
+// and `$VENV/bin/python` run `rm` and `python`, exactly as much as a bare
+// `rm` or `python` does.
+//
+// Two real problems, opposite in direction, made this necessary (2026-08):
+//
+//  1. Every rule in core/policy dispatches on Facts.Command, which was the
+//     command word verbatim — so `/usr/bin/rm -rf ~/` presented a command
+//     name no matcher has ever heard of and was **allowed outright**, as
+//     were `sudo /bin/rm -rf ~/` and `./bin/damping off`. Same class of
+//     complete bypass as the wrapper-prefix one (facts.go's
+//     commandPrefixes), and no more exotic: writing out a path is how half
+//     the world invokes a binary.
+//  2. In the other direction, a word whose *directory* comes from a
+//     variable — `$VENV/bin/python`, `$HOME/go/bin/foo` — resolved to ""
+//     and was reported as destructive.dynamic_command_construction. That is
+//     a false positive on an everyday shape, and false positives are what
+//     get a guardrail uninstalled (docs/threat-model.md §1.1).
+//
+// The line between the two: a parameter expansion supplying a *directory*
+// tells us nothing we didn't already not-know — a bare `python` is resolved
+// through $PATH, which is equally unverifiable, so refusing to judge
+// `$VENV/bin/python` while happily judging `python` was never coherent. A
+// command *substitution* is categorically different: it executes code to
+// produce the name. So any CmdSubst/ArithmExp/ProcSubst/ExtGlob part fails
+// resolution outright, as does a variable that supplies the program name
+// itself (`$CMD`, `$BIN/$CMD`, `/usr/bin/$CMD`) — all of those keep
+// collapsing to DynamicCommandPlaceholder.
+func commandWordValue(w *syntax.Word) (string, bool) {
+	if v, ok := programNameFromWord(w); ok {
+		return v, true
+	}
+	// A fully static word that yields no program name (a trailing-slash
+	// path, an empty word) keeps its literal value rather than being
+	// downgraded to unresolvable — nothing about it became less knowable.
+	return staticWordValue(w)
+}
+
+// programNameFromWord walks a command word tracking only the current path
+// segment: literal text extends it, a `/` in that text starts a new one, and
+// a parameter expansion makes the segment in progress unknowable (the
+// variable could expand to anything, slashes included) without poisoning a
+// later segment that starts after a literal `/`. Whatever segment survives
+// to the end of the word is the program's name.
+func programNameFromWord(w *syntax.Word) (string, bool) {
+	seg, segStatic := "", true
+
+	addText := func(t string) {
+		if i := strings.LastIndex(t, "/"); i >= 0 {
+			seg, segStatic = t[i+1:], true
+			return
+		}
+		seg += t
+	}
+
+	var walk func(parts []syntax.WordPart, unescape func(string) string) bool
+	walk = func(parts []syntax.WordPart, unescape func(string) string) bool {
+		for _, part := range parts {
+			switch p := part.(type) {
+			case *syntax.Lit:
+				addText(unescape(p.Value))
+			case *syntax.SglQuoted:
+				addText(p.Value)
+			case *syntax.DblQuoted:
+				if !walk(p.Parts, unescapeDoubleQuoted) {
+					return false
+				}
+			case *syntax.ParamExp:
+				seg, segStatic = "", false
+			default:
+				// *CmdSubst, *ArithmExp, *ProcSubst, *ExtGlob — code that
+				// runs, or a glob that expands, to produce the name itself.
+				return false
+			}
+		}
+		return true
+	}
+
+	if !walk(w.Parts, unescapeUnquoted) {
+		return "", false
+	}
+	if !segStatic || seg == "" {
+		return "", false
+	}
+	return seg, true
 }
 
 // staticWordValue returns a word's literal string value if every part of it
