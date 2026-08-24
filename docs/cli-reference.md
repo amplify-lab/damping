@@ -377,7 +377,7 @@ One JSON object on stdout, exactly once per invocation. It carries two layers â€
     "channel": "cli",
     "actionType": "shell_exec",
     "target": "~/",
-    "version": "0.8.0"
+    "version": "0.9.0"
   }
 }
 ```
