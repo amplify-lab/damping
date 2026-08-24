@@ -23,6 +23,13 @@ jobs:
         with:
           working-directory: core
           version: "v2.12.2"
+      - name: go.mod/go.sum are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum || {
+            echo "::error::core/go.mod or core/go.sum is out of date. Run 'cd core && go mod tidy' and commit the result."
+            exit 1
+          }
       - run: go test ./... -race -cover
 
   cli:
@@ -42,6 +49,20 @@ jobs:
         with:
           working-directory: cli
           version: "v2.12.2"
+      # cli reaches core through `replace ../core`, so core's transitive
+      # dependencies are cli's too and land in cli/go.mod as indirect
+      # requirements — bumping something in core WITHOUT tidying here leaves
+      # cli/go.sum stale. That used to surface only in the release-tooling
+      # job below (.goreleaser.yaml's before-hook), which is both the wrong
+      # place to learn it and, for a Dependabot PR touching only /core, a
+      # failure nobody had a one-line fix for. See the dependabot-tidy job.
+      - name: go.mod/go.sum are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum || {
+            echo "::error::cli/go.mod or cli/go.sum is out of date — most likely a dependency changed in core/, which cli inherits through 'replace ../core'. Run 'cd cli && go mod tidy' and commit the result."
+            exit 1
+          }
       # cli/bdd runs every V1-scope features/*.feature file through godog
       # (dangerous_command, self_protection, mcp_tool_governance, audit_log,
       # policy_config) — see docs/00-統一開發計畫（定案版）.md: a scenario
@@ -74,6 +95,59 @@ jobs:
           distribution: goreleaser
           version: "~> v2"
           args: release --snapshot --clean --skip=publish
+
+  dependabot-tidy:
+    name: sync go.mod/go.sum on a Dependabot PR
+    # Dependabot tidies only the module directory it bumped, but this repo
+    # has two modules wired together by `replace ../core`: a bump in /core
+    # leaves /cli's go.mod+go.sum stale, failing the tidy check above and
+    # the release-tooling snapshot build below. Nobody should have to hand-
+    # commit that mechanical propagation, so this job does it — but only for
+    # Dependabot's own branches. A human's PR still fails loudly instead:
+    # dependency drift a person introduced is theirs to look at.
+    if: github.actor == 'dependabot[bot]' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - name: tidy both modules
+        run: |
+          (cd core && go mod tidy)
+          (cd cli && go mod tidy)
+      - name: commit the sync, and nothing else
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- core/go.mod core/go.sum cli/go.mod cli/go.sum; then
+            echo "already in sync — nothing to commit"
+            exit 0
+          fi
+          # `go mod tidy` must never be the thing that edits source. If
+          # anything outside the four dependency files moved, stop and let a
+          # human look rather than pushing a commit nobody expected.
+          if ! git diff --quiet -- . ':!core/go.mod' ':!core/go.sum' ':!cli/go.mod' ':!cli/go.sum'; then
+            echo "::error::go mod tidy changed files outside go.mod/go.sum — refusing to commit."
+            git diff --stat
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(deps): sync go.mod/go.sum across both modules" -- \
+            core/go.mod core/go.sum cli/go.mod cli/go.sum
+          # A convenience, not a gate: if the token can't push (a repo
+          # setting can withhold write access from Dependabot-triggered
+          # runs), say so plainly and leave the PR blocked by the tidy check
+          # above, which already carries the exact fix command. Failing here
+          # too would only add a second red check saying the same thing.
+          git push || {
+            echo "::warning::could not push the sync commit — run 'cd cli && go mod tidy' locally and commit it to this branch."
+            exit 0
+          }
 
   security:
     name: gosec + SBOM
