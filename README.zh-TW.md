@@ -237,7 +237,7 @@ $ damping log --channel mcp
 - 內建 OPA/Rego 政策引擎，可以當作預設 Go 引擎之外的另一個選擇。
 - `damping compliance-report demo` / `export`——對日後企業版合規報表的一個早期預覽，而且老實講清楚範圍：`demo` 不用真的部署什麼（用真實、已經在跑的規則湊出一份合成的 30 天資料），`export` 則是拿你自己本機真正的稽核紀錄跑出同一份報表，支援 markdown/text/JSON，還有自帶圖表的 HTML 格式。講清楚這不是完整的 Phase 5 企業版功能（沒有地端部署、沒有 AD/LDAP 身分綁定、沒有 PostgreSQL）——細節在 [`docs/cli-reference.md`](docs/cli-reference.md) §7.1。
 - `noninteractive_prompt_fallback`——一個要自己開才會生效的設定，讓一條該問人的規則，在旁邊沒有終端機可以問的時候（像是背景跑、沒人盯著的 agent），改成照風險等級決定放行還是擋下，不會再像以前那樣不管三七二十一直接擋掉。
-- 333 個 BDD 情境，全部接到真實程式碼跑得過，不是寫好看的——其中包含一整套永久迴歸測試，涵蓋歷來被發現能繞過規則的每一種寫法（指令包裝前綴、直譯器的 `-c` 腳本、管線分段、複合指令語法）。
+- 351 個 BDD 情境，全部接到真實程式碼跑得過，不是寫好看的——其中包含一整套永久迴歸測試，涵蓋歷來被發現能繞過規則的每一種寫法（指令包裝前綴、直譯器的 `-c` 腳本、管線分段、複合指令語法）。
 - 跨平台的發布流程（Homebrew、一行安裝指令、linux/darwin 的 amd64/arm64 都有 GitHub Release）。
 
 還沒做的：Phase 3 完整的企業版 Gateway（OAuth 2.1、防止 confused-deputy）、Phase 4 用 Cloudflare 做的團隊儀表板、Phase 5 的企業/合規層級。上面每一項的工程細節都寫在 [`CLAUDE.md`](CLAUDE.md) 裡，這裡不重複講。
