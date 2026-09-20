@@ -5,7 +5,7 @@ go 1.26.4
 require (
 	github.com/amplify-lab/damping/core v0.0.0
 	github.com/cucumber/godog v0.16.0
-	github.com/modelcontextprotocol/go-sdk v1.7.0
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/spf13/cobra v1.10.2
 	mvdan.cc/sh/v3 v3.13.1
 )
