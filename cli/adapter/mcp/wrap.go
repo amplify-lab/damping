@@ -1,5 +1,5 @@
 // Package mcp implements the V1 thin MCP adapter (`damping mcp wrap`) — see
-// docs/architecture.md §7 and docs/00-統一開發計畫（定案版）.md §四修正三.
+// docs/architecture.md §7.
 // Damping sits between an MCP client (launched by Claude Code's or Cursor's
 // MCP server config, which now points at `damping mcp wrap -- <real
 // server>` instead of the real server directly) and the real downstream

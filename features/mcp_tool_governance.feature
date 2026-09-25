@@ -83,7 +83,7 @@ Feature: MCP tool-call governance (V1 thin adapter)
     # NOT included in cli/policies/default.yaml's active rule list — with no
     # identity system in the individual tier, ActionEvent.Identity is always
     # empty, so this would fire on nearly every non-read-only MCP tool call.
-    # See docs/cli-reference.md §13 and docs/00-統一開發計畫（定案版）.md.
+    # See docs/cli-reference.md §13.
 
   # The next two scenarios describe real, implemented, already-tested V1
   # behavior, but this file's own step definitions wire them as thin,
@@ -130,7 +130,7 @@ Feature: MCP tool-call governance (V1 thin adapter)
     Then Damping should not inspect, validate, or re-issue any OAuth token
     And Damping should only evaluate the tool name and arguments against policy
     # Full OAuth 2.1 + confused-deputy defense is Phase 3 (gateway/), not V1.
-    # See docs/architecture.md §7 and docs/00-統一開發計畫（定案版）.md §四修正三.
+    # See docs/architecture.md §7.
 
   # These two scenarios are also disclosed pass-throughs (see this file's
   # step-definition doc comment): this file only exercises the pure

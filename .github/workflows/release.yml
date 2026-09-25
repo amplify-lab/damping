@@ -34,9 +34,7 @@ jobs:
           # update to the separate amplify-lab/homebrew-tap repo the
           # `homebrew_casks:` publisher in .goreleaser.yaml targets. That
           # needs a PAT (repo scope on the tap repo) or GitHub App token,
-          # stored as this repo secret — not yet configured (see
-          # docs/00-統一開發計畫（定案版）.md "立即可執行的下一步", which
-          # blocks the real amplify-lab org/homebrew-tap repo on Tim's own
-          # confirmation). The GitHub Release itself still succeeds without
-          # it; only the Homebrew cask update step fails.
+          # stored as this repo secret (configured since v0.2.1 — see the
+          # README's install section). The GitHub Release itself still
+          # succeeds without it; only the Homebrew cask update step fails.
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

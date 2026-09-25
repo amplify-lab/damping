@@ -20,8 +20,8 @@ import (
 //go:embed policy.rego
 var policyModule string
 
-// OPAEngine is the OPA/Rego-backed Evaluator — see docs/00-統一開發計畫（定案版）.md
-// §四 for why Phase 3 introduces this alongside (not instead of) the
+// OPAEngine is the OPA/Rego-backed Evaluator — see docs/architecture.md §4
+// for why Phase 3 introduces this alongside (not instead of) the
 // Go-native Engine: enterprise/Gateway deployments want real policy-as-code
 // they can audit and extend without a Go recompile, while the individual-
 // tier CLI keeps shipping the lighter, dependency-free Engine by default.

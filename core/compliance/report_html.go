@@ -62,7 +62,7 @@ type htmlView struct {
 
 // RenderHTML produces a single, self-contained HTML file — inline CSS, no
 // external stylesheet/script/font references — meant to be handed directly
-// to a prospective customer or their compliance officer, printed, or
+// to a reviewer or a compliance officer, printed, or
 // archived, the same way `compliance-report ... --format markdown` already
 // is, but with the risk-over-time and top-triggered-rules charts rendered
 // as inline SVG rather than left to a markdown renderer that may not

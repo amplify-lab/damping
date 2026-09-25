@@ -1,6 +1,6 @@
 # Damping — Architecture Reference
 
-> Source of truth for repo layout, module naming, and the `ActionEvent` schema. Strategic rationale lives in `docs/00-統一開發計畫（定案版）.md` (Chinese); this document is the English, code-facing companion so external contributors don't need to read the Chinese planning docs to build against the core.
+> Source of truth for repo layout, module naming, and the `ActionEvent` schema — everything an external contributor needs to build against the core.
 
 ## 1. Repository layout
 
@@ -69,9 +69,9 @@
 
 **Note on `policies/`**: the canonical `default.yaml` lives at `cli/policies/default.yaml`, not a repo-root `policies/` directory as earlier planning drafts assumed. `go:embed` requires an embedded file to live inside the embedding package's own module tree (no `..` in embed patterns), and the shipped binary must embed its default policy rather than read a repo-relative path that won't exist after `go install`/`brew install`. `core/policy`'s own tests load this exact same file by relative path, so the shipped default and the tested default can never drift apart. Phase 3's Rego module (`core/policy/policy.rego`) follows the identical constraint and lives inside `core/policy/` itself, embedded via its own `//go:embed policy.rego` directive (see §4) — not loaded at runtime from a separate directory as an earlier draft of this note assumed.
 
-`gateway/`, `cf/`, and `dashboard/` are intentionally **not scaffolded yet** — they belong to Phase 3+ per `docs/00-統一開發計畫（定案版）.md` §5. Creating empty module skeletons for phases that are months away would be premature structure with no code to anchor it; scaffold them when their phase starts, following the same module-naming convention below.
+`gateway/`, `cf/`, and `dashboard/` are intentionally **not scaffolded yet** — they belong to Phase 3+. Creating empty module skeletons for phases that are months away would be premature structure with no code to anchor it; scaffold them when their phase starts, following the same module-naming convention below.
 
-## 2. Module naming (placeholder, pending Tim's GitHub org confirmation)
+## 2. Module naming
 
 Research turned up a live but dormant `github.com/damping` account (see the master plan §二) — GitHub org/user names share one namespace, so that handle likely cannot be claimed outright. **Recommendation: org = `amplify-lab`, repo = `damping`.**
 
@@ -80,7 +80,7 @@ module github.com/amplify-lab/damping/core
 module github.com/amplify-lab/damping/cli
 ```
 
-If Tim confirms a different org, this is a single `find . -name go.mod -o -name '*.go' | xargs sed -i 's#github.com/amplify-lab/damping#github.com/<final-org>/damping#g'` away from being renamed — nothing else in the architecture depends on the exact string.
+If the org ever changes, this is a single `find . -name go.mod -o -name '*.go' | xargs sed -i 's#github.com/amplify-lab/damping#github.com/<final-org>/damping#g'` away from being renamed — nothing else in the architecture depends on the exact string.
 
 ## 3. `core/event` — the ActionEvent schema (one-time design, load-bearing)
 
@@ -175,7 +175,7 @@ type Decision struct {
 	Risk string `json:"risk,omitempty"`
 	// Degraded marks a decision made under an internal Damping failure (parser
 	// crash, corrupt policy file, hook timeout) rather than a real policy match.
-	// See docs/00-統一開發計畫（定案版）.md §六 on fail-open vs fail-closed —
+	// See docs/threat-model.md §6 on fail-open vs fail-closed —
 	// external hook contracts (Claude Code, Cursor) fail open on non-2 exit
 	// codes, so Damping's own responsibility is to make degraded mode loud,
 	// not to pretend it can force a fail-closed outcome it doesn't control.
@@ -208,7 +208,7 @@ Built on `mvdan.cc/sh/v3/syntax`. Two layers, not one:
 
 `rm -rf`'s target check (`rules_shell.go`'s `matchRmRfProtected`) inspects every non-flag path operand independently, not just the last word — `rm` accepts multiple path operands in one invocation, and checking only the last word both false-positived on a trailing flag (`rm -rf node_modules -v`) and silently missed a dangerous earlier operand (`rm -rf /etc build`), a real bug found via review and fixed.
 
-`Analyze` — not each rule individually, which would just fragment the same coverage — has real Go native fuzz coverage (`cli/shell/fuzz_test.go`'s `FuzzAnalyze`), seeded from every real bypass this package's tests assert on and run through the full `Analyze` → `Engine.Evaluate` pipeline every seed and mutation, on every rule at once; CI runs it for 30s per PR, longer locally. "Must never trigger" regressions live as ordinary Go tests (e.g. `TestAnalyze_AllowsSafeEverydayCommands`) — see `docs/00-統一開發計畫（定案版）.md` §六 and the test strategy in the original `開發計畫.md`.
+`Analyze` — not each rule individually, which would just fragment the same coverage — has real Go native fuzz coverage (`cli/shell/fuzz_test.go`'s `FuzzAnalyze`), seeded from every real bypass this package's tests assert on and run through the full `Analyze` → `Engine.Evaluate` pipeline every seed and mutation, on every rule at once; CI runs it for 30s per PR, longer locally. "Must never trigger" regressions live as ordinary Go tests (e.g. `TestAnalyze_AllowsSafeEverydayCommands`) — see `CONTRIBUTING.md` for the test strategy.
 
 ## 6. `cli/cmd` hook entrypoint — Claude Code / Cursor / Codex integration contract
 
@@ -245,4 +245,4 @@ Testing this without real subprocesses uses the SDK's `mcp.NewInMemoryTransports
 
 Per PR (`ci.yml`): `golangci-lint` (incl. `gosec`) → `go test ./...` → SBOM generation (`cyclonedx-gomod`). The `godog` BDD run against every V1-scope `features/*.feature` file (§7's `cli/bdd` package) isn't a separate pipeline step — it's a normal Go test package, so `go test ./...` already runs it, with the same pass/fail semantics as everything else in that step. Any failure blocks merge. Dependabot on; npm publishing (once `cf/`/`dashboard/` exist) goes through OIDC provenance, not long-lived tokens — a direct lesson from the 2026 Cline token-theft incident referenced in the original planning docs.
 
-Release engineering (`release.yml`, `.goreleaser.yaml`, `install.sh`) is a separate workflow, triggered on `v*` tags rather than every PR: cross-platform builds (linux/darwin, amd64/arm64), a Homebrew cask, and the one-line install script README.md's Quick Start assumes, with real sha256 checksum verification (see README.md's "What's real right now" section for what's been verified end-to-end vs. still pending Tim's GitHub org/domain confirmation). A `release-check` job in `ci.yml` snapshot-builds on every PR so a broken release config fails fast, without actually publishing anything.
+Release engineering (`release.yml`, `.goreleaser.yaml`, `install.sh`) is a separate workflow, triggered on `v*` tags rather than every PR: cross-platform builds (linux/darwin, amd64/arm64), a Homebrew cask, and the one-line install script README.md's Quick Start assumes, with real sha256 checksum verification (see README.md's "What's real right now" section for what's been verified end-to-end). A `release-check` job in `ci.yml` snapshot-builds on every PR so a broken release config fails fast, without actually publishing anything.

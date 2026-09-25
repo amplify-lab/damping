@@ -276,7 +276,7 @@ curl -fsSL https://raw.githubusercontent.com/amplify-lab/damping/main/install.sh
 
 **已知還沒解決的問題**：`https://damping.dev/install` 現在還是導去網域註冊商的預設停放頁（`/lander`），不是 `install.sh` 的內容——網域是註冊了沒錯，但這個路徑還沒接上任何東西。需要在這個 repo 之外另外搞 DNS/主機設定（比如 Cloudflare 的轉址規則，或是弄一個 Pages 部署把這個路徑指到 `install.sh` 的原始內容）。
 
-**`v0.2.1`（2026-07-07）已經解決**：Homebrew cask 推送以前一直失敗，錯誤是 `403 Resource not accessible by personal access token`——`HOMEBREW_TAP_GITHUB_TOKEN` 這個 secret 是有設，但背後那個 token 沒有 `amplify-lab/homebrew-tap` 的寫入權限。已經重新產生一個權限對的 token 換上去了（Tim 本人直接在 GitHub 上操作，這種事絕對不會透過 AI 助理經手），而且是真的驗證過：`v0.2.1` 那次 Release 的 Homebrew 那一步真的成功了，`amplify-lab/homebrew-tap/Casks/damping.rb` 現在有正確的 checksum，對得上真正發布的壓縮檔，`curl .../install.sh | sh` 也對著新版本重新跑過一次確認沒問題。token 修好之後重跑同一個 tag 的 Release，先撞到另一個不相干的問題——對一個已經有這些檔案的 release 重複上傳會被 GitHub 擋下來（`422 ... already_exists`）——後來在 `.goreleaser.yaml` 加了 `release.replace_existing_artifacts: true` 解決，這其實不管有沒有這次事件，本來就該這樣設定才對。
+**`v0.2.1`（2026-07-07）已經解決**：Homebrew cask 推送以前一直失敗，錯誤是 `403 Resource not accessible by personal access token`——`HOMEBREW_TAP_GITHUB_TOKEN` 這個 secret 是有設，但背後那個 token 沒有 `amplify-lab/homebrew-tap` 的寫入權限。已經重新產生一個權限對的 token 換上去了（由維護者本人直接在 GitHub 上操作，這種事絕對不會透過 AI 助理經手），而且是真的驗證過：`v0.2.1` 那次 Release 的 Homebrew 那一步真的成功了，`amplify-lab/homebrew-tap/Casks/damping.rb` 現在有正確的 checksum，對得上真正發布的壓縮檔，`curl .../install.sh | sh` 也對著新版本重新跑過一次確認沒問題。token 修好之後重跑同一個 tag 的 Release，先撞到另一個不相干的問題——對一個已經有這些檔案的 release 重複上傳會被 GitHub 擋下來（`422 ... already_exists`）——後來在 `.goreleaser.yaml` 加了 `release.replace_existing_artifacts: true` 解決，這其實不管有沒有這次事件，本來就該這樣設定才對。
 
 「Release」這個 workflow 的 pass/fail 徽章現在總算是能信的訊號了——它以前每次發布都是紅的，純粹是因為上面那個 Homebrew 的問題，不代表其他東西真的壞掉（GitHub Release 本身、install.sh、現在連 Homebrew 都是正常的，只是徽章一直講反話）。以後哪次發布這個徽章又紅了，那就真的是出問題了，不會又是這個已經修好的老問題。
 

@@ -1,11 +1,10 @@
 // Package bdd wires features/*.feature Gherkin scenarios to real executable
 // steps via godog — this is the concrete proof that the BDD scenarios are
-// acceptance criteria, not just prose. See
-// docs/00-統一開發計畫（定案版）.md's closing note: "情境通過才算完成"
-// (a scenario only counts as done once it passes).
+// acceptance criteria, not just prose. See CONTRIBUTING.md:
+// "情境通過才算完成" (a scenario only counts as done once it passes).
 //
-// This file wires features/dangerous_command.feature (Phase 1's most
-// emphasized scenario file, per 開發計畫.md's "先攻這個最難的點"), at the
+// This file wires features/dangerous_command.feature (the largest and
+// hardest scenario file, so it was built first), at the
 // pure policy.Engine level. Its sibling files in this package wire every
 // other V1-scope feature file (self_protection, mcp_tool_governance,
 // audit_log, policy_config) the same way, driving the real command tree via

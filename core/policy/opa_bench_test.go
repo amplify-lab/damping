@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// TestOPAEngine_EvalStaysSubMillisecond is the regression gate for
-// docs/00-統一開發計畫（定案版）.md §四's "OPA評估要壓在毫秒級" requirement:
+// TestOPAEngine_EvalStaysSubMillisecond is the regression gate for the
+// requirement that OPA evaluation stay in the millisecond range:
 // a single Evaluate call (already-compiled query, only the eval step) must
 // stay comfortably under one millisecond so gating every shell command or
 // MCP tool call through OPA is not a perceptible latency regression versus

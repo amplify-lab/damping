@@ -5,8 +5,8 @@
 //
 // This is deliberately NOT Phase 4's team dashboard from
 // docs/ux-dashboard-spec.md — that's a separate, not-yet-built React+TS app
-// on Cloudflare requiring a hosted backend and an SSO vendor decision, both
-// genuinely blocked pending decisions only Tim can make. This package
+// on Cloudflare requiring a hosted backend and an SSO vendor decision,
+// neither of which exists yet. This package
 // borrows that spec's visual language (dark theme, risk-as-temperature
 // color, the damped-oscillation motif) and its "CLI/dashboard vocabulary
 // parity" principle (§4) for a fully local, zero-infrastructure slice: no
