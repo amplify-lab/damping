@@ -10,11 +10,9 @@ import (
 	"github.com/amplify-lab/damping/core/policy"
 )
 
-// FuzzAnalyze is the fuzz coverage 開發計畫.md repeatedly mandates for this
-// exact package ("go-fuzz（shell解析器一定要fuzz，惡意輸入是常態）" in Phase
-// 0.2, "對這個函式做fuzz測試" in Phase 1.2, and again in the cross-phase test
-// strategy section) and docs/00-統一開發計畫（定案版）.md §五 step 2
-// ("務必fuzz測試") — found missing entirely during a plan-vs-code audit.
+// FuzzAnalyze is this package's fuzz coverage — a hard requirement, since
+// malicious input is the normal case here (see docs/threat-model.md §3). It
+// was found missing entirely during an audit and added then.
 //
 // Analyze is the one function in this whole codebase that runs on fully
 // untrusted, adversarially-crafted input by design (a raw shell command an

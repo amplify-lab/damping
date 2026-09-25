@@ -1204,9 +1204,10 @@ func TestHook_ClaudeCodePayloadWithoutTurnIDStaysClaudeCode(t *testing.T) {
 // temporarily tee-ing the hook's actual stdin) includes a non-empty
 // tool_use_id — contradicting hookInput's own doc comment and this file's
 // other Codex-discriminator tests, both of which assumed real Claude Code
-// payloads never send it. Every real "codex" audit entry Tim had ever seen
-// on his own dashboard was actually his own Claude Code session — the old
-// `in.TurnID != "" || in.ToolUseID != ""` check misclassified every single
+// payloads never send it. Every real "codex" audit entry a Claude-Code-only
+// user had ever seen on their dashboard was actually their own Claude Code
+// session — the old `in.TurnID != "" || in.ToolUseID != ""` check
+// misclassified every single
 // one, since ToolUseID is populated by Claude Code too and is not
 // Codex-exclusive. turn_id (confirmed absent from this real capture, and
 // confirmed present in Codex's own documented PreToolUse contract via

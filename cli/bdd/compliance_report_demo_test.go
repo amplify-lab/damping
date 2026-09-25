@@ -1,7 +1,7 @@
 // Package bdd — see dangerous_command_test.go's doc comment for the overall
 // approach. This file wires features/compliance_report_demo.feature — the
-// M1 "early differentiator demo" from docs/00-統一開發計畫（定案版）.md §七
-// item 15, deliberately distinct from features/compliance_report.feature
+// early compliance-report demo (see docs/cli-reference.md §7.1),
+// deliberately distinct from features/compliance_report.feature
 // (the full Phase 5 enterprise feature, not implemented yet — see that
 // feature file's own Background requiring an on-prem PostgreSQL-backed
 // deployment this project doesn't have).

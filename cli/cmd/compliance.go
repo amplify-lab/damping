@@ -9,9 +9,9 @@ import (
 	"github.com/amplify-lab/damping/core/compliance"
 )
 
-// newComplianceReportCmd is the M1 "early differentiator demo" from
-// docs/00-統一開發計畫（定案版）.md §七 item 15's development sequencing —
-// see core/compliance's package doc comment for the full scope disclosure
+// newComplianceReportCmd is the early compliance-report demo (see
+// docs/cli-reference.md §7.1) — see core/compliance's package doc comment
+// for the full scope disclosure
 // (not the Phase 5 enterprise feature, not an official regulator template).
 func newComplianceReportCmd() *cobra.Command {
 	c := &cobra.Command{

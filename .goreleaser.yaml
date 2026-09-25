@@ -7,12 +7,9 @@
 # core/ is not built or released independently — it's a library dependency
 # of cli/, never installed on its own (see docs/architecture.md §1).
 #
-# github.owner/brews.repository.owner and the damping.dev URLs below use the
-# same placeholder org/domain already used throughout README.md and
-# docs/00-統一開發計畫（定案版）.md, pending Tim's own confirmation/
-# registration of both (see that doc's "立即可執行的下一步" item 1) — this
-# file is real, working release tooling ready to activate the moment those
-# are confirmed, not a guess at unconfirmed infrastructure.
+# github.owner/brews.repository.owner and the damping.dev URLs below are the
+# project's real GitHub org and domain, the same ones used throughout
+# README.md.
 #
 # Test locally without any real GitHub token or tap repo access:
 #   goreleaser release --snapshot --clean --skip=publish
