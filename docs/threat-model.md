@@ -6,7 +6,7 @@
 
 Damping sits between an AI coding agent (Claude Code, Cursor, and future integrations) and the real world — the shell it executes commands in, and the MCP servers it calls tools on. The threat model is scoped to **actions with real-world side effects that the agent initiates**, not to the agent's reasoning quality or hallucination rate. Damping does not try to make the agent smarter; it tries to make sure a bad decision (the agent's own, or one it was manipulated into) doesn't execute unchecked.
 
-Grounding incidents (real, not hypothetical — see `docs/00-統一開發計畫（定案版）.md` and `市場調查與現況總覽.md` §17 for sources):
+Grounding incidents (real, not hypothetical — see README.md's "Real incidents this defends against" section for sources):
 - A Replit agent deleted a production database affecting 1,200+ executives at a customer company.
 - A Cursor agent deleted 70 files after being told explicitly not to execute anything.
 - A Claude Code `rm -rf` wiped a user's entire home directory.
@@ -78,7 +78,7 @@ Requirement, not aspiration: an agent operating inside a session must not be abl
 
 ## 5. Adjacent threat class tracked for later phases: Memory & Context Poisoning (ASI06)
 
-Not in scope for Phase 1-3, but documented here because Tim has flagged it as the most actively interesting extension (see `市場調查與現況總覽.md` §11) and the same `core/policy` + `core/audit` spine is meant to extend into it in Phase 6 without a redesign. Real, verified threat data (not speculative):
+Not in scope for Phase 1-3, but documented here because it is the most actively interesting extension and the same `core/policy` + `core/audit` spine is meant to extend into it in Phase 6 without a redesign. Real, verified threat data (not speculative):
 - MINJA: memory poisoning via normal conversational interaction, 95-98% success rate.
 - AgentPoison: <0.1% poisoning rate achieves >80% attack success, no retraining needed.
 - PoisonedRAG: 5 malicious documents against a million-document corpus achieves 91-99% attack success.

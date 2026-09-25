@@ -1,6 +1,6 @@
 // Package policy is the V1 Go-native rule evaluator. Its Evaluate() call
 // signature is deliberately stable so Phase 3's swap to an embedded
-// OPA/Rego evaluator (see docs/00-統一開發計畫（定案版）.md §四) is a
+// OPA/Rego evaluator (see docs/architecture.md §4) is a
 // drop-in replacement behind the same interface, not a rewrite of call
 // sites in cli/adapter/hook or cli/adapter/mcp.
 package policy

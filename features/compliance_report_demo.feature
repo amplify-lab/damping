@@ -8,12 +8,9 @@ Feature: Early compliance-report demo (V1 CLI, not the Phase 5 enterprise featur
   # covers a much smaller, honestly-scoped capability shipped ahead of that:
   # a `damping compliance-report` command that formats the *already-shipped*
   # local audit trail (core/audit, event.ActionEvent) into a compliance-
-  # report-shaped document, plus a synthetic demo dataset so the report is
-  # demoable to a prospective customer before any real customer has
-  # installed anything. See docs/00-統一開發計畫（定案版）.md §七 item 15
-  # (M1) for why this, specifically, is the fastest real artifact to show a
-  # prospect — it needs no new infrastructure, just a new view over data
-  # Damping already collects.
+  # report-shaped document, plus a synthetic demo dataset so the report can
+  # be seen without any real audit history. It needs no new infrastructure,
+  # just a new view over data Damping already collects.
   #
   # Grounded in real market research (2026-07-07): Taiwan's FSC has not
   # published a fixed compliance-report template (still "studying" an

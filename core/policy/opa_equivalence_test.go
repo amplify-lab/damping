@@ -9,7 +9,7 @@ import (
 )
 
 // TestOPAEngine_MatchesGoNativeEngine is the "keep Phase 1's tests green
-// when swapping to OPA" contract from docs/00-統一開發計畫（定案版）.md §四:
+// when swapping to OPA" contract (see docs/architecture.md §4):
 // every Facts/Config combination the Go-native Engine is tested against in
 // policy_test.go/rules_shell_test.go must produce the *exact same* Decision
 // from OPAEngine — same Verdict, same PolicyID, same Reason. This is not a

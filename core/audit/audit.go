@@ -3,7 +3,7 @@
 // MCP adapters normalize their intercepted actions into an event.ActionEvent
 // and hand it here; they never write the file themselves. This is the
 // concrete enforcement of the "single audit outlet" rule in
-// docs/00-統一開發計畫（定案版）.md and features/audit_log.feature.
+// docs/architecture.md and features/audit_log.feature.
 package audit
 
 import (
@@ -40,9 +40,8 @@ func NewWriter(path string) *Writer {
 // compression/count-limit policy). Checked after every successful write
 // rather than on a separate timer or background goroutine, since Append is
 // the only place the file's size ever changes and so the only place that
-// needs to ask. Found via review: docs/00-統一開發計畫（定案版）.md §五
-// requires "basic file rotation ... to avoid growing without bound," and
-// Rotate itself was fully implemented and unit-tested, but nothing
+// needs to ask. Found via review: the audit log needs basic file rotation
+// to avoid growing without bound, and Rotate itself was fully implemented and unit-tested, but nothing
 // anywhere in the program ever called it — the audit log grew forever in
 // real usage. ~10 MiB comfortably holds tens of thousands of typical JSONL
 // records, far more history than an individual developer's local audit
@@ -525,9 +524,8 @@ func followFrom(path string, offset int64, f Filter, fn func(event.ActionEvent) 
 
 // Rotate renames the audit file to a timestamped sibling once it exceeds
 // maxSizeBytes, then lets the next Append start a fresh file. Single-
-// generation rotation is intentionally simple for V1 — see
-// docs/00-統一開發計畫（定案版）.md §五 Phase 1 step 7, log rotation is
-// flagged as needed but not over-engineered before real usage patterns
+// generation rotation is intentionally simple for V1: log rotation is
+// needed, but not worth over-engineering before real usage patterns
 // exist.
 func Rotate(path string, maxSizeBytes int64, now time.Time) (rotated bool, err error) {
 	info, err := os.Stat(path)

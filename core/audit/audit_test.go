@@ -945,8 +945,8 @@ func TestRotate_NoOpUnderThreshold(t *testing.T) {
 }
 
 // TestWriterAppend_RotatesWhenOverThreshold is a regression test for a real
-// gap: docs/00-統一開發計畫（定案版）.md requires basic file rotation so the
-// audit log doesn't grow unbounded, and Rotate itself was fully implemented
+// gap: the audit log needs basic file rotation so it doesn't grow
+// unbounded, and Rotate itself was fully implemented
 // and unit-tested — but nothing in the whole program ever called it, so in
 // real usage the file grew forever. Append must now trigger rotation itself
 // once the file crosses maxAuditFileSize, with no separate caller needed.

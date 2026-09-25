@@ -8,9 +8,8 @@
 // placeholders cli/shell relies on.
 package policy
 
-// matcher is the V1 hardcoded detection logic for one rule id. See
-// docs/00-統一開發計畫（定案版）.md §四修正一 for why AST parsing alone
-// (done upstream in cli/shell) does not remove the need for this explicit,
+// matcher is the V1 hardcoded detection logic for one rule id. AST parsing
+// alone (done upstream in cli/shell) does not remove the need for this explicit,
 // testable, per-rule semantic layer — mvdan/sh gives structure, not intent.
 type matcher func(Facts, Config) bool
 

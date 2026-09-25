@@ -3,8 +3,7 @@ package policy
 import "strings"
 
 // This file holds the rules added by the 2026-07 dangerous-command-coverage
-// expansion research (docs/00-統一開發計畫（定案版）.md's cross-tool/
-// coverage backlog) — grouped separately from rules_shell.go's original V1
+// expansion research — grouped separately from rules_shell.go's original V1
 // set so the diff and the reasoning behind each addition stay traceable to
 // that research rather than blending into the original file's history.
 
@@ -131,7 +130,7 @@ func hasFlagChar(a string, ch byte) bool {
 // --- destructive.secret_exfiltration ---
 //
 // The highest-priority new category the research surfaced, and the one
-// most directly tied to Tim's cryptocurrency question: the TrapDoor
+// most directly tied to crypto-wallet theft: the TrapDoor
 // campaign (2026/5, verified via socket.dev) planted zero-width-Unicode
 // instructions in CLAUDE.md/.cursorrules to manipulate Claude Code and
 // Cursor — two of Damping's three target agents — into running a fake

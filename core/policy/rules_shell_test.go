@@ -155,7 +155,7 @@ func TestEvaluate_StillBlocksProtectedPathsThatLookLikeTempPaths(t *testing.T) {
 
 // TestIsSystemCriticalPath is a permanent regression test for the risk-tier
 // split found via a real user's own audit-log review: every one of the 15
-// real rm -rf interceptions Tim's own machine had logged turned out to be
+// real rm -rf interceptions one user's machine had logged turned out to be
 // disposable scratch/research cleanup, not a genuine catastrophic delete —
 // yet all 15 carried the same "critical" severity as an actual home-
 // directory wipe, because the only two tiers this rule ever had were

@@ -56,7 +56,6 @@ const (
 
 // ActionEvent is the transport-agnostic record every adapter normalizes into.
 // The field set is sized for Phase 5 compliance reports from day one — see
-// docs/00-統一開發計畫（定案版）.md §五 Phase 1 step 1 and
 // docs/architecture.md §3. Do not remove or repurpose fields later without a
 // migration plan for existing ~/.damping/audit.jsonl files.
 type ActionEvent struct {

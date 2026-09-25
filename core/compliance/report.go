@@ -1,6 +1,6 @@
 // Package compliance formats a set of event.ActionEvent records into a
-// compliance-report-shaped view — the "早期差異化 demo" (M1) from
-// docs/00-統一開發計畫（定案版）.md §七 item 15's development sequencing.
+// compliance-report-shaped view — the early compliance-report demo
+// described in docs/cli-reference.md §7.1.
 //
 // This is deliberately NOT the full Phase 5 enterprise compliance report
 // (features/compliance_report.feature) — that requires an on-prem
@@ -11,9 +11,8 @@
 // unchanged once Phase 5's real data source exists; only the source of
 // events changes, not this package's report shape.
 //
-// Taiwan's FSC has not published a fixed compliance-report template (see
-// docs/調查資料/phase5-enterprise-controlplane-design.md §4's regulatory
-// research) — this package does not claim to produce an official
+// Taiwan's FSC has not published a fixed compliance-report template — this
+// package does not claim to produce an official
 // "金管會格式" document. It produces one report structure informed by what
 // FSC's existing AI guidelines and the passed AI Basic Law's accountability
 // principles both emphasize (a traceable actor/identity/decision record for
@@ -205,8 +204,8 @@ func Generate(events []event.ActionEvent, isDemo bool) Report {
 }
 
 // RenderMarkdown produces the polished, shareable form of a Report — the
-// format meant to actually be shown to (or handed to) a prospective
-// customer or their compliance officer, per M1's own purpose.
+// format meant to actually be shown to (or handed to) a reviewer or a
+// compliance officer.
 func (r Report) RenderMarkdown() string {
 	var b strings.Builder
 
